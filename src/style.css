@@ -79,3 +79,25 @@ button:hover {
     background: rgba(0, 255, 204, 0.3);
     box-shadow: 0 0 15px rgba(0, 255, 204, 0.8);
 }
+
+#narrative-terminal {
+    position: absolute;
+    bottom: 2rem;
+    left: 2rem;
+    width: 400px;
+    height: 150px;
+    background: rgba(5, 5, 5, 0.8);
+    border: 1px solid #00ffcc;
+    color: #00ffcc;
+    padding: 1rem;
+    overflow-y: hidden;
+    font-size: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    pointer-events: auto;
+    box-shadow: 0 0 10px rgba(0, 255, 204, 0.3);
+}
+
+.narrative-line {
+    margin-bottom: 0.5rem;
+}

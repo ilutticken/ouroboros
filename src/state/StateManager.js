@@ -20,6 +20,6 @@ export class StateManager {
         
         // If UI was revealed, update the display
         const display = document.getElementById('score-value');
-        if (display) display.innerText = this.score;
+        if (display) display.innerText = this.score.toString();
     }
 }

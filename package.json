@@ -1,0 +1,19 @@
+{
+  "name": "ouroboros",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "npx --yes serve -p 8080 .",
+    "test": "vitest"
+  },
+  "bugs": {
+    "url": "https://github.com/ilutticken/ouroboros/issues"
+  },
+  "homepage": "https://github.com/ilutticken/ouroboros#readme",
+  "devDependencies": {
+    "happy-dom": "^20.10.6",
+    "vitest": "^4.1.10"
+  }
+}
