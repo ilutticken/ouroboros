@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ouroboros: The System</title>
+    <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+    <div id="game-container">
+        <!-- The UI elements will fade in as the game unfolds -->
+        <div id="ui-layer" class="hidden">
+            <div id="score-display">Data: <span id="score-value">0</span></div>
+            <div id="upgrade-panel" class="hidden">
+                <button id="btn-speed">Compile Speed Upgrade</button>
+            </div>
+        </div>
+        
+        <!-- The main canvas -->
+        <canvas id="game-canvas"></canvas>
+    </div>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
