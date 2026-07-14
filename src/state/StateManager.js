@@ -1,11 +1,26 @@
 export class StateManager {
     constructor() {
         this.score = 0;
+        this.gameState = 'START'; // 'START', 'PLAYING', 'DIALOG', 'SHOP', 'DEAD', 'PAUSED'
+        this.isSuspended = false;
         this.unlocked = {
+            firstScore: false,
             ui: false,
             borders: false,
-            upgrades: false,
-            actionPhase: false
+            firstEncounter: false,
+            glitchesTelegraphed: false,
+            speed1: false,
+            speed2: false,
+            speed3: false,
+            actionPhase: false,
+            pauseMenu: false,
+            wallBroken: false
+        };
+        this.upgrades = {
+            dataCompression: false,
+            reinforcedSegments: false,
+            speedLevel: 0,
+            manualBrake: false
         };
     }
     

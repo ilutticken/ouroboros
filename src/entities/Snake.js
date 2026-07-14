@@ -30,10 +30,11 @@ export class Snake {
         return true;
     }
     
-    checkSelfCollision() {
+    checkSelfCollision(hasBite = false) {
         const head = this.head;
         for (let i = 1; i < this.body.length; i++) {
             if (head.x === this.body[i].x && head.y === this.body[i].y) {
+                if (hasBite && i === this.body.length - 1) return 'BITE';
                 return true;
             }
         }
@@ -48,11 +49,17 @@ export class Snake {
         // Just don't pop the tail, handled in Game loop
     }
     
-    shrink() {
-        this.body.pop();
+    shrink(hasBite = false) {
+        const minLength = hasBite ? 2 : 1;
+        if (this.body.length > minLength) {
+            this.body.pop();
+        }
     }
     
-    reset(startX, startY) {
+    reset(startX, startY, hasBite = false) {
         this.body = [{ x: startX, y: startY }];
+        if (hasBite) {
+            this.body.push({ x: startX, y: startY + this.gridSize }); // Bite rides behind
+        }
     }
 }

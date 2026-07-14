@@ -4,21 +4,60 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Ouroboros: The System</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
-    <div id="game-container">
-        <!-- The UI elements will fade in as the game unfolds -->
-        <div id="ui-layer" class="hidden">
-            <div id="score-display">Data: <span id="score-value">0</span></div>
-            <div id="upgrade-panel" class="hidden">
-                <button id="btn-speed">Compile Speed Upgrade</button>
+    <!-- Top Ribbon for Score -->
+    <div id="ui-layer" class="hidden" style="justify-content: space-between;">
+        <div id="score-display">Data: <span id="score-value">0</span></div>
+        <button id="btn-playtest" style="margin-right: 2rem; font-size: 0.6rem;">[DEV] +10 Data</button>
+    </div>
+    
+    <div id="game-wrapper">
+        <!-- Bite's Shop (Centered over game) -->
+        <div id="shop-overlay" class="hidden">
+            <h2>Bite's Node Shop</h2>
+            <div class="shop-items">
+                <div class="shop-item">
+                    <div class="shop-item-text">
+                        <span>Manual Override (10 Data)</span>
+                        <small>Hold SHIFT to engage brake and slow down.</small>
+                    </div>
+                    <button id="btn-buy-brake">[1] Buy</button>
+                </div>
+                <div class="shop-item">
+                    <div class="shop-item-text">
+                        <span>Data Compression (15 Data)</span>
+                        <small>Apples give +2 Data instead of +1.</small>
+                    </div>
+                    <button id="btn-buy-compression">[2] Buy</button>
+                </div>
+                <div class="shop-item">
+                    <div class="shop-item-text">
+                        <span>Reinforced Segments (25 Data)</span>
+                        <small>Hitting a Glitch costs 1 segment instead of 3.</small>
+                    </div>
+                    <button id="btn-buy-armor">[3] Buy</button>
+                </div>
+                <div class="shop-item">
+                    <div class="shop-item-text">
+                        <span>Overclocked Processor (30 Data)</span>
+                        <small>Permanently increase movement speed.</small>
+                    </div>
+                    <button id="btn-buy-speed">[4] Buy</button>
+                </div>
             </div>
-            <div id="narrative-terminal"></div>
+            <button id="btn-close-shop" style="margin-top: 1rem;">[ESC] Leave Shop</button>
         </div>
         
         <!-- The main canvas -->
         <canvas id="game-canvas"></canvas>
+    </div>
+
+    <!-- Bottom Ribbon for Terminal -->
+    <div id="ui-layer-bottom" class="hidden">
+        <div id="narrative-terminal"></div>
     </div>
 
     <script type="module" src="src/main.js"></script>

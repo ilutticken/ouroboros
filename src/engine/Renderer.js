@@ -5,7 +5,7 @@ export class Renderer {
         this.gridSize = gridSize;
     }
     
-    draw(state, snake, apple) {
+    draw(state, snake, apple, npcs, glitches, worldManager, obstacles) {
         // Clear screen (The Void)
         this.ctx.fillStyle = '#050505';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -18,6 +18,68 @@ export class Renderer {
             this.ctx.lineWidth = 4;
             this.ctx.shadowColor = '#00ffcc';
             this.ctx.strokeRect(2, 2, this.canvas.width - 4, this.canvas.height - 4);
+            
+            // Draw weak points (Orange pulsing)
+            const pulse = Math.abs(Math.sin(Date.now() / 200));
+            this.ctx.strokeStyle = `rgba(255, 100, 0, ${0.5 + pulse * 0.5})`;
+            this.ctx.shadowColor = '#ff6600';
+            
+            const gapSize = this.gridSize * 3;
+            const cx = this.canvas.width / 2;
+            const cy = this.canvas.height / 2;
+            
+            this.ctx.beginPath();
+            // Top
+            this.ctx.moveTo(cx - gapSize/2, 2);
+            this.ctx.lineTo(cx + gapSize/2, 2);
+            // Bottom
+            this.ctx.moveTo(cx - gapSize/2, this.canvas.height - 2);
+            this.ctx.lineTo(cx + gapSize/2, this.canvas.height - 2);
+            // Left
+            this.ctx.moveTo(2, cy - gapSize/2);
+            this.ctx.lineTo(2, cy + gapSize/2);
+            // Right
+            this.ctx.moveTo(this.canvas.width - 2, cy - gapSize/2);
+            this.ctx.lineTo(this.canvas.width - 2, cy + gapSize/2);
+            this.ctx.stroke();
+            
+            // Draw broken walls (black gaps)
+            if (worldManager) {
+                this.ctx.fillStyle = '#050505';
+                this.ctx.shadowBlur = 0;
+                
+                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'up')) {
+                    this.ctx.fillRect(cx - gapSize/2, 0, gapSize, 4);
+                }
+                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'down')) {
+                    this.ctx.fillRect(cx - gapSize/2, this.canvas.height - 4, gapSize, 4);
+                }
+                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'left')) {
+                    this.ctx.fillRect(0, cy - gapSize/2, 4, gapSize);
+                }
+                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'right')) {
+                    this.ctx.fillRect(this.canvas.width - 4, cy - gapSize/2, 4, gapSize);
+                }
+                this.ctx.shadowBlur = 15;
+            }
+        }
+        
+        // Draw Obstacles (Solid Green)
+        if (obstacles) {
+            this.ctx.fillStyle = '#00ffcc';
+            this.ctx.shadowColor = '#00ffcc';
+            for (const obs of obstacles) {
+                this.ctx.fillRect(obs.x + 1, obs.y + 1, this.gridSize - 2, this.gridSize - 2);
+            }
+        }
+        
+        // Draw Glitches (Magenta)
+        if (glitches) {
+            this.ctx.fillStyle = '#ff00ff';
+            this.ctx.shadowColor = '#ff00ff';
+            for (const g of glitches) {
+                this.ctx.fillRect(g.x + 2, g.y + 2, this.gridSize - 4, this.gridSize - 4);
+            }
         }
         
         // Draw Apple (Red Data)
@@ -25,14 +87,67 @@ export class Renderer {
         this.ctx.shadowColor = '#ff0055';
         this.ctx.fillRect(apple.x + 2, apple.y + 2, this.gridSize - 4, this.gridSize - 4);
         
-        // Draw Snake (White Program)
-        this.ctx.fillStyle = '#ffffff';
-        this.ctx.shadowColor = '#ffffff';
-        for (const segment of snake.body) {
+        // Draw persistent NPCs
+        if (npcs) {
+            for (const npc of npcs) {
+                if (npc.id === 'gate') {
+                    this.ctx.fillStyle = '#0088ff';
+                    this.ctx.shadowColor = '#0088ff';
+                } else {
+                    this.ctx.fillStyle = '#00ff00';
+                    this.ctx.shadowColor = '#00ff00';
+                }
+                this.ctx.fillRect(npc.x + 2, npc.y + 2, this.gridSize - 4, this.gridSize - 4);
+            }
+        }
+        
+        // Draw Snake
+        for (let i = 0; i < snake.body.length; i++) {
+            const segment = snake.body[i];
+            
+            if (i === snake.body.length - 1 && state.unlocked.firstEncounter) {
+                this.ctx.fillStyle = '#00ff00';
+                this.ctx.shadowColor = '#00ff00';
+                this.ctx.shadowBlur = 10;
+            } else {
+                if (i === 0) {
+                    this.ctx.fillStyle = '#ffffff';
+                } else {
+                    this.ctx.fillStyle = '#ff0055';
+                }
+                this.ctx.shadowBlur = 0;
+            }
             this.ctx.fillRect(segment.x + 1, segment.y + 1, this.gridSize - 2, this.gridSize - 2);
         }
         
-        // Reset shadow for performance on non-glowing elements if we add them
+        // Reset shadow for performance
         this.ctx.shadowBlur = 0;
+        
+        // Pause Overlay
+        if (state.isSuspended || state.gameState === 'PAUSED') {
+            this.ctx.fillStyle = '#000000';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            
+            this.ctx.strokeStyle = '#00ff00';
+            this.ctx.lineWidth = 6;
+            this.ctx.strokeRect(10, 10, this.canvas.width - 20, this.canvas.height - 20);
+            
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = 'bold 24px "Courier New", Courier, monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText("=== SYSTEM DIAGNOSTIC ===", this.canvas.width / 2, 60);
+            
+            this.ctx.fillStyle = '#ff0000';
+            this.ctx.font = 'bold 36px "Courier New", Courier, monospace';
+            this.ctx.fillText("THREAD SUSPENDED", this.canvas.width / 2, this.canvas.height / 2);
+            
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = 'bold 18px "Courier New", Courier, monospace';
+            
+            const pulse = Math.floor(Date.now() / 500) % 2 === 0;
+            if (pulse) {
+                this.ctx.fillText("PRESS [ESC] TO RESUME", this.canvas.width / 2, this.canvas.height - 60);
+            }
+        }
     }
 }

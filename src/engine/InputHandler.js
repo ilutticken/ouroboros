@@ -3,14 +3,22 @@ export class InputHandler {
         this.direction = { x: 0, y: 0 };
         this.nextDirection = { x: 0, y: 0 };
         this.gridSize = 20; // Default grid size
+        this.brakePressed = false;
     }
 
-    init(gridSize, onFirstInput) {
+    init(gridSize, onFirstInput, onDialogAdvance) {
         this.gridSize = gridSize;
-        window.addEventListener('keydown', (e) => this.handleInput(e, onFirstInput));
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e, onFirstInput, onDialogAdvance));
+        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
     }
 
-    handleInput(e, onFirstInput) {
+    handleKeyDown(e, onFirstInput, onDialogAdvance) {
+        if (e.key === ' ' || e.key === 'Enter') {
+            if (onDialogAdvance) onDialogAdvance();
+        }
+        if (e.key === 'Shift') {
+            this.brakePressed = true;
+        }
         // Only allow changing direction if we actually started moving, or to initiate movement
         switch(e.key) {
             case 'ArrowUp':
@@ -33,6 +41,12 @@ export class InputHandler {
         
         if (onFirstInput) {
             onFirstInput();
+        }
+    }
+    
+    handleKeyUp(e) {
+        if (e.key === 'Shift') {
+            this.brakePressed = false;
         }
     }
     
