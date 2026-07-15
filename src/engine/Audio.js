@@ -326,4 +326,24 @@ export class AudioEngine {
         noise.start(now); noise.stop(now + dur);
         thud.start(now); thud.stop(now + 0.25);
     }
+
+    // Diegetic: a partial hit on a weak wall — a sharp fracture crackle, lighter
+    // than the full breach (playCrash). Sub-max ramming chips the barrier.
+    playCrack() {
+        if (!this.initialized) return;
+
+        const now = this.ctx.currentTime;
+        const dur = 0.12;
+        const noise = this.ctx.createBufferSource();
+        noise.buffer = this._noiseBuffer();
+        const bp = this.ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(1800, now);
+        bp.Q.setValueAtTime(1.2, now);
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.2, now);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+        noise.connect(bp); bp.connect(g); g.connect(this.master);
+        noise.start(now); noise.stop(now + dur);
+    }
 }

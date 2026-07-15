@@ -19,67 +19,53 @@ export class Renderer {
             this.ctx.shadowColor = '#00ffcc';
             this.ctx.strokeRect(2, 2, this.canvas.width - 4, this.canvas.height - 4);
             
-            // Draw weak points (Orange pulsing)
-            const pulse = Math.abs(Math.sin(Date.now() / 200));
-            this.ctx.strokeStyle = `rgba(255, 100, 0, ${0.5 + pulse * 0.5})`;
-            this.ctx.shadowColor = '#ff6600';
-            
-            const gapSize = this.gridSize * 5;
-            const cx = this.canvas.width / 2;
-            const cy = this.canvas.height / 2;
-            
-            // Draw gap indicators (Weak points)
-            if (state.unlocked.borders) {
-                const inHub = worldManager && worldManager.currentRoomX === 0 && worldManager.currentRoomY === 0;
-                this.ctx.beginPath();
-                
-                if (!inHub) {
-                    // Up
-                    this.ctx.moveTo(cx - gapSize/2, 2);
-                    this.ctx.lineTo(cx + gapSize/2, 2);
-                    // Down
-                    this.ctx.moveTo(cx - gapSize/2, this.canvas.height - 2);
-                    this.ctx.lineTo(cx + gapSize/2, this.canvas.height - 2);
-                    // Left
-                    this.ctx.moveTo(2, cy - gapSize/2);
-                    this.ctx.lineTo(2, cy + gapSize/2);
-                }
-                
-                if (!inHub || state.unlocked.wallBroken) {
-                    // Right
-                    this.ctx.moveTo(this.canvas.width - 2, cy - gapSize/2);
-                    this.ctx.lineTo(this.canvas.width - 2, cy + gapSize/2);
-                }
-                this.ctx.stroke();
-            }
-            
-            // Draw broken walls (black gaps)
+            // Weak points & smashed doorways. For each breakable side of THIS room,
+            // draw either an "Open" black gap (fully smashed through) or a crack whose
+            // colour, thickness, and glow scale with accumulated ram damage.
+            const g = this.gridSize;
+            const gapSize = g * 5;
+            const W = this.canvas.width;
+            const H = this.canvas.height;
+            // Centre the gap on the SAME grid-aligned weak point the hit test uses
+            // (Game.update: midX/Y = floor(dim/2/g)*g), not the raw pixel centre —
+            // otherwise on a non-grid-aligned canvas the drawn doorway drifts off
+            // the actually-passable cells.
+            const cx = Math.floor(W / 2 / g) * g + g / 2;
+            const cy = Math.floor(H / 2 / g) * g + g / 2;
+
+            const gapRect = (dir, thick) => {
+                if (dir === 'up') return [cx - gapSize / 2, 0, gapSize, thick];
+                if (dir === 'down') return [cx - gapSize / 2, H - thick, gapSize, thick];
+                if (dir === 'left') return [0, cy - gapSize / 2, thick, gapSize];
+                return [W - thick, cy - gapSize / 2, thick, gapSize]; // right
+            };
+
             if (worldManager) {
-                this.ctx.fillStyle = '#050505';
-                this.ctx.shadowBlur = 0;
-                
-                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'up')) {
-                    this.ctx.fillRect(cx - gapSize/2, 0, gapSize, 4);
-                }
-                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'down')) {
-                    this.ctx.fillRect(cx - gapSize/2, this.canvas.height - 4, gapSize, 4);
-                }
-                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'left')) {
-                    this.ctx.fillRect(0, cy - gapSize/2, 4, gapSize);
-                }
-                
-                const rightBroken = worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'right');
-                if (rightBroken) {
-                    this.ctx.fillRect(this.canvas.width - 4, cy - gapSize/2, 4, gapSize);
-                } else if (worldManager.currentRoomX === 0 && worldManager.currentRoomY === 0) {
-                    // Quarantine Cracked Wall indicator
-                    this.ctx.fillStyle = '#ffaa00'; // Yellowish crack
-                    this.ctx.shadowColor = '#ffaa00';
-                    this.ctx.fillRect(this.canvas.width - 4, cy - gapSize/2, 4, gapSize);
-                    
-                    // Reset back to normal border color
-                    this.ctx.fillStyle = '#00ffff'; 
-                    this.ctx.shadowColor = '#00ffff';
+                const rx = worldManager.currentRoomX;
+                const ry = worldManager.currentRoomY;
+                const inHub = rx === 0 && ry === 0;
+                const threshold = worldManager.wallBreakThreshold || 3;
+                // Hub is a sealed quarantine — only its right wall is breakable.
+                const dirs = inHub ? ['right'] : ['up', 'down', 'left', 'right'];
+                const pulse = 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 200));
+
+                for (const dir of dirs) {
+                    if (worldManager.isWallBroken(rx, ry, dir)) {
+                        // OPEN — punch a black gap through the neon border.
+                        this.ctx.shadowBlur = 0;
+                        this.ctx.fillStyle = '#050505';
+                        this.ctx.fillRect(...gapRect(dir, 4));
+                    } else {
+                        // CRACK — orange (pristine) -> yellow -> white-hot (about to break).
+                        const dmg = worldManager.getWallDamage ? worldManager.getWallDamage(rx, ry, dir) : 0;
+                        const t = Math.min(1, dmg / threshold);
+                        const green = Math.floor(100 + t * 155); // 100 -> 255
+                        const blue = Math.floor(t * 255);        // 0 -> 255
+                        this.ctx.fillStyle = `rgba(255, ${green}, ${blue}, ${0.45 + 0.55 * pulse})`;
+                        this.ctx.shadowColor = `rgb(255, ${green}, ${blue})`;
+                        this.ctx.shadowBlur = 6 + t * 14;
+                        this.ctx.fillRect(...gapRect(dir, 3 + Math.round(t * 5)));
+                    }
                 }
                 this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
             }
@@ -114,6 +100,9 @@ export class Renderer {
                 if (npc.id === 'gate') {
                     this.ctx.fillStyle = '#0088ff';
                     this.ctx.shadowColor = '#0088ff';
+                } else if (npc.id === 'denny') {
+                    this.ctx.fillStyle = '#ffcc00'; // amber clerk
+                    this.ctx.shadowColor = '#ffcc00';
                 } else {
                     this.ctx.fillStyle = '#00ff00';
                     this.ctx.shadowColor = '#00ff00';

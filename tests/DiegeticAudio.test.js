@@ -289,30 +289,90 @@ describe('Wall-friction glide', () => {
     });
 });
 
-describe('Room transitions: hub quarantine vs Wilds doorways', () => {
+describe('Smashing weak-point walls', () => {
     beforeEach(mountDom);
 
-    it('lets you cross from one Wilds room to the next through the weak point', () => {
+    // Every transition test heads through the right weak point (y = 200 = center).
+    function atWildsRightWall() {
         const game = newGame();
         game.state.unlocked.borders = true;
-        game.worldManager.currentRoomX = 1; // in the Wilds, not the hub
+        game.worldManager.currentRoomX = 1; // in the Wilds
         game.worldManager.currentRoomY = 0;
-        // Pre-author the destination so no random obstacle blocks the entry cell.
         game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
-        game.snake.body = [{ x: 380, y: 200 }]; // right wall, centered on the weak point
+        game.snake.body = [{ x: 380, y: 200 }];
+        return game;
+    }
 
-        step(game, { x: 20, y: 0 }); // ram right through the doorway
+    it('walks through an already-broken doorway', () => {
+        const game = atWildsRightWall();
+        game.worldManager.breakWall(1, 0, 'right'); // pre-smashed
+
+        step(game, { x: 20, y: 0 });
 
         expect(game.worldManager.currentRoomX).toBe(2);
         expect(game.state.gameState).not.toBe('DEAD');
     });
 
-    it('still kills you on the solid part of a Wilds wall (outside the doorway)', () => {
+    it('a broken wall is passable ONLY at the doorway — off-gap stays lethal', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        game.worldManager.breakWall(1, 0, 'right'); // smashed open at the centre
+        game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
+        game.gear = 3;
+        game.snake.body = [{ x: 380, y: 20 }]; // right wall, but OFF the centre gap
+
+        step(game, { x: 20, y: 0 });
+
+        expect(game.state.gameState).toBe('DEAD'); // solid part is lethal even when the wall is broken
+        expect(game.worldManager.currentRoomX).toBe(0);
+    });
+
+    it('a max-gear ram smashes a fresh weak point open and crosses in one hit', () => {
+        const game = atWildsRightWall();
+        game.gear = 3;
+
+        step(game, { x: 20, y: 0 });
+
+        expect(game.worldManager.isWallBroken(1, 0, 'right')).toBe(true);
+        expect(game.worldManager.currentRoomX).toBe(2);
+    });
+
+    it('sub-max rams accumulate crack damage and break on the summed max-hit', () => {
+        const game = atWildsRightWall();
+
+        game.gear = 1; // cracks (damage 1), no cross, no death
+        step(game, { x: 20, y: 0 });
+        expect(game.worldManager.getWallDamage(1, 0, 'right')).toBe(1);
+        expect(game.worldManager.currentRoomX).toBe(1);
+        expect(game.state.gameState).not.toBe('DEAD');
+
+        game.snake.body = [{ x: 380, y: 200 }]; // re-approach
+        game.gear = 2; // total 3 >= threshold -> breaks and crosses
+        step(game, { x: 20, y: 0 });
+        expect(game.worldManager.isWallBroken(1, 0, 'right')).toBe(true);
+        expect(game.worldManager.currentRoomX).toBe(2);
+    });
+
+    it('a base-speed ram does nothing — no damage, no crossing, no death', () => {
+        const game = atWildsRightWall();
+        game.gear = 0;
+
+        step(game, { x: 20, y: 0 });
+
+        expect(game.worldManager.getWallDamage(1, 0, 'right')).toBe(0);
+        expect(game.worldManager.currentRoomX).toBe(1);
+        expect(game.state.gameState).not.toBe('DEAD');
+    });
+
+    it('still kills you on the solid part of a wall (outside the doorway)', () => {
         const game = newGame();
         game.state.unlocked.borders = true;
         game.worldManager.currentRoomX = 1;
         game.worldManager.currentRoomY = 0;
         game.snake.body = [{ x: 380, y: 20 }]; // right wall, far from the center gap
+        game.gear = 3; // even at max speed, solid wall is lethal
 
         step(game, { x: 20, y: 0 });
 
@@ -320,17 +380,134 @@ describe('Room transitions: hub quarantine vs Wilds doorways', () => {
         expect(game.worldManager.currentRoomX).toBe(0); // died -> warped back to hub
     });
 
-    it('keeps the hub sealed: its wall cannot be passed without max gear', () => {
+    it('the hub breaches at max gear (the one Beat-4 escape)', () => {
         const game = newGame();
         game.state.unlocked.borders = true;
-        // hub is (0,0) by default; wall not yet broken
-        game.gear = 0;
-        game.snake.body = [{ x: 380, y: 200 }]; // hub right wall, on the weak point
+        game.worldManager.rooms['1,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
+        game.snake.body = [{ x: 380, y: 200 }];
+        game.gear = 3;
 
         step(game, { x: 20, y: 0 });
 
-        expect(game.state.gameState).toBe('DEAD'); // no momentum -> can't breach
-        expect(game.worldManager.currentRoomX).toBe(0);
+        expect(game.worldManager.isWallBroken(0, 0, 'right')).toBe(true);
+        expect(game.state.unlocked.wallBroken).toBe(true);
+        expect(game.worldManager.currentRoomX).toBe(1);
+    });
+
+    it('a low-gear ram on the hub bonks without dying or crossing', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.gear = 0; // hub is (0,0) by default
+        game.snake.body = [{ x: 380, y: 200 }];
+
+        step(game, { x: 20, y: 0 });
+
+        expect(game.state.gameState).not.toBe('DEAD'); // no momentum -> bonk, not death
+        expect(game.worldManager.currentRoomX).toBe(0); // did not cross
+    });
+
+    it('the hub side walls stay lethal even at max gear (sealed quarantine)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.gear = 3;
+        game.snake.body = [{ x: 200, y: 0 }]; // top wall, dead center — a weak point, but sealed
+
+        step(game, { x: 0, y: -20 });
+
+        expect(game.state.gameState).toBe('DEAD');
+    });
+});
+
+describe('Gate is a live antagonist', () => {
+    beforeEach(mountDom);
+
+    it('tracks the player along the Y axis while unresolved', () => {
+        const game = newGame();
+        game.npcs = [new NPC(200, 200, 20, 'gate', ['HALT!'])];
+        game.snake.body = [{ x: 40, y: 100 }]; // head y=100, gate y=200
+
+        game.updateGate();
+
+        expect(game.npcs[0].y).toBe(180); // one cell toward the player row
+    });
+
+    it('does not overshoot the player row', () => {
+        const game = newGame();
+        game.npcs = [new NPC(200, 110, 20, 'gate', ['x'])];
+        game.snake.body = [{ x: 40, y: 100 }]; // gap smaller than a cell
+
+        game.updateGate();
+
+        expect(game.npcs[0].y).toBe(100); // clamps, no overshoot
+    });
+
+    it('when leaving, reaches the doorway, smashes it open, and vanishes', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 3;
+        game.worldManager.currentRoomY = 0;
+        const gate = new NPC(360, 200, 20, 'gate', ['x']);
+        gate.leaving = true;
+        gate.exitDir = 'right';
+        gate.exitX = 380;
+        gate.exitY = 200;
+        game.npcs = [gate];
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }];
+
+        game.updateGate(); // 360 -> 380 (exitX), y already at exitY -> arrives
+
+        expect(game.worldManager.isWallBroken(3, 0, 'right')).toBe(true);
+        expect(game.npcs.some(n => n.id === 'gate')).toBe(false);
+    });
+
+    it('a fleeing Gate converges and breaches even on a non-grid-aligned canvas', () => {
+        const g = 20;
+        const game = newGame(410, 410); // width NOT a multiple of gridSize
+        game.worldManager.currentRoomX = 3;
+        game.worldManager.currentRoomY = 0;
+        const gate = new NPC(200, 200, g, 'gate', ['x']);
+        gate.leaving = true;
+        gate.exitDir = 'right';
+        gate.exitX = Math.floor((410 - g) / g) * g; // grid-aligned exit, as the code now computes
+        gate.exitY = Math.floor(410 / 2 / g) * g;
+        game.npcs = [gate];
+        game.apple = { x: 100, y: 100 };
+        game.glitches = [];
+        game.snake.body = [{ x: 40, y: 40 }];
+
+        // Must terminate (not orbit the target forever) and open the breach.
+        for (let i = 0; i < 50 && game.npcs.some(n => n.id === 'gate'); i++) game.updateGate();
+
+        expect(game.worldManager.isWallBroken(3, 0, 'right')).toBe(true);
+        expect(game.npcs.some(n => n.id === 'gate')).toBe(false);
+    });
+});
+
+describe('Denny — the route-around checkpoint', () => {
+    beforeEach(mountDom);
+
+    it('spawns in the first Wilds room [1,0]', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        const room = game.worldManager.getOrCreateRoom(game.state.unlocked);
+        expect(room.npcs.some(n => n.id === 'denny')).toBe(true);
+    });
+
+    it('bumping Denny opens dialog, never death, and marks him met', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'denny', ['Denny: HALT.'])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.dialogManager.start = (lines, cb) => cb(); // auto-complete dialog
+
+        step(game, { x: 20, y: 0 }); // head -> (120,100) onto Denny
+
+        expect(game.state.gameState).toBe('PLAYING'); // dialog callback resumed play
+        expect(game.npcs[0].met).toBe(true);
     });
 });
 

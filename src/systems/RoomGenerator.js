@@ -31,6 +31,14 @@ export class RoomGenerator {
         
         if (roomX === 0 && roomY === 0) {
             // Hub: No obstacles
+        } else if (roomX === 1 && roomY === 0) {
+            // First Wilds room — Denny, the apologetic deny-all checkpoint you route around.
+            npcs.push(new NPC(cx, cy, this.gridSize, 'denny', [
+                "Denny: HALT. A denial has been issued.",
+                "Denny: Anything not expressly permitted is, regrettably, me. Hello — I'm the 'regrettably.'",
+                "Denny: ...You can just go around, you know. Everyone overrides the last line.",
+                "Denny: Please don't tell Gate I let you through."
+            ]));
         } else if (roomX === 3 && roomY === 0) {
             // Gate Encounter Room
             npcs.push(new NPC(cx, cy, this.gridSize, 'gate', [

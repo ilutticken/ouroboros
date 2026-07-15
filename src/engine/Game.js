@@ -93,9 +93,10 @@ export class GameEngine {
         // Game State Variables
         this.lastTime = performance.now();
         this.baseSpeed = 100; // ms per move
-        this.speed = this.baseSpeed; 
+        this.speed = this.baseSpeed;
         this.gear = 0;
         this.moveTimer = 0;
+        this._wallBonking = false; // throttles repeated wall-bonk feedback
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
@@ -306,6 +307,37 @@ export class GameEngine {
         }, 500);
     }
     
+    // Gate is a live antagonist: before the encounter he tracks your Y so a
+    // straight run can't slip past him (a vertical goalie); after it, he flees to
+    // a doorway, smashes it open, and exits — a breach you can follow.
+    updateGate() {
+        const gate = this.npcs.find(n => n.id === 'gate');
+        if (!gate) return;
+        const g = this.gridSize;
+
+        if (gate.leaving) {
+            // Clamp toward the (grid-aligned) exit so we can't overshoot and orbit it.
+            if (gate.x < gate.exitX) gate.x = Math.min(gate.x + g, gate.exitX);
+            else if (gate.x > gate.exitX) gate.x = Math.max(gate.x - g, gate.exitX);
+            if (gate.y < gate.exitY) gate.y = Math.min(gate.y + g, gate.exitY);
+            else if (gate.y > gate.exitY) gate.y = Math.max(gate.y - g, gate.exitY);
+            if (gate.x === gate.exitX && gate.y === gate.exitY) {
+                // Reached the doorway — smash it open and slip through to the next sector.
+                this.worldManager.breakWall(this.worldManager.currentRoomX, this.worldManager.currentRoomY, gate.exitDir);
+                this.audio.playCrash();
+                this.narrative.printMessage("Gate: This isn't over, anomaly! [breaching to the next sector]");
+                this.npcs = this.npcs.filter(n => n.id !== 'gate');
+                this.worldManager.saveRoom(this.apple, this.glitches, this.npcs, this.obstacles);
+            }
+            return;
+        }
+
+        // Track the player's row so a straight horizontal run can't bypass him.
+        const hy = this.snake.head.y;
+        if (gate.y < hy) gate.y = Math.min(gate.y + g, hy);
+        else if (gate.y > hy) gate.y = Math.max(gate.y - g, hy);
+    }
+
     update(dt) {
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
         
@@ -317,7 +349,9 @@ export class GameEngine {
         
         if (this.moveTimer >= this.speed) {
             this.moveTimer = 0;
-            
+
+            this.updateGate();
+
             const changedDirection = this.input.updateDirection();
             
             if (this.input.direction.x !== 0 || this.input.direction.y !== 0) {
@@ -364,32 +398,60 @@ export class GameEngine {
                             if (newHeadX >= midX - 2 * this.gridSize && newHeadX <= midX + 2 * this.gridSize) isWeakPoint = true;
                         }
 
-                        // Hub Quarantine Constraint: Can only break OUT of 0,0 going RIGHT
-                        const inHub = (this.worldManager.currentRoomX === 0 && this.worldManager.currentRoomY === 0);
-                        const isBroken = this.worldManager.isWallBroken(this.worldManager.currentRoomX, this.worldManager.currentRoomY, directionStr);
-                        
-                        // Break condition: Must hit right wall of Hub at Max Gear (3)
-                        if (inHub && directionStr === 'right' && isWeakPoint && !isBroken) {
-                            if (this.gear >= 3) {
-                                this.worldManager.breakWall(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 1, 0);
-                                this.audio.playCrash(); // Violent wall breach, not a termination
-                                this.state.unlocked.wallBroken = true;
-                                this.narrative.printMessage("SYSTEM WARNING: QUARANTINE BREACH DETECTED.");
+                        const rx = this.worldManager.currentRoomX;
+                        const ry = this.worldManager.currentRoomY;
+                        const inHub = (rx === 0 && ry === 0);
+                        const isBroken = this.worldManager.isWallBroken(rx, ry, directionStr);
+                        // The Hub is a sealed quarantine — only its RIGHT wall is breakable.
+                        // Every Wilds weak point is breakable in any direction.
+                        const breakableHere = isWeakPoint && (!inHub || directionStr === 'right');
+
+                        if (isBroken && isWeakPoint) {
+                            // Walk through the smashed-open doorway — but only at the
+                            // central gap; the solid wall either side of it stays lethal.
+                            this.shiftScreen(dx, dy);
+                            shifted = true;
+                        } else if (breakableHere) {
+                            // Smash mechanic: ramming damage scales with gear. Base speed
+                            // or slower does nothing; higher gears crack the wall; a full
+                            // max-gear hit (or accumulated hits summing to one) breaks it.
+                            const dmg = Math.max(0, Math.min(3, this.gear));
+                            if (dmg <= 0) {
+                                // No momentum: bonk and hold position (non-lethal).
+                                if (!this._wallBonking) {
+                                    this.audio.playDenied();
+                                    if (!this.state.unlocked.wallHintShown) {
+                                        this.narrative.printMessage("Architect: That wall is weak, but you lack the momentum. Hit it with SPEED.");
+                                        this.state.unlocked.wallHintShown = true;
+                                    }
+                                }
+                                this._wallBonking = true;
+                                this.gear = 0;
+                                this.speed = this.baseSpeed;
+                                return; // do not move
+                            }
+                            const total = this.worldManager.damageWall(rx, ry, directionStr, dmg);
+                            if (total >= this.worldManager.wallBreakThreshold) {
+                                this.worldManager.breakWall(rx, ry, directionStr);
+                                this.audio.playCrash(); // Violent breach
+                                if (inHub) {
+                                    this.state.unlocked.wallBroken = true;
+                                    this.narrative.printMessage("SYSTEM WARNING: QUARANTINE BREACH DETECTED.");
+                                }
                                 this.shiftScreen(dx, dy);
                                 shifted = true;
                             } else {
-                                this.narrative.printMessage("Architect: That wall is weak, but you lack the momentum to break it.");
-                                this.die('border');
-                                return;
+                                // Cracked but not through — feedback fires on every hit
+                                // (bounded: at most a few cracks before the break, since
+                                // gear resets to 0 here), then bounce keeping the damage.
+                                this.audio.playCrack();
+                                this.narrative.printMessage("SYSTEM: Barrier fracturing — hit it again!");
+                                this.gear = 0;
+                                this.speed = this.baseSpeed;
+                                return; // do not move
                             }
-                        } else if (isWeakPoint && (isBroken || !inHub)) {
-                            // Pass through: either the broken Hub quarantine wall, or
-                            // any weak point in the Wilds — every non-Hub weak point is
-                            // an open, Zelda-style doorway (the Renderer already draws
-                            // them). Only the solid wall outside the gap is lethal.
-                            this.shiftScreen(dx, dy);
-                            shifted = true;
                         } else {
+                            // Solid wall (non-weak-point, or a sealed Hub wall): lethal.
                             this.die('border');
                             return;
                         }
@@ -407,7 +469,8 @@ export class GameEngine {
                     this.die('border');
                     return;
                 }
-                
+                this._wallBonking = false; // the snake advanced; reset bonk throttle
+
                 if (this.obstacles) {
                     for (const obs of this.obstacles) {
                         if (this.snake.head.x === obs.x && this.snake.head.y === obs.y) {
@@ -493,6 +556,7 @@ export class GameEngine {
                 // Check persistent NPC collisions
                 for (const npc of this.npcs) {
                     if (this.snake.head.x === npc.x && this.snake.head.y === npc.y) {
+                        if (npc.leaving) continue; // a fleeing NPC is non-interactive
                         if (npc.id === 'bite') {
                             if (this.state.unlocked.tailRider) {
                                 // Instantly pick him back up!
@@ -538,10 +602,10 @@ export class GameEngine {
                                 // Thread Suspension
                                 this.state.isSuspended = true; 
                                 this.dialogManager.start([
-                                    "Bite: Hey! Leave my best customer alone!",
-                                    "Bite: I'm slipping a root-override module into your memory bank.",
+                                    "2-Bit: Hey! Leave my best customer alone!",
+                                    "2-Bit: I'm slipping a root-override module into your memory bank.",
                                     "SYSTEM: You received the System Diagnostic Module! (Pause Menu Unlocked)",
-                                    "Bite: Use it to break his hold! (Press ESC)"
+                                    "2-Bit: Use it to break his hold! (Press ESC)"
                                 ], () => {
                                     this.state.unlocked.pauseMenu = true;
                                     this.state.gameState = 'PAUSED';
@@ -555,14 +619,31 @@ export class GameEngine {
                                             "Gate: I must report this anomaly to the Architect!"
                                         ], () => {
                                             this.state.gameState = 'PLAYING';
-                                            this.npcs = this.npcs.filter(n => n.id !== 'gate');
-                                            this.worldManager.saveRoom(this.apple, this.glitches, this.npcs, this.obstacles);
+                                            // Gate flees on-screen to the right doorway,
+                                            // smashes it open, and exits — you can follow.
+                                            const gate = this.npcs.find(n => n.id === 'gate');
+                                            if (gate) {
+                                                gate.leaving = true;
+                                                gate.exitDir = 'right';
+                                                // Grid-align the exit cell (canvas size need not be a
+                                                // multiple of gridSize) so the flee can reach it exactly.
+                                                gate.exitX = Math.floor((this.canvas.width - this.gridSize) / this.gridSize) * this.gridSize;
+                                                gate.exitY = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+                                            }
                                         });
                                     };
                                 });
                             });
+                        } else if (npc.id === 'denny') {
+                            // The Last Line: apologetic, non-blocking. You route around him.
+                            this.state.gameState = 'DIALOG';
+                            const lines = npc.met
+                                ? ["Denny: (whispering) Go on. I didn't see anything. Please don't tell Gate."]
+                                : npc.dialog;
+                            npc.met = true;
+                            this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
                         }
-                        this.snake.shrink();
+                        this.snake.shrink(this.state.unlocked.tailRider); // keep 2-Bit on the tail
                         return;
                     }
                 }

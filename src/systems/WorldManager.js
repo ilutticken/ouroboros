@@ -6,10 +6,29 @@ export class WorldManager {
         this.currentRoomY = 0;
         this.rooms = {};
         
-        // Track broken boundaries. Format: 'x1,y1-x2,y2' where x1<=x2 and y1<=y2
-        this.brokenWalls = new Set();
-        
+        // Track boundaries. Format: 'x1,y1-x2,y2' where the smaller room comes first.
+        this.brokenWalls = new Set();     // fully smashed-through (Open) boundaries
+        this.wallDamage = {};             // partial crack damage per boundary (persists)
+        this.wallBreakThreshold = 3;      // damage to break; one max-gear (gear 3) hit
+
         this.roomGenerator = new RoomGenerator(gridSize, canvasWidth, canvasHeight);
+    }
+
+    // Canonical key for the boundary leaving room (roomX,roomY) in `direction`.
+    // Symmetric: the same wall has the same key from either adjoining room.
+    boundaryKey(roomX, roomY, direction) {
+        let toX = roomX;
+        let toY = roomY;
+        if (direction === 'up') toY -= 1;
+        else if (direction === 'down') toY += 1;
+        else if (direction === 'left') toX -= 1;
+        else if (direction === 'right') toX += 1;
+        else return null;
+
+        if (roomX < toX || (roomX === toX && roomY < toY)) {
+            return `${roomX},${roomY}-${toX},${toY}`;
+        }
+        return `${toX},${toY}-${roomX},${roomY}`;
     }
     
     moveBiteTowards(playerRoomX, playerRoomY) {
@@ -52,34 +71,26 @@ export class WorldManager {
         this.currentRoomY += dy;
     }
     
-    breakWall(fromX, fromY, toX, toY) {
-        // Ensure consistent key ordering
-        let key = '';
-        if (fromX < toX || (fromX === toX && fromY < toY)) {
-            key = `${fromX},${fromY}-${toX},${toY}`;
-        } else {
-            key = `${toX},${toY}-${fromX},${fromY}`;
-        }
-        this.brokenWalls.add(key);
+    breakWall(roomX, roomY, direction) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        if (key) this.brokenWalls.add(key);
     }
-    
+
     isWallBroken(roomX, roomY, direction) {
-        let toX = roomX;
-        let toY = roomY;
-        
-        if (direction === 'up') toY -= 1;
-        else if (direction === 'down') toY += 1;
-        else if (direction === 'left') toX -= 1;
-        else if (direction === 'right') toX += 1;
-        else return false;
-        
-        let key = '';
-        if (roomX < toX || (roomX === toX && roomY < toY)) {
-            key = `${roomX},${roomY}-${toX},${toY}`;
-        } else {
-            key = `${toX},${toY}-${roomX},${roomY}`;
-        }
-        
-        return this.brokenWalls.has(key);
+        const key = this.boundaryKey(roomX, roomY, direction);
+        return key ? this.brokenWalls.has(key) : false;
+    }
+
+    // Add crack damage to a weak point; returns the new accumulated total.
+    damageWall(roomX, roomY, direction, amount) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        if (!key) return 0;
+        this.wallDamage[key] = (this.wallDamage[key] || 0) + amount;
+        return this.wallDamage[key];
+    }
+
+    getWallDamage(roomX, roomY, direction) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        return key ? (this.wallDamage[key] || 0) : 0;
     }
 }
