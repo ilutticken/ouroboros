@@ -5,10 +5,14 @@ export class NarrativeManager {
         this.messageQueue = [];
         this.isPrinting = false;
         this.deathCount = 0;
+        // The monitor is dark until the system boots it (the UI reveal at 5 Data).
+        // While offline it must not print OR play typewriter doots — otherwise the
+        // player hears the terminal typing with nothing on screen.
+        this.online = false;
     }
-    
+
     printMessage(msg) {
-        if (!this.terminal) return;
+        if (!this.terminal || !this.online) return;
         this.messageQueue.push(msg);
         this.processQueue();
     }

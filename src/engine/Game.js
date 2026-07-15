@@ -173,9 +173,63 @@ export class GameEngine {
         // Detach from tail
         const tail = this.snake.body.pop();
         this.npcs.push(new NPC(tail.x, tail.y, this.gridSize, 'bite', []));
-        this.audio.playBeep(); // Feedback sound
+        this.audio.playBeep(); // 2-Bit's packet detaching from the tail (a data write)
     }
-    
+
+    // Fires once per grid step. Every sound here is diegetic: it is the system
+    // itself reacting to where your body is, not UI feedback layered on top.
+    playAmbientAudio() {
+        // Stay silent unless the sim is actually running. update() sets state to
+        // TRANSITION mid-tick during a room crossing (shiftScreen falls through and
+        // keeps executing), which would otherwise leak a wub against the new room's
+        // Glitches during the black transition.
+        if (this.state.gameState !== 'PLAYING') return;
+
+        const g = this.gridSize;
+
+        // Wall friction — the neon quarantine barrier scraping your mass as you
+        // drag along it. Like the corruption wub, the WHOLE body counts: the scrape
+        // sounds while ANY segment is against the perimeter, so it keeps going after
+        // you turn off a wall while your body is still draped on it (not just while
+        // the head runs parallel). Only exists once the walls do.
+        if (this.state.unlocked.borders) {
+            const w = this.canvas.width;
+            const h = this.canvas.height;
+            // `>=` (not `===`) for the far walls: the canvas is sized to the wrapper
+            // and need not be an exact multiple of gridSize, so the rightmost/
+            // bottommost reachable cell can sit past width-g / height-g.
+            const scraping = this.snake.body.some(s =>
+                s.x <= 0 || s.x >= w - g || s.y <= 0 || s.y >= h - g
+            );
+
+            if (scraping) {
+                // Faster you scrape, higher the friction pitch.
+                const intensity = 0.3 + Math.max(0, this.gear) * 0.22;
+                this.audio.playGlide(intensity);
+            }
+        }
+
+        // Corruption proximity — ominous dubstep wubs as ANY part of your body
+        // passes near a Glitch. The closest body-segment-to-Glitch pair sets the
+        // intensity, so a long snake dragging past corruption wubs the whole time.
+        if (this.glitches && this.glitches.length) {
+            const radius = 3; // tiles of dread
+            let closest = Infinity;
+            for (const glitch of this.glitches) {
+                for (const seg of this.snake.body) {
+                    const dx = Math.abs(seg.x - glitch.x) / g;
+                    const dy = Math.abs(seg.y - glitch.y) / g;
+                    const dist = Math.max(dx, dy); // Chebyshev: diagonal counts as adjacent
+                    if (dist >= 1 && dist < closest) closest = dist;
+                }
+            }
+            if (closest <= radius) {
+                const intensity = (radius - closest + 1) / radius; // 1 tile away -> ~1.0
+                this.audio.playWub(intensity);
+            }
+        }
+    }
+
     spawnApple() {
         const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || []);
         
@@ -284,7 +338,7 @@ export class GameEngine {
                                 "2-Bit: I'm not walking out of here!"
                             ];
                             this.narrative.printMessage(complaints[Math.floor(Math.random() * complaints.length)]);
-                            this.audio.playDeath();
+                            this.audio.playDenied(); // 2-Bit tugs you back — nothing dies
                             // Reverse direction (bounce)
                             this.input.direction.x *= -1;
                             this.input.direction.y *= -1;
@@ -299,13 +353,15 @@ export class GameEngine {
                         else if (newHeadY < 0) { directionStr = 'up'; dy = -1; }
                         else if (newHeadY >= this.canvas.height) { directionStr = 'down'; dy = 1; }
                         
+                        // Weak point spans 5 cells (center ± 2) — keep in sync with
+                        // the Renderer's gapSize (gridSize * 5).
                         let isWeakPoint = false;
                         if (directionStr === 'left' || directionStr === 'right') {
                             const midY = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
-                            if (newHeadY >= midY - this.gridSize && newHeadY <= midY + this.gridSize) isWeakPoint = true;
+                            if (newHeadY >= midY - 2 * this.gridSize && newHeadY <= midY + 2 * this.gridSize) isWeakPoint = true;
                         } else {
                             const midX = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
-                            if (newHeadX >= midX - this.gridSize && newHeadX <= midX + this.gridSize) isWeakPoint = true;
+                            if (newHeadX >= midX - 2 * this.gridSize && newHeadX <= midX + 2 * this.gridSize) isWeakPoint = true;
                         }
 
                         // Hub Quarantine Constraint: Can only break OUT of 0,0 going RIGHT
@@ -316,7 +372,7 @@ export class GameEngine {
                         if (inHub && directionStr === 'right' && isWeakPoint && !isBroken) {
                             if (this.gear >= 3) {
                                 this.worldManager.breakWall(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 1, 0);
-                                this.audio.playDeath(); // Crash sound
+                                this.audio.playCrash(); // Violent wall breach, not a termination
                                 this.state.unlocked.wallBroken = true;
                                 this.narrative.printMessage("SYSTEM WARNING: QUARANTINE BREACH DETECTED.");
                                 this.shiftScreen(dx, dy);
@@ -326,7 +382,11 @@ export class GameEngine {
                                 this.die('border');
                                 return;
                             }
-                        } else if (isWeakPoint && isBroken) {
+                        } else if (isWeakPoint && (isBroken || !inHub)) {
+                            // Pass through: either the broken Hub quarantine wall, or
+                            // any weak point in the Wilds — every non-Hub weak point is
+                            // an open, Zelda-style doorway (the Renderer already draws
+                            // them). Only the solid wall outside the gap is lethal.
                             this.shiftScreen(dx, dy);
                             shifted = true;
                         } else {
@@ -357,7 +417,11 @@ export class GameEngine {
                         }
                     }
                 }
-                
+
+                // Diegetic ambient audio: the system's own signals bleeding into your
+                // senses as you move through it (corruption proximity, wall friction).
+                this.playAmbientAudio();
+
                 if (this.apple instanceof NPC) {
                     if (this.snake.checkAppleCollision(this.apple)) {
                         this.state.gameState = 'DIALOG';
@@ -420,7 +484,7 @@ export class GameEngine {
                             }
                         }
                         this.state.score = Math.max(0, this.state.score - damage);
-                        this.audio.playDeath(); // Temp hit sound
+                        this.audio.playCorruptHit(); // Corruption bites in — not a death
                         this.glitches.splice(i, 1);
                         break;
                     }
@@ -540,13 +604,29 @@ export class GameEngine {
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
-        
+
+        // If the player has met 2-Bit but hasn't hooked him onto the tail yet, he
+        // lives as a grid NPC — but he's stripped from every saved room (above) so
+        // he isn't baked into permanent state. Without re-placing him, dying at
+        // this stage loses him forever and soft-locks his questline. Drop him back
+        // into the hub the player respawns into.
+        if (this.state.unlocked.biteProgress >= 1 && !this.state.unlocked.tailRider &&
+            !this.npcs.find(n => n.id === 'bite')) {
+            const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles, this.glitches, this.npcs);
+            this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'bite', []));
+        }
+
         this.narrative.onDeath(cause);
     }
     
     checkUnlocks() {
+        // Boot the narrative monitor as the UI reveals at 5 Data. Set BEFORE
+        // onScoreUnlock so the score-5 message is the first thing it prints;
+        // earlier beats (score 1, early deaths) stay silent while it's dark.
+        if (this.state.score >= 5) this.narrative.online = true;
+
         this.narrative.onScoreUnlock(this.state.score, this.state.unlocked);
-        
+
         if (this.state.score >= 5 && !this.state.unlocked.ui) {
             document.getElementById('ui-layer').classList.remove('hidden');
             document.getElementById('ui-layer-bottom').classList.remove('hidden');
@@ -555,7 +635,7 @@ export class GameEngine {
         
         if (this.state.score >= 10 && !this.state.unlocked.borders) {
             this.state.unlocked.borders = true;
-            this.audio.playDeath(); // Dramatic sound for rule change
+            this.audio.playMaterialize(); // The system extrudes quarantine walls into being
         }
 
         // We removed the old upgrade panel, so no upgrades flag to check here

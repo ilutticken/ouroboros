@@ -24,7 +24,7 @@ export class Renderer {
             this.ctx.strokeStyle = `rgba(255, 100, 0, ${0.5 + pulse * 0.5})`;
             this.ctx.shadowColor = '#ff6600';
             
-            const gapSize = this.gridSize * 3;
+            const gapSize = this.gridSize * 5;
             const cx = this.canvas.width / 2;
             const cy = this.canvas.height / 2;
             
