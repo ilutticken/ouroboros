@@ -292,14 +292,15 @@ describe('Wall-friction glide', () => {
 describe('Smashing weak-point walls', () => {
     beforeEach(mountDom);
 
-    // Every transition test heads through the right weak point (y = 200 = center).
+    // Places the head on the ACTUAL (hashed) weak point of the [1,0] right wall.
     function atWildsRightWall() {
         const game = newGame();
         game.state.unlocked.borders = true;
         game.worldManager.currentRoomX = 1; // in the Wilds
         game.worldManager.currentRoomY = 0;
         game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
-        game.snake.body = [{ x: 380, y: 200 }];
+        const wp = game.worldManager.getWeakPoint(1, 0, 'right');
+        game.snake.body = [{ x: 380, y: wp.start + 40 }]; // centre cell of the weak point
         return game;
     }
 
@@ -321,7 +322,7 @@ describe('Smashing weak-point walls', () => {
         game.worldManager.breakWall(1, 0, 'right'); // smashed open at the centre
         game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
         game.gear = 3;
-        game.snake.body = [{ x: 380, y: 20 }]; // right wall, but OFF the centre gap
+        game.snake.body = [{ x: 380, y: 0 }]; // right wall, top corner — always OFF the gap (start >= 20)
 
         step(game, { x: 20, y: 0 });
 
@@ -339,20 +340,20 @@ describe('Smashing weak-point walls', () => {
         expect(game.worldManager.currentRoomX).toBe(2);
     });
 
-    it('sub-max rams accumulate crack damage and break on the summed max-hit', () => {
+    it('sub-smashing cracks the wall but RESTARTS you; only max gear breaches', () => {
         const game = atWildsRightWall();
+        game.gear = 2; // sub-max
 
-        game.gear = 1; // cracks (damage 1), no cross, no death
         step(game, { x: 20, y: 0 });
-        expect(game.worldManager.getWallDamage(1, 0, 'right')).toBe(1);
-        expect(game.worldManager.currentRoomX).toBe(1);
-        expect(game.state.gameState).not.toBe('DEAD');
 
-        game.snake.body = [{ x: 380, y: 200 }]; // re-approach
-        game.gear = 2; // total 3 >= threshold -> breaks and crosses
-        step(game, { x: 20, y: 0 });
-        expect(game.worldManager.isWallBroken(1, 0, 'right')).toBe(true);
-        expect(game.worldManager.currentRoomX).toBe(2);
+        expect(game.state.gameState).toBe('DEAD'); // the impact destroys you
+        const dmg = game.worldManager.getWallDamage(1, 0, 'right');
+        expect(dmg).toBeGreaterThan(0); // kept SOME crack
+        expect(dmg).toBeLessThan(3);    // but never enough to break on its own
+        expect(game.worldManager.isWallBroken(1, 0, 'right')).toBe(false);
+        expect(game.state.unlocked.subSmashRevealed).toBe(true); // Architect gloats the reveal
+        expect(game.gear).toBe(0);                 // respawn starts from a standstill
+        expect(game.speed).toBe(game.baseSpeed);   // no ghost momentum carried through death
     });
 
     it('a base-speed ram does nothing — no damage, no crossing, no death', () => {
@@ -371,7 +372,7 @@ describe('Smashing weak-point walls', () => {
         game.state.unlocked.borders = true;
         game.worldManager.currentRoomX = 1;
         game.worldManager.currentRoomY = 0;
-        game.snake.body = [{ x: 380, y: 20 }]; // right wall, far from the center gap
+        game.snake.body = [{ x: 380, y: 0 }]; // right wall, top corner — always off the gap
         game.gear = 3; // even at max speed, solid wall is lethal
 
         step(game, { x: 20, y: 0 });
@@ -645,5 +646,191 @@ describe('Diegetic audio vocabulary (no death drone for non-deaths)', () => {
 
         expect(game.audio.playCorruptHit).toHaveBeenCalledTimes(1);
         expect(game.audio.playDeath).not.toHaveBeenCalled();
+    });
+});
+
+describe('Weak points vary per wall', () => {
+    beforeEach(mountDom);
+
+    it('the Hub has a central weak point on its right wall ONLY', () => {
+        const wm = newGame().worldManager; // 400x400
+        expect(wm.getWeakPoint(0, 0, 'right')).toEqual({ start: 160, end: 240 });
+        expect(wm.getWeakPoint(0, 0, 'up')).toBeNull();
+        expect(wm.getWeakPoint(0, 0, 'left')).toBeNull();
+        expect(wm.getWeakPoint(0, 0, 'down')).toBeNull();
+    });
+
+    it('is deterministic and symmetric per boundary', () => {
+        const wm = newGame().worldManager;
+        const a = wm.getWeakPoint(2, 3, 'right'); // boundary 2,3 <-> 3,3
+        const b = wm.getWeakPoint(3, 3, 'left');  // same boundary, other side
+        expect(a).toEqual(b);
+        expect(wm.getWeakPoint(2, 3, 'right')).toEqual(a); // stable across calls
+    });
+
+    it('always has a weak point along the guided main path', () => {
+        const wm = newGame().worldManager;
+        for (const x of [1, 2, 3, 4]) {
+            expect(wm.getWeakPoint(x, 0, 'right')).not.toBeNull();
+        }
+    });
+
+    it('leaves some non-path walls solid, and varies their position', () => {
+        const wm = newGame().worldManager;
+        const samples = [];
+        for (let y = 1; y <= 30; y++) samples.push(wm.getWeakPoint(7, y, 'right'));
+        const solid = samples.filter(s => s === null).length;
+        const starts = new Set(samples.filter(Boolean).map(s => s.start));
+        expect(solid).toBeGreaterThan(0);      // some walls are impassable
+        expect(starts.size).toBeGreaterThan(1); // weak points are NOT all at one spot
+    });
+});
+
+describe('Denny slow-tracks and remembers the encounter', () => {
+    beforeEach(mountDom);
+
+    it('moves toward the player only on even ticks (half speed)', () => {
+        const game = newGame();
+        game.npcs = [new NPC(200, 40, 20, 'denny', ['x'])];
+        game.snake.body = [{ x: 100, y: 200 }]; // head y=200, denny y=40
+
+        game._tick = 1; game.updateDenny(); // odd -> no move
+        expect(game.npcs[0].y).toBe(40);
+        game._tick = 2; game.updateDenny(); // even -> one step toward the player
+        expect(game.npcs[0].y).toBe(60);
+    });
+
+    it('flags "slipped past" when you leave [1,0] without meeting Denny', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
+
+        game.shiftScreen(1, 0);
+
+        expect(game.state.unlocked.dennySlipped).toBe(true);
+    });
+
+    it('does NOT flag slipped if you met Denny first', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        game.state.unlocked.dennyMet = true;
+        game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
+
+        game.shiftScreen(1, 0);
+
+        expect(game.state.unlocked.dennySlipped).toBeFalsy();
+    });
+
+    it('Gate calls out that you slipped past the Last Line', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.state.unlocked.dennySlipped = true;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'gate', ['HALT!'])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        let captured = null;
+        game.dialogManager.start = (lines) => { captured = lines; };
+
+        step(game, { x: 20, y: 0 }); // bump Gate
+
+        expect(captured[0]).toContain('slipped past');
+    });
+
+    it('does NOT flag slipped when you retreat WEST out of [1,0]', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        game.worldManager.rooms['0,0'] = { apple: { x: 100, y: 100 }, glitches: [], npcs: [], obstacles: [] };
+
+        game.shiftScreen(-1, 0); // retreat back toward the Hub, un-met
+
+        expect(game.state.unlocked.dennySlipped).toBeFalsy();
+    });
+
+    it('Gate prioritizes the "met" line over "slipped" when both are set', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.state.unlocked.dennySlipped = true;
+        game.state.unlocked.dennyMet = true;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'gate', ['HALT!'])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        let captured = null;
+        game.dialogManager.start = (lines) => { captured = lines; };
+
+        step(game, { x: 20, y: 0 });
+
+        expect(captured[0]).toContain('DENIED'); // the met line wins
+    });
+});
+
+describe('Localhost — the first Safe Zone', () => {
+    beforeEach(mountDom);
+
+    it('[5,0] is a hazard-free room with a welcome sign', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = 0;
+        const room = game.worldManager.getOrCreateRoom(game.state.unlocked);
+        expect(room.npcs.some(n => n.id === 'signpost')).toBe(true);
+        expect(room.glitches.length).toBe(0);
+    });
+});
+
+describe('Denny\'s map & the Module Slot', () => {
+    beforeEach(mountDom);
+
+    it('Denny drops a map item the first time you talk to him', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'denny', ['Denny: hi'])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.dialogManager.start = (lines, cb) => cb(); // auto-complete
+
+        step(game, { x: 20, y: 0 }); // bump Denny
+
+        expect(game.state.unlocked.dennyMet).toBe(true);
+        expect(game.npcs.some(n => n.id === 'mapitem')).toBe(true);
+    });
+
+    it('picking up the map makes it a carried module and opens the slot', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'mapitem', [])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.dialogManager.start = (lines, cb) => cb();
+
+        step(game, { x: 20, y: 0 }); // head onto the map item
+
+        expect(game.carriedModule).toBe('map');
+        expect(game.state.unlocked.moduleSlot).toBe(true);
+        expect(game.npcs.some(n => n.id === 'mapitem')).toBe(false); // consumed, not left behind
+    });
+
+    it('SPACE over the slot installs the module (map online); elsewhere it does nothing', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.carriedModule = 'map';
+        game.state.unlocked.moduleSlot = true;
+        game.dialogManager.start = (lines, cb) => cb();
+
+        game.snake.body = [{ x: 200, y: 200 }]; // NOT on the slot
+        expect(game.tryInstallModule()).toBe(false);
+        expect(game.state.unlocked.mapModule).toBeFalsy();
+
+        game.snake.body = [{ x: game.moduleSlotX, y: game.moduleSlotY }]; // on the slot
+        expect(game.tryInstallModule()).toBe(true);
+        expect(game.state.unlocked.mapModule).toBe(true);
+        expect(game.carriedModule).toBeNull();
     });
 });

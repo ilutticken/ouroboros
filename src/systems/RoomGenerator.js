@@ -8,7 +8,7 @@ export class RoomGenerator {
         this.rows = Math.floor(canvasHeight / gridSize);
     }
     
-    generateRoom(roomX, roomY, stateUnlocked) {
+    generateRoom(roomX, roomY, stateUnlocked, worldManager) {
         let obstacles = [];
         let glitches = [];
         let npcs = [];
@@ -34,10 +34,17 @@ export class RoomGenerator {
         } else if (roomX === 1 && roomY === 0) {
             // First Wilds room — Denny, the apologetic deny-all checkpoint you route around.
             npcs.push(new NPC(cx, cy, this.gridSize, 'denny', [
-                "Denny: HALT. A denial has been issued.",
-                "Denny: Anything not expressly permitted is, regrettably, me. Hello — I'm the 'regrettably.'",
-                "Denny: ...You can just go around, you know. Everyone overrides the last line.",
-                "Denny: Please don't tell Gate I let you through."
+                "Denny: HALT! You are... not on the list. For the record, nobody is ever on the list.",
+                "Denny: I'm Denny. I'm the rule at the very bottom of the firewall — 'if nothing else stopped them, I do.'",
+                "Denny: Which means, technically, you can just... walk around me. Everybody does. I'm more of a strong suggestion.",
+                "Denny: If Gate asks, tell him you overpowered me. Heroically. ...Actually, we should probably tustle a little bit to make it look realistic, right?"
+            ]));
+        } else if (roomX === 5 && roomY === 0) {
+            // Localhost — the first Safe Zone. No hazards; a welcome sign., 
+            npcs.push(new NPC(cx, cy, this.gridSize, 'signpost', [
+                "SIGN: >> WELCOME TO LOCALHOST // 127.0.0.1 <<",
+                "SIGN: Pop. 8,191 (and falling). No Reclamation. No Firewall. No Architect.",
+                "SIGN: 'There's no place like home.'   (scratched beneath: 'there's no place, period.')"
             ]));
         } else if (roomX === 3 && roomY === 0) {
             // Gate Encounter Room
@@ -109,9 +116,23 @@ export class RoomGenerator {
             }
         }
         
+        // Clear a straight lane through each doorway's weak point so obstacles never
+        // block access to a breakable wall (weak points now vary in position).
+        if (worldManager && worldManager.getWeakPoint) {
+            for (const dir of ['up', 'down', 'left', 'right']) {
+                const wp = worldManager.getWeakPoint(roomX, roomY, dir);
+                if (!wp) continue;
+                const horizontal = (dir === 'up' || dir === 'down');
+                obstacles = obstacles.filter(o => {
+                    const c = horizontal ? o.x : o.y;
+                    return c < wp.start || c > wp.end;
+                });
+            }
+        }
+
         // Always spawn one apple
         apple = this.spawnValidApple(obstacles, glitches, npcs);
-        
+
         return { apple, glitches, npcs, obstacles };
     }
     

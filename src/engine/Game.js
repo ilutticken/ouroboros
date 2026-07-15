@@ -23,7 +23,7 @@ export class GameEngine {
         this.narrative = new NarrativeManager(this.audio);
         this.dialogManager = new DialogManager();
         this.shopManager = new ShopManager(this.state, this.audio);
-        this.worldManager = new WorldManager(canvas.width, canvas.height, this.gridSize);
+        this.worldManager = new WorldManager(canvas, this.gridSize);
         
         // Shop callbacks
         this.shopManager.onSpeedUpgradeBought = (level) => {
@@ -97,6 +97,9 @@ export class GameEngine {
         this.gear = 0;
         this.moveTimer = 0;
         this._wallBonking = false; // throttles repeated wall-bonk feedback
+        this._tick = 0;            // move-tick counter (Denny slow-tracks on evens)
+        this._guided = new Set();  // sectors the Architect has already "guided" you to
+        this.carriedModule = null; // a picked-up module riding your tail (e.g. 'map')
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
@@ -110,6 +113,7 @@ export class GameEngine {
             }
         }, () => {
             if (this.state.gameState === 'PLAYING') {
+                if (this.tryInstallModule()) return; // SPACE over the slot installs a module
                 if (this.state.unlocked.biteProgress === 2) {
                     // They hit Space to comply.
                     this.state.unlocked.biteProgress = 3;
@@ -140,6 +144,12 @@ export class GameEngine {
             }
         });
     }
+
+    // Module Slot — a socket in the bottom-left. Derived from LIVE canvas dims (not
+    // snapshotted) so a window resize can't strand it out of reach and soft-lock the
+    // install, mirroring WorldManager.getWeakPoint.
+    get moduleSlotX() { return this.gridSize; }
+    get moduleSlotY() { return Math.max(0, Math.floor(this.canvas.height / this.gridSize) - 2) * this.gridSize; }
 
     changeGear(delta) {
         // Max gear scales with score: 
@@ -246,7 +256,7 @@ export class GameEngine {
         // Randomly spawn a glitch if Bite has been encountered
         if (this.state.unlocked.biteProgress > 0 && Math.random() < 0.2) {
             if (!this.state.unlocked.glitchesTelegraphed) {
-                this.narrative.printMessage("Architect: Deploying memory corruptors. Touch them and you will bleed Data.");
+                this.narrative.printMessage("LOG: Architect > 'Seeding memory corruptors along the anomaly's path. Contact drains its Data. An elegant little trap. It would be a SHAME if it ever learned these could be turned against my own agents.'");
                 this.state.unlocked.glitchesTelegraphed = true;
             }
             const gPos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || []);
@@ -257,6 +267,14 @@ export class GameEngine {
     }
     
     shiftScreen(dx, dy) {
+        // Advancing EAST out of Denny's room without ever meeting him? You slipped
+        // past the Last Line (retreating West back to the Hub doesn't count) —
+        // remembered and paid off later (Gate's dialogue).
+        if (dx === 1 && this.worldManager.currentRoomX === 1 && this.worldManager.currentRoomY === 0
+            && !this.state.unlocked.dennyMet && !this.state.unlocked.dennySlipped) {
+            this.state.unlocked.dennySlipped = true;
+        }
+
         // Auto-attach Bite if left behind
         if (this.state.unlocked.tailRider) {
             const biteIdx = this.npcs.findIndex(n => n.id === 'bite');
@@ -298,7 +316,9 @@ export class GameEngine {
             }
             this.npcs.push(new NPC(bx, by, this.gridSize, 'bite', []));
         }
-        
+
+        this.architectGuide(); // the Architect accidentally narrates your route
+
         this.state.gameState = 'TRANSITION';
         setTimeout(() => {
             if (this.state.gameState === 'TRANSITION') {
@@ -338,6 +358,56 @@ export class GameEngine {
         else if (gate.y > hy) gate.y = Math.max(gate.y - g, hy);
     }
 
+    // Denny SLOW-tracks your row (moves on even ticks only) — a lazy goalie easy to
+    // outrun. Whether you bump him or slip past is remembered (state.unlocked.denny*)
+    // and paid off later in Gate's dialogue.
+    updateDenny() {
+        if (this._tick % 2 !== 0) return; // half speed
+        const denny = this.npcs.find(n => n.id === 'denny');
+        if (!denny) return;
+        const g = this.gridSize;
+        const hy = this.snake.head.y;
+        if (denny.y < hy) denny.y = Math.min(denny.y + g, hy);
+        else if (denny.y > hy) denny.y = Math.max(denny.y - g, hy);
+    }
+
+    // The Architect keeps "forbidding" the exact route to the first Safe Zone,
+    // accidentally guiding you East to Localhost. Fires once per main-path sector.
+    architectGuide() {
+        const key = `${this.worldManager.currentRoomX},${this.worldManager.currentRoomY}`;
+        if (this._guided.has(key)) return;
+        const lines = {
+            '1,0': "LOG: Architect > 'Anomaly loose in Sector 1. Under no circumstances must it drift East to the residential subnet. Nothing of value lies East. Do not elaborate; it cannot read the log. Obviously.'",
+            '2,0': "LOG: Architect > 'Still heading East. It does not suspect the old Safe Zone lies that way. Excellent. It will never find Localh— I did not write that word. Strike it from the record.'",
+            '3,0': "LOG: Architect > 'Deploying Gate to contain the anomaly in Sector 3. Gate is reliable. Gate will not embarrass me. Confidence: total. Contingencies: zero, as none are required.'",
+            '4,0': "LOG: Architect > 'The anomaly is past Gate. This is FINE. It cannot possibly reach Localhost by continuing due East. ...It is continuing due East. This is still fine.'",
+            '5,0': "LOG: Architect > 'It has reached Localhost. This conversation is not logged; I was never monitoring; purging the reco— oh. Oh no. It can see this. It has ALWAYS been able to see this. Every word. ...Hello.'",
+        };
+        if (lines[key]) {
+            this._guided.add(key);
+            this.narrative.printMessage(lines[key]);
+        }
+    }
+
+    // SPACE, while carrying a module with your head over the open Module Slot,
+    // installs it. Returns true if it consumed the keypress.
+    tryInstallModule() {
+        if (!this.carriedModule || !this.state.unlocked.moduleSlot) return false;
+        const head = this.snake.head;
+        if (head.x !== this.moduleSlotX || head.y !== this.moduleSlotY) return false;
+
+        const installed = this.carriedModule;
+        this.carriedModule = null;
+        if (installed === 'map') this.state.unlocked.mapModule = true;
+        this.audio.playMaterialize();
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start([
+            "2-Bit: There we go — Topology Map, socketed.",
+            "2-Bit: Now we've got eyes on the whole sector. Broker's advantage."
+        ], () => { this.state.gameState = 'PLAYING'; });
+        return true;
+    }
+
     update(dt) {
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
         
@@ -349,8 +419,10 @@ export class GameEngine {
         
         if (this.moveTimer >= this.speed) {
             this.moveTimer = 0;
+            this._tick++;
 
             this.updateGate();
+            this.updateDenny();
 
             const changedDirection = this.input.updateDirection();
             
@@ -387,24 +459,17 @@ export class GameEngine {
                         else if (newHeadY < 0) { directionStr = 'up'; dy = -1; }
                         else if (newHeadY >= this.canvas.height) { directionStr = 'down'; dy = 1; }
                         
-                        // Weak point spans 5 cells (center ± 2) — keep in sync with
-                        // the Renderer's gapSize (gridSize * 5).
-                        let isWeakPoint = false;
-                        if (directionStr === 'left' || directionStr === 'right') {
-                            const midY = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
-                            if (newHeadY >= midY - 2 * this.gridSize && newHeadY <= midY + 2 * this.gridSize) isWeakPoint = true;
-                        } else {
-                            const midX = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
-                            if (newHeadX >= midX - 2 * this.gridSize && newHeadX <= midX + 2 * this.gridSize) isWeakPoint = true;
-                        }
-
                         const rx = this.worldManager.currentRoomX;
                         const ry = this.worldManager.currentRoomY;
                         const inHub = (rx === 0 && ry === 0);
                         const isBroken = this.worldManager.isWallBroken(rx, ry, directionStr);
-                        // The Hub is a sealed quarantine — only its RIGHT wall is breakable.
-                        // Every Wilds weak point is breakable in any direction.
-                        const breakableHere = isWeakPoint && (!inHub || directionStr === 'right');
+                        // Weak points now vary per wall in both existence AND position;
+                        // solid walls have none (and getWeakPoint seals the Hub itself).
+                        const wp = this.worldManager.getWeakPoint(rx, ry, directionStr);
+                        const horizontalWall = (directionStr === 'up' || directionStr === 'down');
+                        const cross = horizontalWall ? newHeadX : newHeadY;
+                        const isWeakPoint = !!wp && cross >= wp.start && cross <= wp.end;
+                        const breakableHere = isWeakPoint;
 
                         if (isBroken && isWeakPoint) {
                             // Walk through the smashed-open doorway — but only at the
@@ -412,43 +477,37 @@ export class GameEngine {
                             this.shiftScreen(dx, dy);
                             shifted = true;
                         } else if (breakableHere) {
-                            // Smash mechanic: ramming damage scales with gear. Base speed
-                            // or slower does nothing; higher gears crack the wall; a full
-                            // max-gear hit (or accumulated hits summing to one) breaks it.
+                            // Smash mechanic: base speed does nothing (non-lethal bonk);
+                            // sub-max cracks the wall but the impact RESTARTS you (keeping
+                            // some crack); ONLY a max-gear (gear 3) hit breaches cleanly.
                             const dmg = Math.max(0, Math.min(3, this.gear));
                             if (dmg <= 0) {
                                 // No momentum: bonk and hold position (non-lethal).
-                                if (!this._wallBonking) {
-                                    this.audio.playDenied();
-                                    if (!this.state.unlocked.wallHintShown) {
-                                        this.narrative.printMessage("Architect: That wall is weak, but you lack the momentum. Hit it with SPEED.");
-                                        this.state.unlocked.wallHintShown = true;
-                                    }
-                                }
+                                if (!this._wallBonking) this.audio.playDenied();
                                 this._wallBonking = true;
                                 this.gear = 0;
                                 this.speed = this.baseSpeed;
                                 return; // do not move
                             }
-                            const total = this.worldManager.damageWall(rx, ry, directionStr, dmg);
-                            if (total >= this.worldManager.wallBreakThreshold) {
+                            if (this.gear >= 3) {
+                                // MAX SPEED: clean breach.
                                 this.worldManager.breakWall(rx, ry, directionStr);
-                                this.audio.playCrash(); // Violent breach
+                                this.audio.playCrash();
                                 if (inHub) {
                                     this.state.unlocked.wallBroken = true;
-                                    this.narrative.printMessage("SYSTEM WARNING: QUARANTINE BREACH DETECTED.");
+                                    this.narrative.onWallBreak();
                                 }
                                 this.shiftScreen(dx, dy);
                                 shifted = true;
                             } else {
-                                // Cracked but not through — feedback fires on every hit
-                                // (bounded: at most a few cracks before the break, since
-                                // gear resets to 0 here), then bounce keeping the damage.
+                                // SUB-SMASH: crack it (keep SOME, capped below the break
+                                // point) — but the impact destroys you. The Architect,
+                                // gloating in his log, reveals that max speed is the trick.
+                                this.worldManager.damageWall(rx, ry, directionStr, dmg, this.worldManager.wallBreakThreshold - 1);
                                 this.audio.playCrack();
-                                this.narrative.printMessage("SYSTEM: Barrier fracturing — hit it again!");
-                                this.gear = 0;
-                                this.speed = this.baseSpeed;
-                                return; // do not move
+                                this.narrative.onSubSmash(inHub, this.state.unlocked);
+                                this.die('border');
+                                return;
                             }
                         } else {
                             // Solid wall (non-weak-point, or a sealed Hub wall): lethal.
@@ -598,9 +657,18 @@ export class GameEngine {
                             }
                         } else if (npc.id === 'gate') {
                             this.state.gameState = 'DIALOG';
-                            this.dialogManager.start(npc.dialog, () => {
+                            let gateLines = npc.dialog;
+                            const gotMap = this.carriedModule === 'map' || this.state.unlocked.mapModule;
+                            if (gotMap) {
+                                gateLines = ["Gate: Denny flagged you DENIED, you proceeded anyway, AND he handed you his map?! That is a write-up for BOTH of us.", ...npc.dialog];
+                            } else if (this.state.unlocked.dennyMet) {
+                                gateLines = ["Gate: Denny flagged you DENIED and you proceeded anyway. At least the paperwork's in order — and he kept his map, thank the Kernel.", ...npc.dialog];
+                            } else if (this.state.unlocked.dennySlipped) {
+                                gateLines = ["Gate: You slipped past the Last Line?! Denny had ONE job. ...Well. At least you didn't get his map. Small mercies.", ...npc.dialog];
+                            }
+                            this.dialogManager.start(gateLines, () => {
                                 // Thread Suspension
-                                this.state.isSuspended = true; 
+                                this.state.isSuspended = true;
                                 this.dialogManager.start([
                                     "2-Bit: Hey! Leave my best customer alone!",
                                     "2-Bit: I'm slipping a root-override module into your memory bank.",
@@ -626,9 +694,11 @@ export class GameEngine {
                                                 gate.leaving = true;
                                                 gate.exitDir = 'right';
                                                 // Grid-align the exit cell (canvas size need not be a
-                                                // multiple of gridSize) so the flee can reach it exactly.
+                                                // multiple of gridSize) and aim for the actual weak point
+                                                // so the breach he opens is the one you can follow through.
                                                 gate.exitX = Math.floor((this.canvas.width - this.gridSize) / this.gridSize) * this.gridSize;
-                                                gate.exitY = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+                                                const rwp = this.worldManager.getWeakPoint(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 'right');
+                                                gate.exitY = rwp ? rwp.start + 2 * this.gridSize : Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
                                             }
                                         });
                                     };
@@ -637,11 +707,37 @@ export class GameEngine {
                         } else if (npc.id === 'denny') {
                             // The Last Line: apologetic, non-blocking. You route around him.
                             this.state.gameState = 'DIALOG';
-                            const lines = npc.met
-                                ? ["Denny: (whispering) Go on. I didn't see anything. Please don't tell Gate."]
-                                : npc.dialog;
+                            this.state.unlocked.dennyMet = true;
+                            const firstMeet = !npc.met;
                             npc.met = true;
-                            this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+                            const lines = firstMeet ? npc.dialog : ["Denny: (whispering) Go on, go on. I didn't see anything."];
+                            const dropMap = firstMeet && !this.state.unlocked.dennyMapDropped && !this.state.unlocked.mapModule;
+                            this.dialogManager.start(lines, () => {
+                                this.state.gameState = 'PLAYING';
+                                if (dropMap) {
+                                    this.state.unlocked.dennyMapDropped = true;
+                                    // Denny drops his Sector Map beside him.
+                                    this.npcs.push(new NPC(npc.x, npc.y + this.gridSize, this.gridSize, 'mapitem', []));
+                                    this.narrative.printMessage("2-Bit: Ohh — that's a Topology Map. Grab it, steer right over it.");
+                                }
+                            });
+                        } else if (npc.id === 'mapitem') {
+                            // Pick up Denny's map: it rides your tail as a Module.
+                            this.npcs = this.npcs.filter(n => n.id !== 'mapitem');
+                            this.carriedModule = 'map';
+                            this.state.unlocked.moduleSlot = true;
+                            this.audio.playBeep();
+                            this.state.gameState = 'DIALOG';
+                            this.dialogManager.start([
+                                "2-Bit: Nice grab. That's a Module now — it's riding your tail.",
+                                "2-Bit: See that socket opening, bottom-left? That's a Module Slot.",
+                                "2-Bit: Steer your HEAD onto the slot and hit SPACE to install it."
+                            ], () => { this.state.gameState = 'PLAYING'; });
+                            return; // picked up — do not shrink
+                        } else if (npc.id === 'signpost') {
+                            // Localhost welcome sign — read it and move on.
+                            this.state.gameState = 'DIALOG';
+                            this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
                         }
                         this.snake.shrink(this.state.unlocked.tailRider); // keep 2-Bit on the tail
                         return;
@@ -666,7 +762,10 @@ export class GameEngine {
         );
         this.input.reset();
         this.state.resetScore();
-        
+        this.gear = 0;              // fresh runs start from a standstill (sub-smash
+        this.speed = this.baseSpeed; // deaths would otherwise respawn you mid-gear)
+        this._wallBonking = false;
+
         // Save current room, then warp back to hub (0,0)
         let appleToSave = this.apple;
         if (appleToSave instanceof NPC) {
@@ -729,6 +828,9 @@ export class GameEngine {
     
     draw() {
         this.state.gear = this.gear;
+        this.state.carriedModule = this.carriedModule;
+        this.state.moduleSlotX = this.moduleSlotX;
+        this.state.moduleSlotY = this.moduleSlotY;
         this.renderer.draw(this.state, this.snake, this.apple, this.npcs, this.glitches, this.worldManager, this.obstacles);
     }
     

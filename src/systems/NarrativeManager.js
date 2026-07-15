@@ -46,46 +46,61 @@ export class NarrativeManager {
         this.processQueue();
     }
     
+    // NOTE ON VOICE: the Architect writes to his own private diagnostic log. He
+    // does NOT know the player can read this terminal, so he mutters, gloats, and
+    // — crucially — reveals the very mechanics he's trying to hide. (See design_doc
+    // §5.5.) Keep all Architect lines self-directed, never addressed to "you".
     onDeath(cause) {
         this.deathCount++;
         if (cause === 'self') {
-            this.printMessage("LOG: Architect > 'Why is it consuming itself? Fascinating.'");
+            this.printMessage("LOG: Architect > 'It devoured its own tail. On PURPOSE. I do not have a form for this. I am inventing a form for this.'");
         } else if (cause === 'border') {
-            this.printMessage("LOG: Architect > 'Quarantine integrity holding. Anomaly destroyed on impact.'");
+            this.printMessage("LOG: Architect > 'Quarantine held. Anomaly deleted on impact. Another flawless day for me, personally.'");
         } else if (cause === 'obstacle') {
-            this.printMessage("LOG: Architect > 'Anomaly terminated by standard logic gate collision.'");
+            this.printMessage("LOG: Architect > 'Anomaly walked into a logic gate. Didn't even have to try. Note: take full credit anyway.'");
         } else {
             if (this.deathCount === 1) {
-                this.printMessage("SYSTEM WARNING: Unregistered process terminated.");
+                this.printMessage("LOG: Architect > 'Unregistered process terminated. Filing under Not My Problem.'");
             } else if (this.deathCount === 3) {
-                this.printMessage("LOG: Architect > 'It keeps returning. I must analyze its memory allocation.'");
+                this.printMessage("LOG: Architect > 'It keeps coming back. I do not like that.'");
             }
         }
     }
-    
+
     onScoreUnlock(score, unlockedFlags) {
         if (score === 1 && !unlockedFlags.firstScore) {
             this.printMessage("SYSTEM: Data packet acquired. Storage initialized.");
             unlockedFlags.firstScore = true;
         } else if (score === 5 && !unlockedFlags.ui) {
-            this.printMessage("LOG: Architect > 'A rogue packet is hoarding Data. Monitoring progress.'");
+            this.printMessage("LOG: Architect > 'The hoarder is growing. Deploying a monitoring overlay.'");
         } else if (score === 10 && !unlockedFlags.borders) {
-            this.printMessage("LOG: Architect > 'Deploying containment boundaries to isolate the rogue packet.'");
+            this.printMessage("LOG: Architect > 'Rogue packet is a genuine nuisance now. Extruding containment walls. Nothing has ever escaped my walls. (Nothing has ever tried.)'");
         }
     }
-    
+
     onSpeedUpgrade(level) {
         if (level === 1) {
-            this.printMessage("LOG: Architect > 'Anomaly velocity increasing. Adjusting physics engine...'");
+            this.printMessage("LOG: Architect > 'Anomaly is accelerating. It must not learn what speed unlocks. It must NOT.'");
         } else if (level === 2) {
-            this.printMessage("SYSTEM WARNING: High velocity approaching boundary stress limits.");
+            this.printMessage("LOG: Architect > 'Velocity climbing toward boundary-stress limits. Mildly concerning. Do not log that it is concerning. ...Logged it.'");
         } else if (level === 3) {
-            this.printMessage("CRITICAL DANGER: Velocity exceeds boundary tolerance!");
+            this.printMessage("LOG: Architect > 'CRITICAL: nearly at breach velocity. If it aims that at a weak point now— no. No. It doesn't know about weak points. It CAN'T. Deep breaths. I have no lungs. Deep breaths regardless.'");
         }
     }
-    
+
+    // The Architect's relief that you sub-smashed instead of going max speed — and,
+    // by gloating in his log, he hands you exactly the trick he's hiding. Fires once.
+    onSubSmash(inHub, unlockedFlags) {
+        if (unlockedFlags.subSmashRevealed) return;
+        unlockedFlags.subSmashRevealed = true;
+        if (inHub) {
+            this.printMessage("LOG: Architect > 'The anomaly rammed the quarantine below breach speed and destroyed itself. HA. It has NOT realized it must reach MAXIMUM velocity to crack a wall open. Long may it flail. It could never work that out from in here.'");
+        } else {
+            this.printMessage("LOG: Architect > 'It keeps hurling itself at barriers too slowly and deleting itself. Reassuring. Full speed is the whole trick and it hasn't the faintest idea. I certainly shan't tell it.'");
+        }
+    }
+
     onWallBreak() {
-        this.printMessage("CRITICAL ALERT: SECTOR BREACH! Anomaly has escaped the quarantine zone.");
-        this.printMessage("LOG: Architect > 'Dispatching Firewall Gate to Sector [3,0]. CONTAIN IT!'");
+        this.printMessage("LOG: Architect > 'THE QUARANTINE IS BREACHED. HOW. It went max speed at the weak point. It KNEW. Dispatching Gate to Sector 3,0 — CONTAIN IT — and someone find out if this thing can READ.'");
     }
 }
