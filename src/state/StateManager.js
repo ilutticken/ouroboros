@@ -7,14 +7,13 @@ export class StateManager {
             firstScore: false,
             ui: false,
             borders: false,
-            firstEncounter: false,
+            biteProgress: 0,
             glitchesTelegraphed: false,
-            speed1: false,
-            speed2: false,
-            speed3: false,
+            maxSpeedReached: false,
             actionPhase: false,
             pauseMenu: false,
-            wallBroken: false
+            wallBroken: false,
+            tailRider: false
         };
         this.upgrades = {
             dataCompression: false,

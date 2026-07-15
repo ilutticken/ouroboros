@@ -6,47 +6,46 @@ export class InputHandler {
         this.brakePressed = false;
     }
 
-    init(gridSize, onFirstInput, onDialogAdvance) {
+    init(gridSize, onFirstInput, onDialogAdvance, onAction, onSpeedChange) {
         this.gridSize = gridSize;
-        window.addEventListener('keydown', (e) => this.handleKeyDown(e, onFirstInput, onDialogAdvance));
-        window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+        window.addEventListener('keydown', (e) => this.handleKeyDown(e, onFirstInput, onDialogAdvance, onAction, onSpeedChange));
     }
 
-    handleKeyDown(e, onFirstInput, onDialogAdvance) {
+    handleKeyDown(e, onFirstInput, onDialogAdvance, onAction, onSpeedChange) {
         if (e.key === ' ' || e.key === 'Enter') {
             if (onDialogAdvance) onDialogAdvance();
+            if (onAction) onAction();
         }
-        if (e.key === 'Shift') {
-            this.brakePressed = true;
-        }
-        // Only allow changing direction if we actually started moving, or to initiate movement
+        
         switch(e.key) {
             case 'ArrowUp':
             case 'w':
                 if (this.direction.y === 0) this.nextDirection = { x: 0, y: -this.gridSize };
+                else if (this.direction.y < 0 && onSpeedChange) onSpeedChange(1);
+                else if (this.direction.y > 0 && onSpeedChange) onSpeedChange(-1);
                 break;
             case 'ArrowDown':
             case 's':
                 if (this.direction.y === 0) this.nextDirection = { x: 0, y: this.gridSize };
+                else if (this.direction.y > 0 && onSpeedChange) onSpeedChange(1);
+                else if (this.direction.y < 0 && onSpeedChange) onSpeedChange(-1);
                 break;
             case 'ArrowLeft':
             case 'a':
                 if (this.direction.x === 0) this.nextDirection = { x: -this.gridSize, y: 0 };
+                else if (this.direction.x < 0 && onSpeedChange) onSpeedChange(1);
+                else if (this.direction.x > 0 && onSpeedChange) onSpeedChange(-1);
                 break;
             case 'ArrowRight':
             case 'd':
                 if (this.direction.x === 0) this.nextDirection = { x: this.gridSize, y: 0 };
+                else if (this.direction.x > 0 && onSpeedChange) onSpeedChange(1);
+                else if (this.direction.x < 0 && onSpeedChange) onSpeedChange(-1);
                 break;
         }
         
         if (onFirstInput) {
             onFirstInput();
-        }
-    }
-    
-    handleKeyUp(e) {
-        if (e.key === 'Shift') {
-            this.brakePressed = false;
         }
     }
     

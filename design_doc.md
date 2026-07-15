@@ -100,3 +100,14 @@ A long-running, optional item-exchange quest that encourages players to revisit 
 * **Step 4:** Give the *Tear-Stained String* to **Defrag** (who wants to 'sort' Null's emotional baggage). He trades you a **Pristine Memory Block**.
 * **Step 5:** Give the *Pristine Memory Block* to **Ping** (who needs extra memory to deliver a massive message). He gives you the **Encrypted Key**.
 * **Step 6:** Give the *Encrypted Key* to **Hex**. In exchange for liberating his hidden files, he grants you the ultimate reward: **The Golden Glitch** (a passive module that allows you to absorb one Glitch hit per room without taking damage).
+
+## 9. Design Decisions & Implementation Gotchas
+As the game's mechanics evolve, it's important to document key implementation details and problem-solving rationales:
+
+### Bite the Tail Rider (Phase 10)
+- **Design Rationale:** To seamlessly integrate Bite into the "Snake" mechanics without causing room transition collision bugs, Bite physically joins the snake's tail. To access his shop, the player must collect enough Data to grow their length to 4+ and steer into their own tail. This transforms the classic failure state of Snake (hitting your own tail) into an intentional, highly rewarding interaction.
+- **Gotcha:** When you physically bite the tail, the snake's head overlaps the tail. If you close the shop and resume moving, you would instantly trigger a self-collision death on the next frame. To solve this, biting Bite immediately "consumes" your excess Data, shrinking the snake back down to a length of 2 (Head + Bite). This organically prevents the overlap bug while reinforcing the economy (spending Data for access).
+
+### Input State Management on Respawn
+- **Gotcha:** The game loop pauses processing movement when `gameState === 'DEAD'` or `'START'`. Resuming the game relies on `InputHandler.js` detecting *any* keypress (via an `onFirstInput` callback) to switch the state back to `'PLAYING'`. When refactoring inputs or adding new systems (like `Audio.init()`), it is critical to ensure this callback is preserved, otherwise the game will silently fail to resume, leaving the player stuck in the dead state unable to move.
+- **Gotcha (Persistence):** When calling `die()`, the snake is fully reset. The `hasBite` (or `firstEncounter`) flag must be explicitly passed to `this.snake.reset()` during death handling; otherwise, Bite will disappear from the tail upon respawn, breaking the mechanic.

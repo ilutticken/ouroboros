@@ -6,6 +6,8 @@ export class ShopManager {
         
         // Buttons
         this.btnBuyBrake = document.getElementById('btn-buy-brake');
+        this.btnBuyHitchhiker = document.getElementById('btn-buy-hitchhiker');
+        this.itemBuyHitchhiker = document.getElementById('item-buy-hitchhiker');
         this.btnBuyCompression = document.getElementById('btn-buy-compression');
         this.btnBuyArmor = document.getElementById('btn-buy-armor');
         this.btnBuySpeed = document.getElementById('btn-buy-speed');
@@ -25,6 +27,18 @@ export class ShopManager {
                 this.state.upgrades.manualBrake = true;
                 this.audio.playBeep();
                 this.updateUI();
+            }
+        });
+        
+        this.btnBuyHitchhiker.addEventListener('click', () => {
+            if (this.state.score >= 15 && !this.state.unlocked.tailRider) {
+                this.state.score -= 15;
+                this.state.unlocked.tailRider = true;
+                this.audio.playBeep();
+                this.updateUI();
+                
+                // When bought, close the shop and let Game.js handle attaching him
+                this.close();
             }
         });
         
@@ -71,6 +85,12 @@ export class ShopManager {
                 case '1':
                     this.btnBuyBrake.click();
                     break;
+                case 'h':
+                case 'H':
+                    if (!this.itemBuyHitchhiker.classList.contains('hidden')) {
+                        this.btnBuyHitchhiker.click();
+                    }
+                    break;
                 case '2':
                     this.btnBuyCompression.click();
                     break;
@@ -105,6 +125,12 @@ export class ShopManager {
             this.btnBuyBrake.innerText = "OWNED";
             this.btnBuyBrake.disabled = true;
             this.btnBuyBrake.style.opacity = 0.5;
+            
+            if (!this.state.unlocked.tailRider) {
+                this.itemBuyHitchhiker.classList.remove('hidden');
+            } else {
+                this.itemBuyHitchhiker.classList.add('hidden');
+            }
         }
         
         if (this.state.upgrades.dataCompression) {

@@ -28,20 +28,24 @@ export class Renderer {
             const cx = this.canvas.width / 2;
             const cy = this.canvas.height / 2;
             
-            this.ctx.beginPath();
-            // Top
-            this.ctx.moveTo(cx - gapSize/2, 2);
-            this.ctx.lineTo(cx + gapSize/2, 2);
-            // Bottom
-            this.ctx.moveTo(cx - gapSize/2, this.canvas.height - 2);
-            this.ctx.lineTo(cx + gapSize/2, this.canvas.height - 2);
-            // Left
-            this.ctx.moveTo(2, cy - gapSize/2);
-            this.ctx.lineTo(2, cy + gapSize/2);
-            // Right
-            this.ctx.moveTo(this.canvas.width - 2, cy - gapSize/2);
-            this.ctx.lineTo(this.canvas.width - 2, cy + gapSize/2);
-            this.ctx.stroke();
+            // Draw gap indicators (Weak points)
+            const inHub = worldManager && worldManager.currentRoomX === 0 && worldManager.currentRoomY === 0;
+            if (state.unlocked.borders && (!inHub || state.unlocked.wallBroken)) {
+                this.ctx.beginPath();
+                // Up
+                this.ctx.moveTo(cx - gapSize/2, 2);
+                this.ctx.lineTo(cx + gapSize/2, 2);
+                // Down
+                this.ctx.moveTo(cx - gapSize/2, this.canvas.height - 2);
+                this.ctx.lineTo(cx + gapSize/2, this.canvas.height - 2);
+                // Left
+                this.ctx.moveTo(2, cy - gapSize/2);
+                this.ctx.lineTo(2, cy + gapSize/2);
+                // Right
+                this.ctx.moveTo(this.canvas.width - 2, cy - gapSize/2);
+                this.ctx.lineTo(this.canvas.width - 2, cy + gapSize/2);
+                this.ctx.stroke();
+            }
             
             // Draw broken walls (black gaps)
             if (worldManager) {
@@ -57,8 +61,19 @@ export class Renderer {
                 if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'left')) {
                     this.ctx.fillRect(0, cy - gapSize/2, 4, gapSize);
                 }
-                if (worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'right')) {
+                
+                const rightBroken = worldManager.isWallBroken(worldManager.currentRoomX, worldManager.currentRoomY, 'right');
+                if (rightBroken) {
                     this.ctx.fillRect(this.canvas.width - 4, cy - gapSize/2, 4, gapSize);
+                } else if (worldManager.currentRoomX === 0 && worldManager.currentRoomY === 0) {
+                    // Quarantine Cracked Wall indicator
+                    this.ctx.fillStyle = '#ffaa00'; // Yellowish crack
+                    this.ctx.shadowColor = '#ffaa00';
+                    this.ctx.fillRect(this.canvas.width - 4, cy - gapSize/2, 4, gapSize);
+                    
+                    // Reset back to normal border color
+                    this.ctx.fillStyle = '#00ffff'; 
+                    this.ctx.shadowColor = '#00ffff';
                 }
                 this.ctx.shadowBlur = 15;
             }
@@ -105,10 +120,17 @@ export class Renderer {
         for (let i = 0; i < snake.body.length; i++) {
             const segment = snake.body[i];
             
-            if (i === snake.body.length - 1 && state.unlocked.firstEncounter) {
+            const biteOnGrid = npcs && npcs.some(n => n.id === 'bite');
+            if (i === snake.body.length - 1 && state.unlocked.tailRider && !biteOnGrid) {
                 this.ctx.fillStyle = '#00ff00';
                 this.ctx.shadowColor = '#00ff00';
-                this.ctx.shadowBlur = 10;
+                
+                if (state.unlocked.maxSpeedReached) {
+                    const gearGlow = Math.max(1, state.gear || 0); // Base glow of 1, ramps up to 3
+                    this.ctx.shadowBlur = gearGlow * 10;
+                } else {
+                    this.ctx.shadowBlur = 0;
+                }
             } else {
                 if (i === 0) {
                     this.ctx.fillStyle = '#ffffff';
@@ -133,16 +155,16 @@ export class Renderer {
             this.ctx.strokeRect(10, 10, this.canvas.width - 20, this.canvas.height - 20);
             
             this.ctx.fillStyle = '#00ff00';
-            this.ctx.font = 'bold 24px "Courier New", Courier, monospace';
+            this.ctx.font = '16px "Press Start 2P", monospace';
             this.ctx.textAlign = 'center';
             this.ctx.fillText("=== SYSTEM DIAGNOSTIC ===", this.canvas.width / 2, 60);
             
             this.ctx.fillStyle = '#ff0000';
-            this.ctx.font = 'bold 36px "Courier New", Courier, monospace';
+            this.ctx.font = '24px "Press Start 2P", monospace';
             this.ctx.fillText("THREAD SUSPENDED", this.canvas.width / 2, this.canvas.height / 2);
             
             this.ctx.fillStyle = '#00ff00';
-            this.ctx.font = 'bold 18px "Courier New", Courier, monospace';
+            this.ctx.font = '12px "Press Start 2P", monospace';
             
             const pulse = Math.floor(Date.now() / 500) % 2 === 0;
             if (pulse) {

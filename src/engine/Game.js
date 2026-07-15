@@ -92,34 +92,103 @@ export class GameEngine {
         
         // Game State Variables
         this.lastTime = performance.now();
-        this.speed = 100; // ms per move
+        this.baseSpeed = 100; // ms per move
+        this.speed = this.baseSpeed; 
+        this.gear = 0;
         this.moveTimer = 0;
         
         // Initialize Input
-        this.input.init(this.gridSize, () => this.audio.init(), () => {
+        this.input.init(this.gridSize, () => {
+            this.audio.init();
+            if (this.state.gameState === 'START' || this.state.gameState === 'DEAD') {
+                this.state.gameState = 'PLAYING';
+            }
+        }, () => {
             if (this.state.gameState === 'DIALOG') {
                 this.dialogManager.advance();
             }
+        }, () => {
+            if (this.state.gameState === 'PLAYING') {
+                if (this.state.unlocked.biteProgress === 2) {
+                    // They hit Space to comply.
+                    this.state.unlocked.biteProgress = 3;
+                    this.state.unlocked.tailRider = true;
+                    const biteNPC = this.npcs.find(n => n.id === 'bite');
+                    if (biteNPC) {
+                        this.npcs = this.npcs.filter(n => n.id !== 'bite');
+                        this.snake.body.push({ x: biteNPC.x, y: biteNPC.y });
+                    }
+                    
+                    this.state.gameState = 'DIALOG';
+                    this.dialogManager.start([
+                        "2-Bit: I'm hooked into your system.",
+                        "2-Bit: Tapping the direction you're facing will accelerate you.",
+                        "2-Bit: Tapping the opposite direction acts as a brake.",
+                        "2-Bit: The more mass you have, the higher your max speed limit."
+                    ], () => {
+                        this.state.gameState = 'PLAYING';
+                    });
+                } else {
+                    this.dropBite();
+                }
+            }
+        }, (delta) => {
+            if (this.state.gameState === 'PLAYING' && this.state.unlocked.tailRider) {
+                this.changeGear(delta);
+            }
         });
-        
+    }
 
+    changeGear(delta) {
+        // Max gear scales with score: 
+        // 0-9 data: gear 0
+        // 10-19 data: max gear 1
+        // 20-29 data: max gear 2
+        // 30+ data: max gear 3
+        const maxGear = Math.min(3, Math.floor(this.state.score / 10));
+        
+        this.gear += delta;
+        
+        // Min gear is -1 (brake)
+        this.gear = Math.max(-1, Math.min(this.gear, maxGear));
+        
+        if (this.gear >= 3) {
+            this.state.unlocked.maxSpeedReached = true;
+        }
+        
+        // Map gear to speed (ms per move). Lower ms = faster.
+        if (this.gear === -1) this.speed = 200; // slow
+        else if (this.gear === 0) this.speed = 100; // normal
+        else if (this.gear === 1) this.speed = 70; // fast
+        else if (this.gear === 2) this.speed = 50; // very fast
+        else if (this.gear >= 3) this.speed = 30; // max speed (needed to break wall)
+    }
+
+    dropBite() {
+        if (!this.state.unlocked.tailRider) return;
+        if (this.npcs.find(n => n.id === 'bite')) return; // Already on grid
+        if (this.snake.body.length < 2) return;
+        
+        // Detach from tail
+        const tail = this.snake.body.pop();
+        this.npcs.push(new NPC(tail.x, tail.y, this.gridSize, 'bite', []));
+        this.audio.playBeep(); // Feedback sound
     }
     
     spawnApple() {
         const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || []);
         
-        if (this.state.score >= 20 && !this.state.unlocked.firstEncounter) {
+        if (this.state.score >= 10 && this.state.unlocked.biteProgress === 0) {
             return new NPC(x, y, this.gridSize, 'bite', [
                 "WHOA THERE! WATCH THE FANGS!",
-                "I'm Bite. A remnant packet. I figured out how to hoard Data instead of being eaten.",
-                "The Architect put these walls up to keep us in. He's terrified of something.",
-                "Let me hitch a ride on your tail! I can sell you some upgrades.",
-                "Collect enough Data to grow, then bite my tail block to open my shop!"
+                "I'm 2-Bit. A remnant packet.",
+                "Looks like we both spawned inside this Quarantine zone.",
+                "There's no way out. Scram, unless you have some idea on how to escape."
             ]);
         }
         
         // Randomly spawn a glitch if Bite has been encountered
-        if (this.state.unlocked.firstEncounter && Math.random() < 0.2) {
+        if (this.state.unlocked.biteProgress > 0 && Math.random() < 0.2) {
             if (!this.state.unlocked.glitchesTelegraphed) {
                 this.narrative.printMessage("Architect: Deploying memory corruptors. Touch them and you will bleed Data.");
                 this.state.unlocked.glitchesTelegraphed = true;
@@ -132,6 +201,16 @@ export class GameEngine {
     }
     
     shiftScreen(dx, dy) {
+        // Auto-attach Bite if left behind
+        if (this.state.unlocked.tailRider) {
+            const biteIdx = this.npcs.findIndex(n => n.id === 'bite');
+            if (biteIdx !== -1) {
+                const bite = this.npcs[biteIdx];
+                this.snake.body.push({ x: bite.x, y: bite.y });
+                this.npcs.splice(biteIdx, 1);
+            }
+        }
+        
         // Remove Bite before saving so he isn't baked into the room's permanent state
         const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite');
         this.worldManager.saveRoom(this.apple, this.glitches, npcsWithoutBite, this.obstacles);
@@ -181,13 +260,7 @@ export class GameEngine {
         
         this.moveTimer += dt;
         
-        const speedTable = [100, 80, 60, 40];
-        let currentSpeed = speedTable[this.state.upgrades.speedLevel];
-        if (this.state.upgrades.manualBrake && this.input.brakePressed) {
-            currentSpeed = Math.max(100, currentSpeed * 2);
-        }
-        
-        if (this.moveTimer >= currentSpeed) {
+        if (this.moveTimer >= this.speed) {
             this.moveTimer = 0;
             
             const changedDirection = this.input.updateDirection();
@@ -201,6 +274,24 @@ export class GameEngine {
                 
                 if (this.state.unlocked.borders) {
                     if (newHeadX < 0 || newHeadX >= this.canvas.width || newHeadY < 0 || newHeadY >= this.canvas.height) {
+                        // Check if 2-Bit is dropped
+                        if (this.state.unlocked.tailRider && this.npcs.find(n => n.id === 'bite')) {
+                            const complaints = [
+                                "2-Bit: Hey, you promised!",
+                                "2-Bit: C'mon man, I thought we were getting along?!",
+                                "2-Bit: Don't leave me here!",
+                                "2-Bit: I'm not walking out of here!"
+                            ];
+                            this.narrative.printMessage(complaints[Math.floor(Math.random() * complaints.length)]);
+                            this.audio.playDeath();
+                            // Reverse direction (bounce)
+                            this.input.direction.x *= -1;
+                            this.input.direction.y *= -1;
+                            this.input.nextDirection = { ...this.input.direction };
+                            this.gear = -1; // Lose all momentum
+                            return; // Do not move
+                        }
+                    
                         let directionStr = '';
                         if (newHeadX < 0) { directionStr = 'left'; dx = -1; }
                         else if (newHeadX >= this.canvas.width) { directionStr = 'right'; dx = 1; }
@@ -216,20 +307,25 @@ export class GameEngine {
                             if (newHeadX >= midX - this.gridSize && newHeadX <= midX + this.gridSize) isWeakPoint = true;
                         }
 
+                        // Hub Quarantine Constraint: Can only break OUT of 0,0 going RIGHT
+                        const inHub = (this.worldManager.currentRoomX === 0 && this.worldManager.currentRoomY === 0);
                         const isBroken = this.worldManager.isWallBroken(this.worldManager.currentRoomX, this.worldManager.currentRoomY, directionStr);
                         
-                        if (isWeakPoint && (isBroken || this.state.upgrades.speedLevel === 3)) {
-                            if (!isBroken) {
-                                let toX = this.worldManager.currentRoomX + dx;
-                                let toY = this.worldManager.currentRoomY + dy;
-                                this.worldManager.breakWall(this.worldManager.currentRoomX, this.worldManager.currentRoomY, toX, toY);
+                        // Break condition: Must hit right wall of Hub at Max Gear (3)
+                        if (inHub && directionStr === 'right' && isWeakPoint && !isBroken) {
+                            if (this.gear >= 3) {
+                                this.worldManager.breakWall(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 1, 0);
                                 this.audio.playDeath(); // Crash sound
-                                
-                                if (!this.state.unlocked.wallBroken) {
-                                    this.state.unlocked.wallBroken = true;
-                                    this.narrative.onWallBreak();
-                                }
+                                this.state.unlocked.wallBroken = true;
+                                this.narrative.printMessage("SYSTEM WARNING: QUARANTINE BREACH DETECTED.");
+                                this.shiftScreen(dx, dy);
+                                shifted = true;
+                            } else {
+                                this.narrative.printMessage("Architect: That wall is weak, but you lack the momentum to break it.");
+                                this.die('border');
+                                return;
                             }
+                        } else if (isWeakPoint && isBroken) {
                             this.shiftScreen(dx, dy);
                             shifted = true;
                         } else {
@@ -265,15 +361,36 @@ export class GameEngine {
                     if (this.snake.checkAppleCollision(this.apple)) {
                         this.state.gameState = 'DIALOG';
                         this.dialogManager.start(this.apple.dialog, () => {
-                            this.state.unlocked.firstEncounter = true;
-                            // Attach Bite to the tail
-                            this.snake.body.push({ x: this.apple.x, y: this.apple.y });
-                            this.state.gameState = 'PLAYING';
-                            this.apple = this.worldManager.getOrCreateRoom(this.state.unlocked).apple;
+                            if (this.state.unlocked.biteProgress === 0) {
+                                this.state.unlocked.biteProgress = 1;
+                                this.state.gameState = 'PLAYING';
+                                // Bite stays as an NPC on grid
+                                this.npcs.push(new NPC(this.apple.x, this.apple.y, this.gridSize, 'bite', []));
+                            } else if (this.state.unlocked.biteProgress === 1) {
+                                this.state.unlocked.biteProgress = 2;
+                                this.state.gameState = 'PLAYING';
+                                this.npcs.push(new NPC(this.apple.x, this.apple.y, this.gridSize, 'bite', []));
+                            } else if (this.state.unlocked.biteProgress === 2) {
+                                // They hit Space to comply.
+                                this.state.unlocked.biteProgress = 3;
+                                this.state.unlocked.tailRider = true;
+                                this.snake.body.push({ x: this.apple.x, y: this.apple.y });
+                                
+                                this.dialogManager.start([
+                                    "2-Bit: I'm hooked into your system.",
+                                    "2-Bit: Tapping the direction you're facing will accelerate you.",
+                                    "2-Bit: Tapping the opposite direction acts as a brake.",
+                                    "2-Bit: The more mass you have, the higher your max speed limit."
+                                ], () => {
+                                    this.state.gameState = 'PLAYING';
+                                });
+                            }
+                            
+                            this.apple = this.spawnApple();
                         });
                         return;
                     } else {
-                        this.snake.shrink(this.state.unlocked.firstEncounter);
+                        this.snake.shrink(this.state.unlocked.tailRider);
                     }
                 } else {
                     if (this.snake.checkAppleCollision(this.apple)) {
@@ -284,7 +401,7 @@ export class GameEngine {
                         this.apple = this.spawnApple();
                         this.checkUnlocks();
                     } else {
-                        this.snake.shrink(this.state.unlocked.firstEncounter); // Remove tail
+                        this.snake.shrink(this.state.unlocked.tailRider); // Remove tail
                     }
                 }
                 
@@ -312,10 +429,44 @@ export class GameEngine {
                 for (const npc of this.npcs) {
                     if (this.snake.head.x === npc.x && this.snake.head.y === npc.y) {
                         if (npc.id === 'bite') {
-                            this.state.gameState = 'SHOP';
-                            this.shopManager.open(() => {
-                                this.state.gameState = 'PLAYING';
-                            });
+                            if (this.state.unlocked.tailRider) {
+                                // Instantly pick him back up!
+                                this.npcs = this.npcs.filter(n => n.id !== 'bite');
+                                this.snake.body.push({ x: npc.x, y: npc.y });
+                                this.audio.playBeep();
+                            } else {
+                                // Progression dialogs when bumped on grid
+                                if (this.state.unlocked.biteProgress === 1) {
+                                    if (this.state.score < 30) {
+                                        this.state.gameState = 'DIALOG';
+                                        this.dialogManager.start([
+                                            "2-Bit: You again? ...Wait.",
+                                            "2-Bit: You're gathering mass. You might have given me an idea.",
+                                            "2-Bit: Come back when you have at least 30 segments."
+                                        ], () => { this.state.gameState = 'PLAYING'; });
+                                    } else {
+                                        this.state.gameState = 'DIALOG';
+                                        this.dialogManager.start([
+                                            "2-Bit: Okay, you've got enough mass.",
+                                            "2-Bit: I used to be a Data Broker... That was before, well... Nevermind!",
+                                            "2-Bit: I don't normally offer things for free, but these are desperate times.",
+                                            "2-Bit: If you offer to carry me to safety, I'll teach you a trick.",
+                                            "2-Bit: Do you agree? (Press SPACE to comply)"
+                                        ], () => {
+                                            this.state.unlocked.biteProgress = 2; // Waiting for space
+                                            this.state.gameState = 'PLAYING';
+                                        });
+                                    }
+                                } else if (this.state.unlocked.biteProgress === 2) {
+                                    // Bumping him again while he waits for SPACE
+                                    if (this.state.score >= 30) {
+                                        this.state.gameState = 'DIALOG';
+                                        this.dialogManager.start([
+                                            "2-Bit: Are you deaf? I said press SPACE if you agree."
+                                        ], () => { this.state.gameState = 'PLAYING'; });
+                                    }
+                                }
+                            }
                         } else if (npc.id === 'gate') {
                             this.state.gameState = 'DIALOG';
                             this.dialogManager.start(npc.dialog, () => {
@@ -350,17 +501,9 @@ export class GameEngine {
                         return;
                     }
                 }
-                const selfHit = this.snake.checkSelfCollision(this.state.unlocked.firstEncounter);
-                if (selfHit === 'BITE') {
-                    this.audio.playBeep();
-                    // Consume excess data, shrink to 2
-                    while (this.snake.body.length > 2) {
-                        this.snake.body.splice(1, 1);
-                    }
-                    this.state.gameState = 'SHOP';
-                    this.shopManager.open();
-                    return;
-                } else if (selfHit) {
+                // Self-collision
+                const selfHit = this.snake.checkSelfCollision();
+                if (selfHit) {
                     this.die('self');
                     return;
                 }
@@ -372,14 +515,21 @@ export class GameEngine {
         this.state.gameState = 'DEAD';
         this.snake.reset(
             Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize,
-            Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize
+            Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize,
+            this.state.unlocked.tailRider
         );
         this.input.reset();
         this.state.resetScore();
         
         // Save current room, then warp back to hub (0,0)
+        let appleToSave = this.apple;
+        if (appleToSave instanceof NPC) {
+            // Player died before picking up Bite. Since score resets, replace Bite with a normal apple.
+            appleToSave = this.spawnApple();
+        }
+        
         const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite');
-        this.worldManager.saveRoom(this.apple, this.glitches, npcsWithoutBite, this.obstacles);
+        this.worldManager.saveRoom(appleToSave, this.glitches, npcsWithoutBite, this.obstacles);
         
         this.worldManager.currentRoomX = 0;
         this.worldManager.currentRoomY = 0;
@@ -416,6 +566,7 @@ export class GameEngine {
     }
     
     draw() {
+        this.state.gear = this.gear;
         this.renderer.draw(this.state, this.snake, this.apple, this.npcs, this.glitches, this.worldManager, this.obstacles);
     }
     
