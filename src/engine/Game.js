@@ -20,7 +20,7 @@ export class GameEngine {
         this.state = new StateManager();
         this.renderer = new Renderer(canvas, this.gridSize);
         this.input = new InputHandler();
-        this.narrative = new NarrativeManager();
+        this.narrative = new NarrativeManager(this.audio);
         this.dialogManager = new DialogManager();
         this.shopManager = new ShopManager(this.state, this.audio);
         this.worldManager = new WorldManager(canvas.width, canvas.height, this.gridSize);
@@ -129,7 +129,8 @@ export class GameEngine {
                         this.state.gameState = 'PLAYING';
                     });
                 } else {
-                    this.dropBite();
+                    // Feature Disabled: We will introduce drop later
+                    // this.dropBite();
                 }
             }
         }, (delta) => {

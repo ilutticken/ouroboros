@@ -1,11 +1,10 @@
 export class NarrativeManager {
-    constructor() {
+    constructor(audio) {
+        this.audio = audio;
         this.terminal = document.getElementById('narrative-terminal');
         this.messageQueue = [];
         this.isPrinting = false;
         this.deathCount = 0;
-        
-        // Initial setup for the terminal element will be done in HTML/CSS
     }
     
     printMessage(msg) {
@@ -27,6 +26,12 @@ export class NarrativeManager {
         // Typewriter effect
         for (let i = 0; i < msg.length; i++) {
             line.innerHTML += msg.charAt(i);
+            
+            // Play doot for every few characters to avoid audio overlap clipping
+            if (i % 2 === 0 && this.audio) {
+                this.audio.playDoot();
+            }
+            
             // Scroll to bottom
             this.terminal.scrollTop = this.terminal.scrollHeight;
             await new Promise(r => setTimeout(r, 30));
@@ -40,44 +45,43 @@ export class NarrativeManager {
     onDeath(cause) {
         this.deathCount++;
         if (cause === 'self') {
-            this.printMessage("Architect: Have you considered moving *away* from your own tail?");
+            this.printMessage("LOG: Architect > 'Why is it consuming itself? Fascinating.'");
         } else if (cause === 'border') {
-            this.printMessage("Architect: The quarantine walls are reinforced for a reason. Stop hitting them.");
+            this.printMessage("LOG: Architect > 'Quarantine integrity holding. Anomaly destroyed on impact.'");
         } else if (cause === 'obstacle') {
-            this.printMessage("Architect: Watch where you are going. That pillar has higher priority than you.");
+            this.printMessage("LOG: Architect > 'Anomaly terminated by standard logic gate collision.'");
         } else {
             if (this.deathCount === 1) {
-                this.printMessage("Diagnostic: System integrity failure.");
-                this.printMessage("Conclusion: The subject lacks basic motor functions.");
+                this.printMessage("SYSTEM WARNING: Unregistered process terminated.");
             } else if (this.deathCount === 3) {
-                this.printMessage("Architect: Again? You are testing my patience.");
+                this.printMessage("LOG: Architect > 'It keeps returning. I must analyze its memory allocation.'");
             }
         }
     }
     
     onScoreUnlock(score, unlockedFlags) {
         if (score === 1 && !unlockedFlags.firstScore) {
-            this.printMessage("Data acquired. System stabilizing...");
+            this.printMessage("SYSTEM: Data packet acquired. Storage initialized.");
             unlockedFlags.firstScore = true;
         } else if (score === 5 && !unlockedFlags.ui) {
-            this.printMessage("Architect: Oh, it's alive. Let's see how long that lasts.");
+            this.printMessage("LOG: Architect > 'A rogue packet is hoarding Data. Monitoring progress.'");
         } else if (score === 10 && !unlockedFlags.borders) {
-            this.printMessage("Architect: Constructing boundaries. Try not to bump your head.");
+            this.printMessage("LOG: Architect > 'Deploying containment boundaries to isolate the rogue packet.'");
         }
     }
     
     onSpeedUpgrade(level) {
         if (level === 1) {
-            this.printMessage("Architect: Anomaly velocity increasing. Tuning physics engine...");
+            this.printMessage("LOG: Architect > 'Anomaly velocity increasing. Adjusting physics engine...'");
         } else if (level === 2) {
-            this.printMessage("Architect: Warning: High velocity approaching boundary stress limits.");
+            this.printMessage("SYSTEM WARNING: High velocity approaching boundary stress limits.");
         } else if (level === 3) {
-            this.printMessage("Architect: DANGER: Velocity exceeds boundary tolerance! Reduce speed immediately!");
+            this.printMessage("CRITICAL DANGER: Velocity exceeds boundary tolerance!");
         }
     }
     
     onWallBreak() {
-        this.printMessage("Architect: SECTOR BREACH! Anomaly has escaped the quarantine zone.");
-        this.printMessage("Architect: Dispatching Firewall Gate to Sector [3,0].");
+        this.printMessage("CRITICAL ALERT: SECTOR BREACH! Anomaly has escaped the quarantine zone.");
+        this.printMessage("LOG: Architect > 'Dispatching Firewall Gate to Sector [3,0]. CONTAIN IT!'");
     }
 }

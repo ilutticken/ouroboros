@@ -33,6 +33,25 @@ export class AudioEngine {
         osc.stop(this.ctx.currentTime + 0.1);
     }
     
+    playDoot() {
+        if (!this.initialized) return;
+        
+        const osc = this.ctx.createOscillator();
+        const gainNode = this.ctx.createGain();
+        
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(800, this.ctx.currentTime);
+        
+        gainNode.gain.setValueAtTime(0.05, this.ctx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.05);
+        
+        osc.connect(gainNode);
+        gainNode.connect(this.ctx.destination);
+        
+        osc.start();
+        osc.stop(this.ctx.currentTime + 0.05);
+    }
+    
     playDeath() {
         if (!this.initialized) return;
         

@@ -55,16 +55,18 @@ export class RoomGenerator {
             const templateType = Math.floor(Math.random() * 3);
             
             if (templateType === 0) {
-                // The Cross Maze
+                // The Cross Maze (Less aggressive)
                 for (let i = 10; i < this.cols - 10; i++) {
-                    if (i !== Math.floor(this.cols / 2) && i !== Math.floor(this.cols / 2) - 1 && i !== Math.floor(this.cols / 2) + 1) {
+                    // Leave a 5-tile gap in the middle instead of 3
+                    if (i < Math.floor(this.cols / 2) - 2 || i > Math.floor(this.cols / 2) + 2) {
                         let ox = i * this.gridSize;
                         let oy = cy;
                         if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });
                     }
                 }
                 for (let j = 5; j < this.rows - 5; j++) {
-                    if (j !== Math.floor(this.rows / 2) && j !== Math.floor(this.rows / 2) - 1 && j !== Math.floor(this.rows / 2) + 1) {
+                    // Leave a 5-tile gap in the middle instead of 3
+                    if (j < Math.floor(this.rows / 2) - 2 || j > Math.floor(this.rows / 2) + 2) {
                         let ox = cx;
                         let oy = j * this.gridSize;
                         if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });

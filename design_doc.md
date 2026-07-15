@@ -42,11 +42,11 @@ A fusion of retro pixel art and modern neon cyber-aesthetics.
 
 
 ## 5. The Cast of Quirky Characters (The Coterie)
-**Bite:** (The Cynical Merchant) A former generic Data packet who figured out how to hoard his brethren instead of being consumed. Acts as your guide and upgrade vendor. Snarky, opportunistic, but ultimately loyal.
+**2-Bit:** (The Cynical Merchant) A former generic Data packet who figured out how to hoard his brethren instead of being consumed. Acts as your guide and upgrade vendor. Snarky, opportunistic, but ultimately loyal.
 **The Architect:** (The Broken Overseer) The system's primary diagnostic tool. Speaks in pompous, pseudo-authoritative system alerts. He claims to be the god of the system, but is actually desperately trying to keep it from falling apart.
 **Gate:** (The Obsessive Firewall) A rigid, rule-following security program who speaks like a stressed-out traffic cop. Has an unrequited crush on The Architect's voice.
 **Null:** (The Melancholy Subroutine) A half-deleted, depressed program who speaks in cryptic poetry. Hands out weird side-quests and useless but fascinating lore about the system's history.
-**Nibble:** (The Shady Sibling) Bite's estranged sister. Runs a black-market shop deep in the Wilds selling illegal, highly dangerous glitch-mods.
+**Nibble:** (The Shady Sibling) 2-Bit's estranged sister. Runs a black-market shop deep in the Wilds selling illegal, highly dangerous glitch-mods.
 **Cache:** (The Hoarder) A disorganized memory bank residing in the Forgotten Sectors. Speaks in outdated slang and holds onto obsolete, fragmented data.
 **Ping:** (The Hyperactive Courier) A tiny, incredibly fast networking packet bouncing around the Data Streams. Speaks at lightspeed and runs the fast-travel network.
 **Hex:** (The Rebel Zealot) A corrupted executable hiding in the Deep Glitch. Believes you (the Snake) are a divine entity sent to liberate them from the Architect.

@@ -11,7 +11,7 @@ export class Renderer {
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
         // Neon Glow effect
-        this.ctx.shadowBlur = 15;
+        this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
         
         if (state.unlocked.borders) {
             this.ctx.strokeStyle = '#00ffcc';
@@ -29,21 +29,27 @@ export class Renderer {
             const cy = this.canvas.height / 2;
             
             // Draw gap indicators (Weak points)
-            const inHub = worldManager && worldManager.currentRoomX === 0 && worldManager.currentRoomY === 0;
-            if (state.unlocked.borders && (!inHub || state.unlocked.wallBroken)) {
+            if (state.unlocked.borders) {
+                const inHub = worldManager && worldManager.currentRoomX === 0 && worldManager.currentRoomY === 0;
                 this.ctx.beginPath();
-                // Up
-                this.ctx.moveTo(cx - gapSize/2, 2);
-                this.ctx.lineTo(cx + gapSize/2, 2);
-                // Down
-                this.ctx.moveTo(cx - gapSize/2, this.canvas.height - 2);
-                this.ctx.lineTo(cx + gapSize/2, this.canvas.height - 2);
-                // Left
-                this.ctx.moveTo(2, cy - gapSize/2);
-                this.ctx.lineTo(2, cy + gapSize/2);
-                // Right
-                this.ctx.moveTo(this.canvas.width - 2, cy - gapSize/2);
-                this.ctx.lineTo(this.canvas.width - 2, cy + gapSize/2);
+                
+                if (!inHub) {
+                    // Up
+                    this.ctx.moveTo(cx - gapSize/2, 2);
+                    this.ctx.lineTo(cx + gapSize/2, 2);
+                    // Down
+                    this.ctx.moveTo(cx - gapSize/2, this.canvas.height - 2);
+                    this.ctx.lineTo(cx + gapSize/2, this.canvas.height - 2);
+                    // Left
+                    this.ctx.moveTo(2, cy - gapSize/2);
+                    this.ctx.lineTo(2, cy + gapSize/2);
+                }
+                
+                if (!inHub || state.unlocked.wallBroken) {
+                    // Right
+                    this.ctx.moveTo(this.canvas.width - 2, cy - gapSize/2);
+                    this.ctx.lineTo(this.canvas.width - 2, cy + gapSize/2);
+                }
                 this.ctx.stroke();
             }
             
@@ -75,7 +81,7 @@ export class Renderer {
                     this.ctx.fillStyle = '#00ffff'; 
                     this.ctx.shadowColor = '#00ffff';
                 }
-                this.ctx.shadowBlur = 15;
+                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
             }
         }
         
