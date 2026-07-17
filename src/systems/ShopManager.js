@@ -4,116 +4,48 @@ export class ShopManager {
         this.audio = audio;
         this.overlay = document.getElementById('shop-overlay');
 
-        // Buttons
-        this.btnBuyBrake = document.getElementById('btn-buy-brake');
-        this.btnBuyHitchhiker = document.getElementById('btn-buy-hitchhiker');
-        this.itemBuyHitchhiker = document.getElementById('item-buy-hitchhiker');
-        this.btnBuyCompression = document.getElementById('btn-buy-compression');
-        this.btnBuyArmor = document.getElementById('btn-buy-armor');
-        this.btnBuySpeed = document.getElementById('btn-buy-speed');
-        this.btnClose = document.getElementById('btn-close-shop');
+        // Each entry: element id, hotkey, price, and a can-buy / apply pair. Kept as
+        // data so the shop is one list to edit, and every lookup is null-safe (a
+        // trimmed test fixture or a future layout change can drop a button without
+        // crashing the GameEngine constructor).
+        this.items = [
+            { id: 'btn-buy-pivot',       key: '1', price: 10, owned: () => this.state.upgrades.pivot,             buy: () => { this.state.upgrades.pivot = true; } },
+            { id: 'btn-buy-compression', key: '2', price: 15, owned: () => this.state.upgrades.dataCompression,    buy: () => { this.state.upgrades.dataCompression = true; } },
+            { id: 'btn-buy-armor',       key: '3', price: 25, owned: () => this.state.upgrades.reinforcedSegments, buy: () => { this.state.upgrades.reinforcedSegments = true; } },
+            { id: 'btn-buy-scanner',     key: '4', price: 40, owned: () => this.state.upgrades.scanner,            buy: () => { this.state.upgrades.scanner = true; } },
+            { id: 'btn-buy-rollback',    key: '5', price: 20, owned: () => this.state.upgrades.rollbackBuffer,     buy: () => { this.state.upgrades.rollbackBuffer = true; } },
+        ];
+        for (const it of this.items) it.el = document.getElementById(it.id);
 
-        // Callbacks
+        this.btnClose = document.getElementById('btn-close-shop');
         this.onClose = null;
-        this.onSpeedUpgradeBought = null;
 
         this.bindEvents();
     }
 
+    purchase(it) {
+        if (!it || it.owned() || this.state.score < it.price) return;
+        this.state.score -= it.price;
+        it.buy();
+        this.audio.playBeep();
+        this.updateUI();
+    }
+
     bindEvents() {
-        // Guarded binding: any shop button may be absent (a trimmed test fixture, or a
-        // future layout that drops an item). A missing element must never throw and
-        // take the whole GameEngine constructor down with it.
-        const on = (el, handler) => { if (el) el.addEventListener('click', handler); };
-
-        on(this.btnBuyBrake, () => {
-            if (this.state.score >= 10 && !this.state.upgrades.manualBrake) {
-                this.state.score -= 10;
-                this.state.upgrades.manualBrake = true;
-                this.audio.playBeep();
-                this.updateUI();
-            }
-        });
-
-        on(this.btnBuyHitchhiker, () => {
-            if (this.state.score >= 15 && !this.state.unlocked.tailRider) {
-                this.state.score -= 15;
-                this.state.unlocked.tailRider = true;
-                this.audio.playBeep();
-                this.updateUI();
-
-                // When bought, close the shop and let Game.js handle attaching him
-                this.close();
-            }
-        });
-
-        on(this.btnBuyCompression, () => {
-            if (this.state.score >= 15 && !this.state.upgrades.dataCompression) {
-                this.state.score -= 15;
-                this.state.upgrades.dataCompression = true;
-                this.audio.playBeep();
-                this.updateUI();
-            }
-        });
-
-        on(this.btnBuyArmor, () => {
-            if (this.state.score >= 25 && !this.state.upgrades.reinforcedSegments) {
-                this.state.score -= 25;
-                this.state.upgrades.reinforcedSegments = true;
-                this.audio.playBeep();
-                this.updateUI();
-            }
-        });
-
-        on(this.btnBuySpeed, () => {
-            if (this.state.score >= 30 && this.state.upgrades.speedLevel < 3) {
-                this.state.score -= 30;
-                this.state.upgrades.speedLevel++;
-                this.audio.playBeep();
-                this.updateUI();
-
-                this.close();
-                if (this.onSpeedUpgradeBought) {
-                    this.onSpeedUpgradeBought(this.state.upgrades.speedLevel);
-                }
-            }
-        });
-
-        on(this.btnClose, () => {
-            this.close();
-        });
+        for (const it of this.items) {
+            if (it.el) it.el.addEventListener('click', () => this.purchase(it));
+        }
+        if (this.btnClose) this.btnClose.addEventListener('click', () => this.close());
 
         window.addEventListener('keydown', (e) => {
             if (!this.overlay || this.overlay.classList.contains('hidden')) return;
             // While the shop is open it OWNS the keyboard: stop the event reaching the
-            // later window listeners (pause toggle, movement buffering) — otherwise ESC
-            // would close the shop AND immediately open the pause menu, and arrow keys
-            // would queue a move that fires the instant you leave.
+            // later window listeners (pause toggle, movement buffering, pivot).
             e.stopImmediatePropagation();
 
-            switch(e.key) {
-                case '1':
-                    if (this.btnBuyBrake) this.btnBuyBrake.click();
-                    break;
-                case 'h':
-                case 'H':
-                    if (this.itemBuyHitchhiker && !this.itemBuyHitchhiker.classList.contains('hidden') && this.btnBuyHitchhiker) {
-                        this.btnBuyHitchhiker.click();
-                    }
-                    break;
-                case '2':
-                    if (this.btnBuyCompression) this.btnBuyCompression.click();
-                    break;
-                case '3':
-                    if (this.btnBuyArmor) this.btnBuyArmor.click();
-                    break;
-                case '4':
-                    if (this.btnBuySpeed) this.btnBuySpeed.click();
-                    break;
-                case 'Escape':
-                    if (this.btnClose) this.btnClose.click();
-                    break;
-            }
+            if (e.key === 'Escape') { this.close(); return; }
+            const it = this.items.find(i => i.key === e.key);
+            if (it) this.purchase(it);
         });
     }
 
@@ -139,38 +71,15 @@ export class ShopManager {
         const scoreEl = document.getElementById('score-value');
         if (scoreEl) scoreEl.innerText = this.state.score.toString();
 
-        if (this.state.upgrades.manualBrake && this.btnBuyBrake) {
-            this.btnBuyBrake.innerText = "OWNED";
-            this.btnBuyBrake.disabled = true;
-            this.btnBuyBrake.style.opacity = 0.5;
-        }
-        if (this.itemBuyHitchhiker) {
-            if (this.state.upgrades.manualBrake && !this.state.unlocked.tailRider) {
-                this.itemBuyHitchhiker.classList.remove('hidden');
+        for (const it of this.items) {
+            if (!it.el) continue;
+            if (it.owned()) {
+                it.el.innerText = 'OWNED';
+                it.el.disabled = true;
+                it.el.style.opacity = 0.5;
             } else {
-                this.itemBuyHitchhiker.classList.add('hidden');
-            }
-        }
-
-        if (this.state.upgrades.dataCompression && this.btnBuyCompression) {
-            this.btnBuyCompression.innerText = "OWNED";
-            this.btnBuyCompression.disabled = true;
-            this.btnBuyCompression.style.opacity = 0.5;
-        }
-
-        if (this.state.upgrades.reinforcedSegments && this.btnBuyArmor) {
-            this.btnBuyArmor.innerText = "OWNED";
-            this.btnBuyArmor.disabled = true;
-            this.btnBuyArmor.style.opacity = 0.5;
-        }
-
-        if (this.btnBuySpeed) {
-            if (this.state.upgrades.speedLevel >= 3) {
-                this.btnBuySpeed.innerText = "MAX";
-                this.btnBuySpeed.disabled = true;
-                this.btnBuySpeed.style.opacity = 0.5;
-            } else {
-                this.btnBuySpeed.innerText = `Buy (Lvl ${this.state.upgrades.speedLevel}/3)`;
+                it.el.disabled = this.state.score < it.price;
+                it.el.style.opacity = this.state.score < it.price ? 0.6 : 1;
             }
         }
     }

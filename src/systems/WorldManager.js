@@ -15,6 +15,7 @@ export class WorldManager {
         this.brokenWalls = new Set();     // fully smashed-through (Open) boundaries
         this.wallDamage = {};             // partial crack damage per boundary (persists)
         this.wallBreakThreshold = 3;      // damage to break; one max-gear (gear 3) hit
+        this.scannerReveals = {};         // boundaryKey -> remaining ms a scanner sweep keeps a HIDDEN weak point visible
 
         // Boundaries that MUST have a weak point, so the world is always traversable
         // regardless of the per-wall hashing below. Built as guaranteed corridors of
@@ -173,5 +174,42 @@ export class WorldManager {
     getWallDamage(roomX, roomY, direction) {
         const key = this.boundaryKey(roomX, roomY, direction);
         return key ? (this.wallDamage[key] || 0) : 0;
+    }
+
+    // --- Hidden weak points & the Topology Scanner ---------------------------------
+    // Off-path weak points are HIDDEN (drawn as solid wall) until revealed. A weak
+    // point is revealed when it's been smashed open, sits on a guided route (main
+    // path / landmark corridor — always shown so the early game stays learnable),
+    // has taken ram damage (cracked visible), or a Scanner sweep is lighting it up.
+    isWeakPointRevealed(roomX, roomY, direction) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        if (!key) return false;
+        if (this.brokenWalls.has(key)) return true;
+        if (this.mainPath.has(key)) return true;
+        if ((this.wallDamage[key] || 0) > 0) return true;
+        return (this.scannerReveals[key] || 0) > 0;
+    }
+
+    // A Scanner sweep lights a hidden weak point for `ms` (takes the longer of any
+    // existing reveal, so re-sweeping extends it).
+    revealWeakPoint(roomX, roomY, direction, ms) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        if (!key) return;
+        this.scannerReveals[key] = Math.max(this.scannerReveals[key] || 0, ms);
+    }
+
+    // Remaining reveal time (ms) for the Renderer's "freshly scanned" pulse. 0 if none.
+    scannerRevealRemaining(roomX, roomY, direction) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        return key ? (this.scannerReveals[key] || 0) : 0;
+    }
+
+    // Count down active scanner reveals; call once per frame with dt (ms).
+    tickReveals(dt) {
+        for (const key of Object.keys(this.scannerReveals)) {
+            const left = this.scannerReveals[key] - dt;
+            if (left <= 0) delete this.scannerReveals[key];
+            else this.scannerReveals[key] = left;
+        }
     }
 }

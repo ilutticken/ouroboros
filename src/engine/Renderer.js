@@ -14,11 +14,15 @@ export class Renderer {
         this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
         
         if (state.unlocked.borders) {
+            // Walls are drawn a little THICKER for legibility (a11y). Inset by half the
+            // thickness so the stroke stays fully on-canvas.
+            const wallThickness = 6;
+            const inset = wallThickness / 2;
             this.ctx.strokeStyle = '#00ffcc';
-            this.ctx.lineWidth = 4;
+            this.ctx.lineWidth = wallThickness;
             this.ctx.shadowColor = '#00ffcc';
-            this.ctx.strokeRect(2, 2, this.canvas.width - 4, this.canvas.height - 4);
-            
+            this.ctx.strokeRect(inset, inset, this.canvas.width - wallThickness, this.canvas.height - wallThickness);
+
             // Weak points & smashed doorways. For each breakable side of THIS room,
             // draw either an "Open" black gap (fully smashed through) or a crack whose
             // colour, thickness, and glow scale with accumulated ram damage.
@@ -37,6 +41,25 @@ export class Renderer {
                 return [W - thick, s, thick, len]; // right
             };
 
+            // A11y REDUNDANT CODING: a weak wall must read as breakable by more than
+            // COLOUR. Punch regular dark notches along the crack so it looks perforated
+            // / dashed — a texture the smooth solid wall never has, legible in grayscale
+            // and for colour-blind players.
+            const drawWeakHatch = (dir, wp, thick) => {
+                const horizontal = (dir === 'up' || dir === 'down');
+                const [rx0, ry0, rw, rh] = gapRect(dir, wp, thick);
+                this.ctx.save();
+                this.ctx.shadowBlur = 0;
+                this.ctx.fillStyle = '#050505';
+                const step = Math.max(4, Math.round(g / 3));
+                if (horizontal) {
+                    for (let x = rx0 + 2; x < rx0 + rw - 1; x += step) this.ctx.fillRect(x, ry0, 2, rh);
+                } else {
+                    for (let y = ry0 + 2; y < ry0 + rh - 1; y += step) this.ctx.fillRect(rx0, y, rw, 2);
+                }
+                this.ctx.restore();
+            };
+
             if (worldManager && worldManager.getWeakPoint) {
                 const rx = worldManager.currentRoomX;
                 const ry = worldManager.currentRoomY;
@@ -47,25 +70,52 @@ export class Renderer {
                     const wp = worldManager.getWeakPoint(rx, ry, dir);
                     if (!wp) continue; // solid wall — no doorway to draw
                     if (worldManager.isWallBroken(rx, ry, dir)) {
-                        // OPEN — punch a black gap through the neon border.
+                        // OPEN — punch a full-thickness black gap through the neon border.
                         this.ctx.shadowBlur = 0;
                         this.ctx.fillStyle = '#050505';
-                        this.ctx.fillRect(...gapRect(dir, wp, 4));
-                    } else {
-                        // CRACK — orange (pristine) -> yellow as it takes sub-max damage
-                        // (capped below the break point; only a max-gear hit finishes it).
-                        const dmg = worldManager.getWallDamage(rx, ry, dir);
-                        const t = Math.min(1, dmg / threshold);
-                        const green = Math.floor(100 + t * 155); // 100 -> 255
-                        const blue = Math.floor(t * 255);        // 0 -> 255
-                        this.ctx.fillStyle = `rgba(255, ${green}, ${blue}, ${0.45 + 0.55 * pulse})`;
-                        this.ctx.shadowColor = `rgb(255, ${green}, ${blue})`;
-                        this.ctx.shadowBlur = 6 + t * 14;
-                        this.ctx.fillRect(...gapRect(dir, wp, 3 + Math.round(t * 5)));
+                        this.ctx.fillRect(...gapRect(dir, wp, wallThickness));
+                        continue;
+                    }
+                    // HIDDEN until revealed (guided route / ram damage / a Scanner sweep).
+                    // An un-revealed weak point renders as plain solid wall — that's the
+                    // whole point of the Topology Scanner.
+                    if (worldManager.isWeakPointRevealed && !worldManager.isWeakPointRevealed(rx, ry, dir)) continue;
+
+                    // CRACK — orange (pristine) -> yellow as it takes sub-max damage
+                    // (capped below the break point; only a max-gear hit finishes it).
+                    const dmg = worldManager.getWallDamage(rx, ry, dir);
+                    const t = Math.min(1, dmg / threshold);
+                    const green = Math.floor(100 + t * 155); // 100 -> 255
+                    const blue = Math.floor(t * 255);        // 0 -> 255
+                    const thick = wallThickness + Math.round(t * 4);
+                    this.ctx.fillStyle = `rgba(255, ${green}, ${blue}, ${0.45 + 0.55 * pulse})`;
+                    this.ctx.shadowColor = `rgb(255, ${green}, ${blue})`;
+                    this.ctx.shadowBlur = 6 + t * 14;
+                    this.ctx.fillRect(...gapRect(dir, wp, thick));
+                    drawWeakHatch(dir, wp, thick); // the a11y texture cue (not colour-only)
+
+                    // A FRESH scanner detection (revealed by a sweep, no ram damage yet)
+                    // gets a cyan "sonar" outline that fades as the reveal expires.
+                    const scan = worldManager.scannerRevealRemaining ? worldManager.scannerRevealRemaining(rx, ry, dir) : 0;
+                    if (scan > 0 && dmg === 0) {
+                        const sAlpha = Math.min(1, scan / 800) * (0.4 + 0.6 * pulse);
+                        this.ctx.save();
+                        this.ctx.strokeStyle = `rgba(0, 255, 204, ${sAlpha})`;
+                        this.ctx.shadowColor = '#00ffcc';
+                        this.ctx.shadowBlur = 10;
+                        this.ctx.lineWidth = 2;
+                        const [sgx, sgy, sgw, sgh] = gapRect(dir, wp, thick);
+                        this.ctx.strokeRect(sgx, sgy, sgw, sgh);
+                        this.ctx.restore();
                     }
                 }
                 this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
             }
+
+            // Cadenza's DIRECTIONAL cue (a11y: her beacon must not be sound-only). In
+            // rooms near her sealed sector the wall(s) facing her breathe with her tone,
+            // stronger the closer you are — so which way to go is also VISIBLE.
+            if (state.cadenzaBeacon) this.drawCadenzaPulse(state.cadenzaBeacon, W, H);
         }
         
         // Draw Obstacles (Solid Green)
@@ -208,17 +258,20 @@ export class Renderer {
         // Death: the sim is frozen behind this. Dim the last frame (so you see WHERE you
         // died) and prompt a restart, instead of the old silent teleport-to-hub.
         if (state.gameState === 'DEAD') {
+            // A Rollback reuses the DEAD state (frozen frame + wake-press) but did NOT
+            // end the run, so it gets its own cyan banner instead of the red death one.
+            const rolled = state.rolledBack;
             this.ctx.shadowBlur = 0;
-            this.ctx.fillStyle = 'rgba(6, 0, 0, 0.72)';
+            this.ctx.fillStyle = rolled ? 'rgba(0, 6, 6, 0.72)' : 'rgba(6, 0, 0, 0.72)';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            this.ctx.fillStyle = '#ff0055';
-            this.ctx.font = '20px "Press Start 2P", monospace';
+            this.ctx.fillStyle = rolled ? '#00ffcc' : '#ff0055';
+            this.ctx.font = '18px "Press Start 2P", monospace';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('SIGNAL LOST', this.canvas.width / 2, this.canvas.height / 2 - 6);
+            this.ctx.fillText(rolled ? 'ROLLBACK ENGAGED' : 'SIGNAL LOST', this.canvas.width / 2, this.canvas.height / 2 - 6);
             if (Math.floor(Date.now() / 500) % 2 === 0) {
-                this.ctx.fillStyle = '#00ffcc';
+                this.ctx.fillStyle = rolled ? '#66ff66' : '#00ffcc';
                 this.ctx.font = '10px "Press Start 2P", monospace';
-                this.ctx.fillText('PRESS ANY KEY TO RE-SPAWN', this.canvas.width / 2, this.canvas.height / 2 + 26);
+                this.ctx.fillText(rolled ? '−10 DATA · PRESS ANY KEY' : 'PRESS ANY KEY TO RE-SPAWN', this.canvas.width / 2, this.canvas.height / 2 + 26);
             }
         }
 
@@ -268,6 +321,34 @@ export class Renderer {
             // eyes for bite / denny / citizen / shop (and any friendly program)
             this.drawEyes(x, y, npc.id === 'denny' ? '#4a2c00' : '#0a1a0a');
         }
+    }
+
+    // A gentle pink pulse along the wall(s) facing Cadenza's sealed sector — the
+    // VISIBLE half of her homing beacon (the audible half is the sonar ping). Amplitude
+    // scales with proximity; the rhythm is slow and breath-like, echoing her sustained
+    // tone. beacon = { proximity: 0..1, dx: sign toward her X, dy: sign toward her Y }.
+    drawCadenzaPulse(beacon, W, H) {
+        const p = Math.max(0, Math.min(1, beacon.proximity));
+        if (p <= 0) return;
+        const breath = 0.5 + 0.5 * Math.sin(Date.now() / 650); // ~breathing rhythm
+        const alpha = 0.15 + 0.55 * p * breath;
+        this.ctx.save();
+        this.ctx.strokeStyle = `rgba(255, 102, 204, ${alpha})`;
+        this.ctx.shadowColor = '#ff66cc';
+        this.ctx.shadowBlur = 8 + 16 * p * breath;
+        this.ctx.lineWidth = 6;
+        const walls = [];
+        if (beacon.dx > 0) walls.push([W - 3, 0, W - 3, H]);   // east
+        else if (beacon.dx < 0) walls.push([3, 0, 3, H]);      // west
+        if (beacon.dy > 0) walls.push([0, H - 3, W, H - 3]);   // south
+        else if (beacon.dy < 0) walls.push([0, 3, W, 3]);      // north
+        for (const [x0, y0, x1, y1] of walls) {
+            this.ctx.beginPath();
+            this.ctx.moveTo(x0, y0);
+            this.ctx.lineTo(x1, y1);
+            this.ctx.stroke();
+        }
+        this.ctx.restore();
     }
 
     // The Module Slot — a pulsing dashed 3x3 socket (bottom-left). Drag your tail

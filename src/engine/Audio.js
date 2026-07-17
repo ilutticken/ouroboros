@@ -2,8 +2,21 @@ export class AudioEngine {
     constructor() {
         this.ctx = null;
         this.initialized = false;
+        // Default master volume. Was effectively 0.9 (too loud); dialed to a calmer
+        // default. Settable at runtime via setVolume() — the hook for the a11y
+        // volume/mute control. 0 = muted, 1 = full.
+        this.masterVolume = 0.4;
     }
-    
+
+    // Adjust overall loudness (a11y). Safe to call before init(); it takes effect on
+    // the live master bus once the audio context exists.
+    setVolume(v) {
+        this.masterVolume = Math.max(0, Math.min(1, v));
+        if (this.master && this.ctx) {
+            this.master.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
+        }
+    }
+
     init() {
         if (this.initialized) return;
 
@@ -16,7 +29,7 @@ export class AudioEngine {
         // wubs while dragging a long body past a Glitch) can't sum past 1.0 and
         // hard-clip the destination.
         this.master = this.ctx.createGain();
-        this.master.gain.setValueAtTime(0.9, this.ctx.currentTime);
+        this.master.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
         this.limiter = this.ctx.createDynamicsCompressor();
         this.limiter.threshold.setValueAtTime(-14, this.ctx.currentTime);
         this.limiter.knee.setValueAtTime(12, this.ctx.currentTime);
@@ -377,6 +390,28 @@ export class AudioEngine {
             g.connect(lp);
             osc.start(t0); osc.stop(t0 + noteDur);
             vib.start(t0); vib.stop(t0 + noteDur);
+        });
+    }
+
+    // Diegetic: the Topology Scanner catching a hidden weak point as your mass sweeps
+    // the wall — a clean two-tone sonar "bloop" (rising), deliberately musical and
+    // distinct from the abrasive wall-scrape / corruption wub so a detection is
+    // unmistakable (and doubles the visual sonar outline for a11y).
+    playScannerPing() {
+        if (!this.initialized) return;
+        const now = this.ctx.currentTime;
+        const freqs = [660, 990]; // rising interval
+        freqs.forEach((f, i) => {
+            const t0 = now + i * 0.08;
+            const osc = this.ctx.createOscillator();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(f, t0);
+            const g = this.ctx.createGain();
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(0.08, t0 + 0.01);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.14);
+            osc.connect(g); g.connect(this.master);
+            osc.start(t0); osc.stop(t0 + 0.14);
         });
     }
 

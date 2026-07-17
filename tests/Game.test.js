@@ -18,10 +18,11 @@ describe('GameEngine - NPC Encounters', () => {
             </div>
             <div id="game-wrapper">
                 <div id="shop-overlay" class="hidden">
-                <button id="btn-buy-brake">Buy</button>
+                <button id="btn-buy-pivot">Buy</button>
                 <button id="btn-buy-compression">Buy</button>
                 <button id="btn-buy-armor">Buy</button>
-                <button id="btn-buy-speed">Buy</button>
+                <button id="btn-buy-scanner">Buy</button>
+                <button id="btn-buy-rollback">Buy</button>
                 <button id="btn-close-shop">Leave</button>
             </div>
             </div>

@@ -25,29 +25,6 @@ export class GameEngine {
         this.shopManager = new ShopManager(this.state, this.audio);
         this.worldManager = new WorldManager(canvas, this.gridSize);
         
-        // Shop callbacks
-        this.shopManager.onSpeedUpgradeBought = (level) => {
-            this.narrative.onSpeedUpgrade(level);
-            this.state.gameState = 'DIALOG';
-            let lines = [];
-            if (level === 1 && !this.state.unlocked.speed1) {
-                lines = ["I'm working on an idea...", "Keep gathering data."];
-                this.state.unlocked.speed1 = true;
-            } else if (level === 2 && !this.state.unlocked.speed2) {
-                lines = ["Almost there.", "If you get a bit faster, we might be able to escape!"];
-                this.state.unlocked.speed2 = true;
-            } else if (level === 3 && !this.state.unlocked.speed3) {
-                lines = ["That's it! Max speed!", "If you find a weak point, RAM THE WALL!", "It's our only way out!"];
-                this.state.unlocked.speed3 = true;
-            } else {
-                this.state.gameState = 'PLAYING';
-                return;
-            }
-            this.dialogManager.start(lines, () => {
-                this.state.gameState = 'PLAYING';
-            });
-        };
-        
         // Entites
         this.snake = new Snake(
             Math.floor(canvas.width / 2 / this.gridSize) * this.gridSize,
@@ -91,6 +68,17 @@ export class GameEngine {
                         this.onUnpauseCallback = null;
                     }
                 }
+            }
+        });
+
+        // Pivot Override (a bought upgrade): a lone SHIFT press safely reverses you —
+        // the old tail becomes the head, so it's a 180 that doesn't self-collide.
+        // Guarded on !e.repeat so holding Shift can't machine-gun pivots.
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'Shift' && !e.repeat && this.state.upgrades.pivot
+                && this.state.gameState === 'PLAYING'
+                && !(this.narrative && this.narrative.isPrinting) && !this.moduleLoad) {
+                this.pivot();
             }
         });
         
@@ -140,6 +128,7 @@ export class GameEngine {
             if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
             if (this.state.gameState === 'START' || this.state.gameState === 'DEAD') {
                 this.state.gameState = 'PLAYING';
+                this.state.rolledBack = false; // clear the rollback banner on resume
             }
         }, () => {
             // Advance a dialog. Returns true when it handled one, so InputHandler knows
@@ -210,8 +199,9 @@ export class GameEngine {
         // Min gear is -1 (brake)
         this.gear = Math.max(-1, Math.min(this.gear, maxGear));
         
-        if (this.gear >= 3) {
+        if (this.gear >= 3 && !this.state.unlocked.maxSpeedReached) {
             this.state.unlocked.maxSpeedReached = true;
+            this.narrative.onMaxGear(); // Architect frets about breach velocity (once)
         }
         
         // Map gear to speed (ms per move). Lower ms = faster.
@@ -306,6 +296,76 @@ export class GameEngine {
         if (this._beaconTimer >= interval) {
             this._beaconTimer = 0;
             this.audio.playCadenzaSong(prox);
+        }
+    }
+
+    // Pivot Override: a safe 180. Reversing a Snake normally drives the head into its
+    // own neck; instead we REVERSE the body (the old tail becomes the head) and face
+    // it away from the rest of the body, so you cleanly head back the way you came.
+    pivot() {
+        const b = this.snake.body;
+        if (b.length < 2) return;
+        // The reversed snake's head is the OLD tail, heading away from its neck.
+        const newHead = b[b.length - 1];
+        const neck = b[b.length - 2];
+        const dx = Math.sign(newHead.x - neck.x) * this.gridSize;
+        const dy = Math.sign(newHead.y - neck.y) * this.gridSize;
+        const nx = newHead.x + dx, ny = newHead.y + dy;
+
+        // A "safe 180" must actually be safe. Refuse — a soft denial, never a death — if:
+        //  * the reversed head is off-screen (e.g. the off-screen tail a room-crossing
+        //    parked in the neighbouring room's coordinates), or
+        //  * the cell it would enter next tick is a wall, or an INTERIOR body segment
+        //    (a coiled/spiral snake wrapped around its own tail).
+        // b[0] (the old head) is excluded: it vacates as the tail on that same tick.
+        const headOff = newHead.x < 0 || newHead.x >= this.canvas.width || newHead.y < 0 || newHead.y >= this.canvas.height;
+        const wallAhead = this.state.unlocked.borders && (nx < 0 || nx >= this.canvas.width || ny < 0 || ny >= this.canvas.height);
+        const bodyAhead = b.some((s, i) => i !== 0 && i !== b.length - 1 && s.x === nx && s.y === ny);
+        if (headOff || wallAhead || bodyAhead) {
+            this.audio.playDenied(); // can't pivot safely here — refuse rather than self-kill
+            return;
+        }
+
+        b.reverse();
+        this.input.direction = { x: dx, y: dy };
+        this.input.nextDirection = { x: dx, y: dy };
+        if (this.gear < 0) { this.gear = 0; this.speed = this.baseSpeed; } // don't keep braking backwards
+        this.audio.playDoot();
+    }
+
+    // Topology Scanner: dragging your body along a wall SWEEPS it for hidden weak
+    // points. When any draped segment passes over an un-revealed weak point, light it
+    // up for a duration that grows GEOMETRICALLY with how much of your body is against
+    // that wall — so a long snake lining the sweep up reveals doors for far longer
+    // (and a fresh detection pings). Only runs once you own the upgrade.
+    detectScannerSweep() {
+        if (!this.state.upgrades.scanner || !this.state.unlocked.borders) return;
+        const g = this.gridSize;
+        const W = this.canvas.width, H = this.canvas.height;
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const body = this.snake.body;
+
+        const walls = [
+            { dir: 'left',  adj: s => s.x <= 0,     cross: s => s.y },
+            { dir: 'right', adj: s => s.x >= W - g, cross: s => s.y },
+            { dir: 'up',    adj: s => s.y <= 0,     cross: s => s.x },
+            { dir: 'down',  adj: s => s.y >= H - g, cross: s => s.x },
+        ];
+
+        for (const wall of walls) {
+            const wp = this.worldManager.getWeakPoint(rx, ry, wall.dir);
+            if (!wp) continue;
+            if (this.worldManager.isWallBroken(rx, ry, wall.dir)) continue;
+            const draped = body.filter(wall.adj);
+            if (!draped.length) continue;
+            const overDoor = draped.some(s => { const c = wall.cross(s); return c >= wp.start && c <= wp.end; });
+            if (!overDoor) continue;
+
+            // Geometric growth with sweep length (segments draped on this wall).
+            const ms = Math.min(6000, 350 * Math.pow(1.35, draped.length));
+            const alreadyKnown = this.worldManager.isWeakPointRevealed(rx, ry, wall.dir);
+            this.worldManager.revealWeakPoint(rx, ry, wall.dir, ms);
+            if (!alreadyKnown) this.audio.playScannerPing(); // ping only on a FRESH find
         }
     }
 
@@ -598,6 +658,7 @@ export class GameEngine {
         // Cadenza's homing beacon — time-based (dt), so its pulse is independent of
         // how fast you're actually slithering.
         this.updateCadenzaBeacon(dt);
+        this.worldManager.tickReveals(dt); // fade out expiring Scanner reveals
 
         this.moveTimer += dt;
         
@@ -742,6 +803,7 @@ export class GameEngine {
                 // Diegetic ambient audio: the system's own signals bleeding into your
                 // senses as you move through it (corruption proximity, wall friction).
                 this.playAmbientAudio();
+                this.detectScannerSweep(); // Topology Scanner: sweeping a wall reveals hidden doors
 
                 if (this.apple instanceof NPC) {
                     if (this.snake.checkAppleCollision(this.apple)) {
@@ -975,10 +1037,32 @@ export class GameEngine {
     }
     
     die(cause = 'unknown') {
-        this.audio.playDeath(); // ONE death cue for every cause (border/self/obstacle/glitch)
-        this.state.gameState = 'DEAD';
         const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
         const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+
+        // Rollback Buffer: a lethal hit costs 10 Data + a mass setback instead of your
+        // whole run. You KEEP your Data (minus 10) and stay in the current room (no Hub
+        // warp); only your body is rewound and you re-centre safely. Can't pay 10 -> you
+        // die for real (fall through).
+        if (this.state.upgrades.rollbackBuffer && this.state.score >= 10) {
+            this.state.score -= 10;
+            this.snake.reset(cx, cy, this.hasBiteSegment);
+            this.input.reset();
+            this.gear = 0; this.speed = this.baseSpeed; this._wallBonking = false;
+            this.changeGear(0); // re-clamp gear to the lowered score
+            this.refreshScore();
+            const g = this.gridSize;
+            this.glitches = this.glitches.filter(gl =>
+                Math.max(Math.abs(gl.x - cx) / g, Math.abs(gl.y - cy) / g) > 2);
+            this.audio.playDenied(); // a "caught you" tug, not the death drone
+            this.narrative.printMessage("SYSTEM: Rollback buffer engaged. Mass rewound, position held. (−10 Data)");
+            this.state.rolledBack = true;  // the DEAD screen below shows the ROLLBACK message, not SIGNAL LOST
+            this.state.gameState = 'DEAD'; // a wake-press resumes you HERE, Data intact
+            return;
+        }
+
+        this.audio.playDeath(); // ONE death cue for every cause (border/self/obstacle/glitch)
+        this.state.gameState = 'DEAD';
         this.snake.reset(cx, cy, this.hasBiteSegment);
         this.input.reset();
         this.state.resetScore();
@@ -1071,6 +1155,14 @@ export class GameEngine {
         this.state.moduleLoad = this.moduleLoad;
         this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
+        // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
+        // her beacon). Null unless her homing signal is live.
+        const cp = this.cadenzaProximity();
+        this.state.cadenzaBeacon = cp > 0 ? {
+            proximity: cp,
+            dx: Math.sign(this.cadenzaRoom.x - this.worldManager.currentRoomX),
+            dy: Math.sign(this.cadenzaRoom.y - this.worldManager.currentRoomY),
+        } : null;
         this.renderer.draw(this.state, this.snake, this.apple, this.npcs, this.glitches, this.worldManager, this.obstacles);
     }
     

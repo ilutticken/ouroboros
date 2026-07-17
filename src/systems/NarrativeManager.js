@@ -99,14 +99,11 @@ export class NarrativeManager {
         }
     }
 
-    onSpeedUpgrade(level) {
-        if (level === 1) {
-            this.printMessage("LOG: Architect > 'Anomaly is accelerating. It must not learn what speed unlocks. It must NOT.'");
-        } else if (level === 2) {
-            this.printMessage("LOG: Architect > 'Velocity climbing toward boundary-stress limits. Mildly concerning. Do not log that it is concerning. ...Logged it.'");
-        } else if (level === 3) {
-            this.printMessage("LOG: Architect > 'CRITICAL: nearly at breach velocity. If it aims that at a weak point now— no. No. It doesn't know about weak points. It CAN'T. Deep breaths. I have no lungs. Deep breaths regardless.'");
-        }
+    // Fires once, the first time the anomaly hits MAX gear — the Architect frets that
+    // it's near "breach velocity," inadvertently confirming that speed is the trick.
+    // (Repurposed from the retired Overclock shop upgrade's best line.)
+    onMaxGear() {
+        this.printMessage("LOG: Architect > 'CRITICAL: the anomaly is at breach velocity. If it aims that at a weak point now— no. No. It doesn't know about weak points. It CAN'T. Deep breaths. I have no lungs. Deep breaths regardless.'");
     }
 
     // The Architect's relief that you sub-smashed instead of going max speed — and,

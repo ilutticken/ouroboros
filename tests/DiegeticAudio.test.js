@@ -18,13 +18,11 @@ function mountDom() {
         </div>
         <div id="game-wrapper">
             <div id="shop-overlay" class="hidden">
-                <button id="btn-buy-brake">Buy</button>
-                <div id="item-buy-hitchhiker" class="hidden">
-                    <button id="btn-buy-hitchhiker">Buy</button>
-                </div>
+                <button id="btn-buy-pivot">Buy</button>
                 <button id="btn-buy-compression">Buy</button>
                 <button id="btn-buy-armor">Buy</button>
-                <button id="btn-buy-speed">Buy</button>
+                <button id="btn-buy-scanner">Buy</button>
+                <button id="btn-buy-rollback">Buy</button>
                 <button id="btn-close-shop">Leave</button>
             </div>
         </div>
@@ -1350,5 +1348,196 @@ describe('Night-audit regression fixes', () => {
         // The killer was spliced before die() saved the room, so the hub you respawn
         // into doesn't carry a glitch parked on your face.
         expect(game.glitches.some(gl => gl.x === 100 && gl.y === 100)).toBe(false);
+    });
+});
+
+describe('Topology Scanner — hidden doors revealed by sweeping', () => {
+    beforeEach(mountDom);
+
+    // Find an off-path room boundary that HAS a weak point (so we can hide/reveal it).
+    function findHiddenWeakPoint(wm, dir) {
+        for (let y = 6; y <= 60; y++) {
+            const wp = wm.getWeakPoint(12, y, dir);
+            if (wp && !wm.mainPath.has(wm.boundaryKey(12, y, dir))) return { rx: 12, ry: y, wp };
+        }
+        return null;
+    }
+
+    it('off-path weak points are hidden until revealed; the guided route is always shown', () => {
+        const wm = newGame().worldManager;
+        expect(wm.isWeakPointRevealed(1, 0, 'right')).toBe(true); // Hub->Localhost spine: visible
+
+        const hit = findHiddenWeakPoint(wm, 'right');
+        expect(hit).toBeTruthy();
+        expect(wm.isWeakPointRevealed(hit.rx, hit.ry, 'right')).toBe(false); // hidden by default
+        wm.revealWeakPoint(hit.rx, hit.ry, 'right', 1000);
+        expect(wm.isWeakPointRevealed(hit.rx, hit.ry, 'right')).toBe(true);  // scanner-lit
+        wm.tickReveals(1200);
+        expect(wm.isWeakPointRevealed(hit.rx, hit.ry, 'right')).toBe(false); // fades out
+    });
+
+    it('sweeping the body along a wall over a hidden door reveals it and pings once', () => {
+        const game = newGame();
+        game.audio.playScannerPing = vi.fn();
+        game.state.unlocked.borders = true;
+        game.state.upgrades.scanner = true;
+        game.apple = { x: 200, y: 200 }; game.glitches = [];
+
+        const hit = findHiddenWeakPoint(game.worldManager, 'right');
+        game.worldManager.currentRoomX = hit.rx; game.worldManager.currentRoomY = hit.ry;
+        const g = game.gridSize, right = game.canvas.width - g;
+        game.snake.body = [
+            { x: right, y: hit.wp.start },
+            { x: right, y: hit.wp.start + g },
+            { x: right, y: hit.wp.start + 2 * g }, // 3 segments draped over the door
+        ];
+
+        expect(game.worldManager.isWeakPointRevealed(hit.rx, hit.ry, 'right')).toBe(false);
+        game.detectScannerSweep();
+        expect(game.worldManager.isWeakPointRevealed(hit.rx, hit.ry, 'right')).toBe(true);
+        expect(game.audio.playScannerPing).toHaveBeenCalledTimes(1);
+        // Geometric with sweep length: 3 segments light it noticeably longer than the base.
+        expect(game.worldManager.scannerRevealRemaining(hit.rx, hit.ry, 'right')).toBeGreaterThan(350);
+
+        // Re-sweeping the same door does NOT re-ping (only fresh finds ping).
+        game.detectScannerSweep();
+        expect(game.audio.playScannerPing).toHaveBeenCalledTimes(1);
+    });
+
+    it('does nothing without the Scanner upgrade', () => {
+        const game = newGame();
+        game.audio.playScannerPing = vi.fn();
+        game.state.unlocked.borders = true;
+        game.state.upgrades.scanner = false; // not owned
+        const hit = findHiddenWeakPoint(game.worldManager, 'right');
+        game.worldManager.currentRoomX = hit.rx; game.worldManager.currentRoomY = hit.ry;
+        const g = game.gridSize, right = game.canvas.width - g;
+        game.snake.body = [{ x: right, y: hit.wp.start }];
+
+        game.detectScannerSweep();
+
+        expect(game.worldManager.isWeakPointRevealed(hit.rx, hit.ry, 'right')).toBe(false);
+        expect(game.audio.playScannerPing).not.toHaveBeenCalled();
+    });
+});
+
+describe('Pivot Override — safe 180', () => {
+    beforeEach(mountDom);
+
+    it('reverses the body and faces it back the way you came', () => {
+        const game = newGame();
+        game.state.upgrades.pivot = true;
+        game.state.gameState = 'PLAYING';
+        game.snake.body = [
+            { x: 100, y: 100 }, // head (moving right)
+            { x: 80, y: 100 },
+            { x: 60, y: 100 },  // tail
+        ];
+        game.input.direction = { x: 20, y: 0 };
+
+        game.pivot();
+
+        expect(game.snake.head).toEqual({ x: 60, y: 100 }); // old tail is the new head
+        expect(game.input.direction).toEqual({ x: -20, y: 0 }); // now heading back
+    });
+
+    it('the pivot does not cause an immediate self-collision death', () => {
+        const game = newGame();
+        game.state.upgrades.pivot = true;
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 }];
+        game.input.direction = { x: 20, y: 0 };
+
+        game.pivot();
+        step(game, { x: -20, y: 0 }); // continue in the reversed direction
+
+        expect(game.state.gameState).not.toBe('DEAD');
+    });
+
+    it('REFUSES (no death) when the snake is coiled around its own tail (verify-pass fix)', () => {
+        const game = newGame();
+        game.state.upgrades.pivot = true;
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = true;
+        game.apple = { x: 300, y: 300 };
+        // A 3x3 spiral with the tail at the centre — the reversed heading points into
+        // an interior segment, so the old code self-killed.
+        game.snake.body = [
+            { x: 20, y: 20 }, { x: 40, y: 20 }, { x: 60, y: 20 },
+            { x: 60, y: 40 }, { x: 60, y: 60 }, { x: 40, y: 60 },
+            { x: 20, y: 60 }, { x: 20, y: 40 }, { x: 40, y: 40 }, // tail at centre
+        ];
+        const before = game.snake.body.map(s => ({ ...s }));
+
+        game.pivot();
+
+        expect(game.snake.body).toEqual(before);      // refused → body unchanged
+        expect(game.state.gameState).not.toBe('DEAD'); // and definitely not a death
+    });
+
+    it('REFUSES when the reversed head would be off-screen (post-room-cross tail)', () => {
+        const game = newGame();
+        game.state.upgrades.pivot = true;
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = true;
+        game.apple = { x: 300, y: 300 };
+        // Head on the west edge, trail parked off-screen as a room crossing leaves it.
+        game.snake.body = [
+            { x: 0, y: 100 }, { x: -20, y: 100 }, { x: -40, y: 100 },
+        ];
+        const before = game.snake.body.map(s => ({ ...s }));
+
+        game.pivot();
+
+        expect(game.snake.body).toEqual(before);       // refused, not reversed off-screen
+        expect(game.state.gameState).not.toBe('DEAD');
+    });
+});
+
+describe('Rollback Buffer — soft death', () => {
+    beforeEach(mountDom);
+
+    it('a lethal hit costs 10 Data and HOLDS your room instead of wiping the run', () => {
+        const game = newGame();
+        game.state.upgrades.rollbackBuffer = true;
+        game.state.score = 25;
+        game.worldManager.currentRoomX = 3; game.worldManager.currentRoomY = 0;
+        game.apple = { x: 200, y: 200 };
+
+        game.die('self');
+
+        expect(game.state.score).toBe(15);              // -10, not zeroed
+        expect(game.worldManager.currentRoomX).toBe(3); // held in the current room, NOT warped to hub
+        expect(game.state.gameState).toBe('DEAD');      // a wake-press resumes you here
+    });
+
+    it('falls through to a real death when you can\'t afford 10 Data', () => {
+        const game = newGame();
+        game.state.upgrades.rollbackBuffer = true;
+        game.state.score = 5; // < 10
+        game.worldManager.currentRoomX = 3;
+        game.apple = { x: 200, y: 200 };
+
+        game.die('self');
+
+        expect(game.state.score).toBe(0);               // full reset
+        expect(game.worldManager.currentRoomX).toBe(0); // warped back to the hub
+    });
+
+    it('flags rolledBack so the DEAD screen shows ROLLBACK, not SIGNAL LOST (verify-pass fix)', () => {
+        const game = newGame();
+        game.state.upgrades.rollbackBuffer = true;
+        game.state.score = 25;
+        game.apple = { x: 200, y: 200 };
+
+        game.die('self');
+        expect(game.state.rolledBack).toBe(true);  // Renderer branches to the rollback banner
+
+        const g2 = newGame(); // a REAL death must not set the flag
+        g2.apple = { x: 200, y: 200 };
+        g2.die('self');
+        expect(g2.state.rolledBack).toBe(false);
     });
 });
