@@ -22,7 +22,7 @@ function mountDom() {
                 <button id="btn-buy-compression">Buy</button>
                 <button id="btn-buy-armor">Buy</button>
                 <button id="btn-buy-scanner">Buy</button>
-                <button id="btn-buy-rollback">Buy</button>
+                <button id="btn-buy-crumple">Buy</button>
                 <button id="btn-close-shop">Leave</button>
             </div>
         </div>
@@ -1496,48 +1496,132 @@ describe('Pivot Override — safe 180', () => {
     });
 });
 
-describe('Rollback Buffer — soft death', () => {
+describe('Death redo — Crumple Buffer: die vs shed-fold-bounce', () => {
     beforeEach(mountDom);
 
-    it('a lethal hit costs 10 Data and HOLDS your room instead of wiping the run', () => {
+    // A body long enough that shedding 10 leaves some to fold.
+    function longBody(n = 14) {
+        const b = [];
+        for (let i = 0; i < n; i++) b.push({ x: 100 - i * 20, y: 100 });
+        return b;
+    }
+
+    it('WITHOUT the Crumple Buffer, a hit kills you back to the beginning (Data doesn\'t matter)', () => {
         const game = newGame();
-        game.state.upgrades.rollbackBuffer = true;
-        game.state.score = 25;
-        game.worldManager.currentRoomX = 3; game.worldManager.currentRoomY = 0;
-        game.apple = { x: 200, y: 200 };
-
-        game.die('self');
-
-        expect(game.state.score).toBe(15);              // -10, not zeroed
-        expect(game.worldManager.currentRoomX).toBe(3); // held in the current room, NOT warped to hub
-        expect(game.state.gameState).toBe('DEAD');      // a wake-press resumes you here
-    });
-
-    it('falls through to a real death when you can\'t afford 10 Data', () => {
-        const game = newGame();
-        game.state.upgrades.rollbackBuffer = true;
-        game.state.score = 5; // < 10
+        game.state.upgrades.crumpleLevel = 0;
+        game.state.score = 50; // plenty of Data — irrelevant without the upgrade
         game.worldManager.currentRoomX = 3;
         game.apple = { x: 200, y: 200 };
+        game.snake.body = longBody();
 
         game.die('self');
 
+        expect(game.state.gameState).toBe('DEAD');
         expect(game.state.score).toBe(0);               // full reset
-        expect(game.worldManager.currentRoomX).toBe(0); // warped back to the hub
+        expect(game.worldManager.currentRoomX).toBe(0); // back to the hub
     });
 
-    it('flags rolledBack so the DEAD screen shows ROLLBACK, not SIGNAL LOST (verify-pass fix)', () => {
+    it('WITH the Crumple Buffer, a hit is SURVIVED: shed 10 (length + Data), fold, bounce', () => {
         const game = newGame();
-        game.state.upgrades.rollbackBuffer = true;
-        game.state.score = 25;
+        game.state.upgrades.crumpleLevel = 1; // shed 10
+        game.state.unlocked.tailRider = true;
+        game.state.score = 30;
+        game.worldManager.currentRoomX = 3; game.worldManager.currentRoomY = 0;
         game.apple = { x: 200, y: 200 };
+        game.snake.body = longBody(14);
+        game.input.direction = { x: 20, y: 0 }; // moving right
 
         game.die('self');
-        expect(game.state.rolledBack).toBe(true);  // Renderer branches to the rollback banner
 
-        const g2 = newGame(); // a REAL death must not set the flag
-        g2.apple = { x: 200, y: 200 };
-        g2.die('self');
-        expect(g2.state.rolledBack).toBe(false);
+        expect(game.state.gameState).toBe('PLAYING');            // survived
+        expect(game.worldManager.currentRoomX).toBe(3);          // stayed in the room
+        expect(game.state.score).toBe(30 - game.shedAmount);     // -10 Data
+        expect(game.snake.body.length).toBe(1);                  // FOLDED to a single block
+        expect(game.pendingUnfold).toBe(14 - game.shedAmount - 1); // 3 blocks left to un-fold
+        expect(game.input.direction).toEqual({ x: -20, y: 0 });  // bounced (reversed)
+        expect(game.bursts.length).toBeGreaterThan(0);           // shed data burst out
+    });
+
+    it('the folded data un-folds one block per move as you drive away', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }]; // folded
+        game.pendingUnfold = 3;
+
+        step(game, { x: 20, y: 0 });
+        expect(game.snake.body.length).toBe(2); // extruded one block
+        expect(game.pendingUnfold).toBe(2);
+        step(game, { x: 20, y: 0 });
+        expect(game.snake.body.length).toBe(3);
+        step(game, { x: 20, y: 0 });
+        expect(game.snake.body.length).toBe(4);
+        expect(game.pendingUnfold).toBe(0);
+        step(game, { x: 20, y: 0 }); // fully un-folded -> normal locomotion (no growth)
+        expect(game.snake.body.length).toBe(4);
+    });
+
+    it('after a bounce you can drive the REVERSED direction without hitting your tail (the fold fix)', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.upgrades.crumpleLevel = 1;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.snake.body = longBody(14);
+        game.input.direction = { x: 20, y: 0 };
+
+        game.die('self'); // fold + reverse to {-20,0}
+        expect(game.snake.body.length).toBe(1);
+        for (let i = 0; i < 4; i++) step(game, { x: -20, y: 0 }); // drive back the way we came
+        expect(game.state.gameState).toBe('PLAYING'); // no self-collision death
+    });
+
+    it('bounces OFF an obstacle (recoils), not through it', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.upgrades.crumpleLevel = 1;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.obstacles = [{ x: 120, y: 100 }];
+        game.snake.body = longBody(14);
+        game.input.direction = { x: 20, y: 0 };
+
+        step(game, { x: 20, y: 0 }); // head -> (120,100) onto the obstacle
+
+        expect(game.state.gameState).toBe('PLAYING'); // survived (crumple)
+        expect(game.snake.head.x === 120 && game.snake.head.y === 100).toBe(false); // recoiled OFF it
+        expect(game.obstacles.some(o => o.x === 120 && o.y === 100)).toBe(true);    // still a barrier
+    });
+
+    it('a bounce before 2-Bit keeps normal speed (no gear system to re-accelerate)', () => {
+        const game = newGame();
+        game.state.upgrades.crumpleLevel = 1;
+        game.state.unlocked.tailRider = false; // pre-2-Bit
+        game.state.score = 30;
+        game.apple = { x: 200, y: 200 };
+        game.snake.body = longBody(14);
+
+        game.die('self');
+
+        expect(game.gear).toBe(0);
+        expect(game.speed).toBe(game.baseSpeed);
+    });
+
+    it('burst particles fly out and fade away', () => {
+        const game = newGame();
+        game.state.upgrades.crumpleLevel = 1;
+        game.state.score = 30;
+        game.apple = { x: 200, y: 200 };
+        game.snake.body = longBody(14);
+
+        game.die('self');
+        expect(game.bursts.length).toBeGreaterThan(0);
+
+        game.updateBursts(600);
+        expect(game.bursts.length).toBe(0);
     });
 });

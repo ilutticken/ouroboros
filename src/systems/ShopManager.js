@@ -13,7 +13,10 @@ export class ShopManager {
             { id: 'btn-buy-compression', key: '2', price: 15, owned: () => this.state.upgrades.dataCompression,    buy: () => { this.state.upgrades.dataCompression = true; } },
             { id: 'btn-buy-armor',       key: '3', price: 25, owned: () => this.state.upgrades.reinforcedSegments, buy: () => { this.state.upgrades.reinforcedSegments = true; } },
             { id: 'btn-buy-scanner',     key: '4', price: 40, owned: () => this.state.upgrades.scanner,            buy: () => { this.state.upgrades.scanner = true; } },
-            { id: 'btn-buy-rollback',    key: '5', price: 20, owned: () => this.state.upgrades.rollbackBuffer,     buy: () => { this.state.upgrades.rollbackBuffer = true; } },
+            // Crumple Buffer: without it a hit KILLS you; with it you survive by
+            // shedding+folding. Tier 1 only for now (a one-time buy); a leveled version
+            // that sheds less is a fast follow.
+            { id: 'btn-buy-crumple',     key: '5', price: 20, owned: () => this.state.upgrades.crumpleLevel > 0,  buy: () => { this.state.upgrades.crumpleLevel = 1; } },
         ];
         for (const it of this.items) it.el = document.getElementById(it.id);
 

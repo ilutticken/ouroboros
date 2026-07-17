@@ -93,6 +93,8 @@ export class GameEngine {
         this._guided = new Set();  // sectors the Architect has already "guided" you to
         this.carriedModule = null; // a picked-up module riding your tail (e.g. 'map')
         this.moduleLoad = null;    // active install animation ({phase, t, fromX, fromY})
+        this.bursts = [];          // short-lived particles from segments shed on a survivable hit
+        this.pendingUnfold = 0;    // blocks still folded under you after a bounce (extrude 1/move)
         this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
@@ -128,7 +130,6 @@ export class GameEngine {
             if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
             if (this.state.gameState === 'START' || this.state.gameState === 'DEAD') {
                 this.state.gameState = 'PLAYING';
-                this.state.rolledBack = false; // clear the rollback banner on resume
             }
         }, () => {
             // Advance a dialog. Returns true when it handled one, so InputHandler knows
@@ -139,26 +140,10 @@ export class GameEngine {
             }
             return false;
         }, () => {
-            // Action key (a fresh Space press while playing): 2-Bit's consent step.
-            if (this.state.gameState === 'PLAYING' && this.state.unlocked.biteProgress === 2) {
-                this.state.unlocked.biteProgress = 3;
-                this.state.unlocked.tailRider = true;
-                const biteNPC = this.npcs.find(n => n.id === 'bite');
-                if (biteNPC) {
-                    this.npcs = this.npcs.filter(n => n.id !== 'bite');
-                    this.snake.body.push({ x: biteNPC.x, y: biteNPC.y });
-                }
-
-                this.state.gameState = 'DIALOG';
-                this.dialogManager.start([
-                    "2-Bit: I'm hooked into your system.",
-                    "2-Bit: Tapping the direction you're facing will accelerate you.",
-                    "2-Bit: Tapping the opposite direction acts as a brake.",
-                    "2-Bit: The more mass you have, the higher your max speed limit."
-                ], () => {
-                    this.state.gameState = 'PLAYING';
-                });
-            }
+            // Space has no free-play action. 2-Bit's consent is THE GAG: the only way
+            // through a dialog is the Space bar, so finishing his offer dialog IS
+            // agreeing (handled in the offer's onComplete) — never a separate Space press
+            // in the world. Keep it that way.
         }, (delta) => {
             // Gear taps are additionally blocked while the sim is frozen (a printing
             // log / module install) — otherwise tapping your facing direction while
@@ -639,6 +624,8 @@ export class GameEngine {
     }
 
     update(dt) {
+        this.updateBursts(dt); // shed-segment particles animate in every state
+
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
 
         if (this.state.gameState === 'DEAD') {
@@ -812,33 +799,15 @@ export class GameEngine {
                             if (this.state.unlocked.biteProgress === 0) {
                                 this.state.unlocked.biteProgress = 1;
                                 this.state.gameState = 'PLAYING';
-                                // Bite stays as an NPC on grid
+                                // Bite stays as a grid NPC; the DEAL happens when you bump
+                                // into him (the 'bite' NPC handler below), not here.
                                 this.npcs.push(new NPC(this.apple.x, this.apple.y, this.gridSize, 'bite', []));
-                            } else if (this.state.unlocked.biteProgress === 1) {
-                                this.state.unlocked.biteProgress = 2;
-                                this.state.gameState = 'PLAYING';
-                                this.npcs.push(new NPC(this.apple.x, this.apple.y, this.gridSize, 'bite', []));
-                            } else if (this.state.unlocked.biteProgress === 2) {
-                                // They hit Space to comply.
-                                this.state.unlocked.biteProgress = 3;
-                                this.state.unlocked.tailRider = true;
-                                this.snake.body.push({ x: this.apple.x, y: this.apple.y });
-                                
-                                this.dialogManager.start([
-                                    "2-Bit: I'm hooked into your system.",
-                                    "2-Bit: Tapping the direction you're facing will accelerate you.",
-                                    "2-Bit: Tapping the opposite direction acts as a brake.",
-                                    "2-Bit: The more mass you have, the higher your max speed limit."
-                                ], () => {
-                                    this.state.gameState = 'PLAYING';
-                                });
                             }
-                            
                             this.apple = this.spawnApple();
                         });
                         return;
                     } else {
-                        this.snake.shrink(this.hasBiteSegment);
+                        this.shrinkOrUnfold();
                     }
                 } else {
                     if (this.snake.checkAppleCollision(this.apple)) {
@@ -849,7 +818,7 @@ export class GameEngine {
                         this.apple = this.spawnApple();
                         this.checkUnlocks();
                     } else {
-                        this.snake.shrink(this.hasBiteSegment); // Remove tail
+                        this.shrinkOrUnfold(); // Remove tail — or extrude a folded block while un-folding
                     }
                 }
                 
@@ -907,17 +876,20 @@ export class GameEngine {
                                             "2-Bit: If you offer to carry me to safety, I'll teach you a trick.",
                                             "2-Bit: Do you agree? (Press SPACE to comply)"
                                         ], () => {
-                                            this.state.unlocked.biteProgress = 2; // Waiting for space
-                                            this.state.gameState = 'PLAYING';
+                                            // THE GAG: the only way through a dialog is SPACE, so
+                                            // FINISHING this one is complying. No separate confirm.
+                                            this.state.unlocked.biteProgress = 3;
+                                            this.state.unlocked.tailRider = true;
+                                            this.npcs = this.npcs.filter(n => n.id !== 'bite');
+                                            this.snake.body.push({ x: npc.x, y: npc.y });
+                                            this.state.gameState = 'DIALOG';
+                                            this.dialogManager.start([
+                                                "2-Bit: I'm hooked into your system.",
+                                                "2-Bit: Tapping the direction you're facing will accelerate you.",
+                                                "2-Bit: Tapping the opposite direction acts as a brake.",
+                                                "2-Bit: The more mass you have, the higher your max speed limit."
+                                            ], () => { this.state.gameState = 'PLAYING'; });
                                         });
-                                    }
-                                } else if (this.state.unlocked.biteProgress === 2) {
-                                    // Bumping him again while he waits for SPACE
-                                    if (this.state.score >= 30) {
-                                        this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start([
-                                            "2-Bit: Are you deaf? I said press SPACE if you agree."
-                                        ], () => { this.state.gameState = 'PLAYING'; });
                                     }
                                 }
                             }
@@ -1036,36 +1008,105 @@ export class GameEngine {
         }
     }
     
-    die(cause = 'unknown') {
-        const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
-        const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+    // The Crumple Buffer survival upgrade. Level 0 = none -> a hit KILLS you (respawn to
+    // the beginning). Level >= 1 -> you survive by shedding, higher tiers shedding LESS.
+    // Tier 1 (shed 10) is live; the 6/3 tiers are wired for a future upgrade level.
+    get shedAmount() { return [10, 6, 3][this.state.upgrades.crumpleLevel - 1] || 10; }
 
-        // Rollback Buffer: a lethal hit costs 10 Data + a mass setback instead of your
-        // whole run. You KEEP your Data (minus 10) and stay in the current room (no Hub
-        // warp); only your body is rewound and you re-centre safely. Can't pay 10 -> you
-        // die for real (fall through).
-        if (this.state.upgrades.rollbackBuffer && this.state.score >= 10) {
-            this.state.score -= 10;
-            this.snake.reset(cx, cy, this.hasBiteSegment);
-            this.input.reset();
-            this.gear = 0; this.speed = this.baseSpeed; this._wallBonking = false;
-            this.changeGear(0); // re-clamp gear to the lowered score
-            this.refreshScore();
-            const g = this.gridSize;
-            this.glitches = this.glitches.filter(gl =>
-                Math.max(Math.abs(gl.x - cx) / g, Math.abs(gl.y - cy) / g) > 2);
-            this.audio.playDenied(); // a "caught you" tug, not the death drone
-            this.narrative.printMessage("SYSTEM: Rollback buffer engaged. Mass rewound, position held. (−10 Data)");
-            this.state.rolledBack = true;  // the DEAD screen below shows the ROLLBACK message, not SIGNAL LOST
-            this.state.gameState = 'DEAD'; // a wake-press resumes you HERE, Data intact
+    // A survivable hit (you own the Crumple Buffer): you DON'T die. Shed `shedAmount`
+    // segments AND Data (they burst off), then your remaining data FOLDS under you — the
+    // whole body collapses to a single block at the head — and you BOUNCE off (reverse
+    // direction, safe because you're momentarily length 1, which fixes the old
+    // reverse-into-your-own-tail bug). As you drive away the folded data un-folds one
+    // block per move (see pendingUnfold / shrinkOrUnfold).
+    bounce() {
+        // Recoil OFF a hazard the head has already moved onto (obstacle/self are checked
+        // AFTER the move; a border hit BEFORE, so the head is already on a safe cell).
+        // Otherwise it parks on the obstacle and clips through it next tick.
+        const h = this.snake.head;
+        const onHazard = (this.obstacles && this.obstacles.some(o => o.x === h.x && o.y === h.y))
+            || this.snake.body.slice(1).some(s => s.x === h.x && s.y === h.y);
+        if (onHazard && this.snake.body.length > 1) this.snake.body.shift();
+
+        // Shed `shedAmount`, in BOTH length and Data. Burst the shed segments' cells.
+        const total = this.snake.body.length;
+        const shed = Math.min(this.shedAmount, total - 1);
+        if (shed > 0) this.spawnBurst(this.snake.body.slice(total - shed));
+        this.state.score = Math.max(0, this.state.score - this.shedAmount);
+        this.refreshScore();
+
+        // FOLD: collapse the surviving body (total - shed) under the head. 2-Bit / the
+        // module are positional (the tail), so they simply re-appear as the body
+        // un-folds; nothing to protect.
+        const keep = total - shed;
+        const head = { ...this.snake.head };
+        this.snake.body = [head];
+        this.pendingUnfold = Math.max(0, keep - 1);
+
+        // BOUNCE off: reverse the travel direction (safe — length 1 now) and drop to
+        // minimum speed. Slow gear only exists with the gear system (tailRider); before
+        // that "minimum" is just base speed so you can still steer normally.
+        const d = this.input.direction;
+        if (d.x !== 0 || d.y !== 0) {
+            const rev = { x: -d.x || 0, y: -d.y || 0 }; // || 0 avoids a stray -0
+            this.input.direction = rev;
+            this.input.nextDirection = { ...rev };
+        }
+        if (this.state.unlocked.tailRider) { this.gear = -1; this.speed = 200; }
+        else { this.gear = 0; this.speed = this.baseSpeed; }
+        this._wallBonking = false;
+        this.audio.playCrack(); // an impact, not the death drone
+    }
+
+    // Locomotion tail handling: while the body is UN-FOLDING after a bounce, each move
+    // extrudes one stored block (keep the tail) instead of the usual shrink.
+    shrinkOrUnfold() {
+        if (this.pendingUnfold > 0) { this.pendingUnfold--; return; }
+        this.snake.shrink(this.hasBiteSegment);
+    }
+
+    // Spawn a short-lived burst of particles from each shed segment's cell.
+    spawnBurst(segments) {
+        const g = this.gridSize;
+        for (const s of segments) {
+            const cx = s.x + g / 2, cy = s.y + g / 2;
+            for (let i = 0; i < 2; i++) {
+                const ang = Math.random() * Math.PI * 2;
+                const spd = 0.05 + Math.random() * 0.13; // px per ms
+                this.bursts.push({ x: cx, y: cy, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd, life: 1 });
+            }
+        }
+    }
+
+    // Advance burst particles (fly out + fade). Runs every frame, independent of state.
+    updateBursts(dt) {
+        if (!this.bursts.length) return;
+        for (const p of this.bursts) {
+            p.x += p.vx * dt;
+            p.y += p.vy * dt;
+            p.life -= dt / 500; // ~0.5s lifetime
+        }
+        this.bursts = this.bursts.filter(p => p.life > 0);
+    }
+
+    die(cause = 'unknown') {
+        // NEW DEATH MODEL. With the Crumple Buffer upgrade you survive a hit (shed + fold
+        // + bounce) instead of dying — but you need mass to shed. No buffer, or nothing
+        // left to shed -> back to the beginning (full reset to the Hub).
+        if (this.state.upgrades.crumpleLevel > 0 && this.snake.body.length > 1) {
+            this.bounce();
             return;
         }
+
+        const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
+        const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
 
         this.audio.playDeath(); // ONE death cue for every cause (border/self/obstacle/glitch)
         this.state.gameState = 'DEAD';
         this.snake.reset(cx, cy, this.hasBiteSegment);
         this.input.reset();
         this.state.resetScore();
+        this.pendingUnfold = 0;     // a fresh run isn't mid-unfold
         this.gear = 0;              // fresh runs start from a standstill (sub-smash
         this.speed = this.baseSpeed; // deaths would otherwise respawn you mid-gear)
         this._wallBonking = false;
@@ -1155,6 +1196,7 @@ export class GameEngine {
         this.state.moduleLoad = this.moduleLoad;
         this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
+        this.state.bursts = this.bursts;       // shed-segment particles for the Renderer
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();

@@ -22,7 +22,7 @@ describe('GameEngine - NPC Encounters', () => {
                 <button id="btn-buy-compression">Buy</button>
                 <button id="btn-buy-armor">Buy</button>
                 <button id="btn-buy-scanner">Buy</button>
-                <button id="btn-buy-rollback">Buy</button>
+                <button id="btn-buy-crumple">Buy</button>
                 <button id="btn-close-shop">Leave</button>
             </div>
             </div>

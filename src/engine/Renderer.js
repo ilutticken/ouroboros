@@ -208,6 +208,21 @@ export class Renderer {
             this.ctx.fillRect(c.x + 5, c.y + 5, this.gridSize - 10, this.gridSize - 10);
         }
 
+        // Shed-segment burst: the mass that "burst out of you" on a survivable hit,
+        // flying outward and fading (red data debris).
+        if (state.bursts && state.bursts.length) {
+            for (const p of state.bursts) {
+                const life = Math.max(0, p.life);
+                this.ctx.globalAlpha = life;
+                this.ctx.fillStyle = '#ff0055';
+                this.ctx.shadowColor = '#ff0055';
+                this.ctx.shadowBlur = 6;
+                const sz = 2 + 6 * life;
+                this.ctx.fillRect(p.x - sz / 2, p.y - sz / 2, sz, sz);
+            }
+            this.ctx.globalAlpha = 1;
+        }
+
         // Reset shadow for performance
         this.ctx.shadowBlur = 0;
 
@@ -258,20 +273,17 @@ export class Renderer {
         // Death: the sim is frozen behind this. Dim the last frame (so you see WHERE you
         // died) and prompt a restart, instead of the old silent teleport-to-hub.
         if (state.gameState === 'DEAD') {
-            // A Rollback reuses the DEAD state (frozen frame + wake-press) but did NOT
-            // end the run, so it gets its own cyan banner instead of the red death one.
-            const rolled = state.rolledBack;
             this.ctx.shadowBlur = 0;
-            this.ctx.fillStyle = rolled ? 'rgba(0, 6, 6, 0.72)' : 'rgba(6, 0, 0, 0.72)';
+            this.ctx.fillStyle = 'rgba(6, 0, 0, 0.72)';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-            this.ctx.fillStyle = rolled ? '#00ffcc' : '#ff0055';
-            this.ctx.font = '18px "Press Start 2P", monospace';
+            this.ctx.fillStyle = '#ff0055';
+            this.ctx.font = '20px "Press Start 2P", monospace';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText(rolled ? 'ROLLBACK ENGAGED' : 'SIGNAL LOST', this.canvas.width / 2, this.canvas.height / 2 - 6);
+            this.ctx.fillText('SIGNAL LOST', this.canvas.width / 2, this.canvas.height / 2 - 6);
             if (Math.floor(Date.now() / 500) % 2 === 0) {
-                this.ctx.fillStyle = rolled ? '#66ff66' : '#00ffcc';
+                this.ctx.fillStyle = '#00ffcc';
                 this.ctx.font = '10px "Press Start 2P", monospace';
-                this.ctx.fillText(rolled ? '−10 DATA · PRESS ANY KEY' : 'PRESS ANY KEY TO RE-SPAWN', this.canvas.width / 2, this.canvas.height / 2 + 26);
+                this.ctx.fillText('PRESS ANY KEY TO RE-SPAWN', this.canvas.width / 2, this.canvas.height / 2 + 26);
             }
         }
 
@@ -330,13 +342,13 @@ export class Renderer {
     drawCadenzaPulse(beacon, W, H) {
         const p = Math.max(0, Math.min(1, beacon.proximity));
         if (p <= 0) return;
-        const breath = 0.5 + 0.5 * Math.sin(Date.now() / 650); // ~breathing rhythm
-        const alpha = 0.15 + 0.55 * p * breath;
+        const breath = 0.5 + 0.5 * Math.sin(Date.now() / 600); // ~breathing rhythm (a touch quicker)
+        const alpha = 0.22 + 0.72 * p * breath;                // a little more intense per playtest
         this.ctx.save();
         this.ctx.strokeStyle = `rgba(255, 102, 204, ${alpha})`;
         this.ctx.shadowColor = '#ff66cc';
-        this.ctx.shadowBlur = 8 + 16 * p * breath;
-        this.ctx.lineWidth = 6;
+        this.ctx.shadowBlur = 12 + 28 * p * breath;
+        this.ctx.lineWidth = 8;
         const walls = [];
         if (beacon.dx > 0) walls.push([W - 3, 0, W - 3, H]);   // east
         else if (beacon.dx < 0) walls.push([3, 0, 3, H]);      // west
