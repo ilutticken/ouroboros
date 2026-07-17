@@ -16,12 +16,53 @@ export class WorldManager {
         this.wallDamage = {};             // partial crack damage per boundary (persists)
         this.wallBreakThreshold = 3;      // damage to break; one max-gear (gear 3) hit
 
-        // Boundaries that MUST have a weak point — the guided main path from the Hub
-        // to the first Safe Zone (Localhost, [5,0]) — so the world is always
-        // traversable regardless of the per-wall hashing below.
-        this.mainPath = new Set(['0,0-1,0', '1,0-2,0', '2,0-3,0', '3,0-4,0', '4,0-5,0']);
+        // Boundaries that MUST have a weak point, so the world is always traversable
+        // regardless of the per-wall hashing below. Built as guaranteed corridors of
+        // adjacent boundaries via _carvePath.
+        this.mainPath = new Set();
+        // 1) The guided spine: Hub -> Localhost, the first Safe Zone.
+        this._carvePath(0, 0, 5, 0);
 
-        this.roomGenerator = new RoomGenerator(gridSize, canvas.width, canvas.height);
+        // 2) Landmark sectors that must never be walled off. Each character's home
+        // gets a guaranteed corridor carved from Localhost [5,0], so the random
+        // per-wall culling can't strand anyone behind solid walls. This is the
+        // "guaranteed path to everyone" system — register a room here (once the
+        // character has a home) and its route auto-generates.
+        this.landmarks = {
+            cadenza: { x: 8, y: 3 }, // the sealed singer, southeast of Localhost
+            // nibble: { x: ?, y: ? }, // black-market stall, deep Wilds — add when built
+            // cache:  { x: ?, y: ? }, // the lost archivist — add when built
+        };
+        for (const room of Object.values(this.landmarks)) {
+            this._carvePath(5, 0, room.x, room.y);
+        }
+
+        this.roomGenerator = new RoomGenerator(gridSize, canvas);
+    }
+
+    // Safe Zones are hazard-free by contract (no Glitch may spawn/persist here).
+    // Localhost [5,0] today; extend as more towns are added.
+    isSafeZone(roomX, roomY) {
+        return roomX === 5 && roomY === 0;
+    }
+
+    // Force a weak point on every boundary along an L-shaped room route (all the
+    // horizontal steps, then the vertical steps) from (ax,ay) to (bx,by) by adding
+    // each boundary key to mainPath. Guarantees the whole route is breach-able.
+    // NOTE: getWeakPoint seals every Hub wall except 0,0-1,0 no matter what, so keep
+    // guaranteed routes clear of the Hub's other three sides.
+    _carvePath(ax, ay, bx, by) {
+        let x = ax, y = ay;
+        while (x !== bx) {
+            const dir = bx > x ? 'right' : 'left';
+            this.mainPath.add(this.boundaryKey(x, y, dir));
+            x += bx > x ? 1 : -1;
+        }
+        while (y !== by) {
+            const dir = by > y ? 'down' : 'up';
+            this.mainPath.add(this.boundaryKey(x, y, dir));
+            y += by > y ? 1 : -1;
+        }
     }
 
     // Deterministic 32-bit hash (FNV-1a) so weak points are stable per boundary.
@@ -82,13 +123,6 @@ export class WorldManager {
         return `${toX},${toY}-${roomX},${roomY}`;
     }
     
-    moveBiteTowards(playerRoomX, playerRoomY) {
-        if (this.biteRoomX < playerRoomX) this.biteRoomX++;
-        else if (this.biteRoomX > playerRoomX) this.biteRoomX--;
-        else if (this.biteRoomY < playerRoomY) this.biteRoomY++;
-        else if (this.biteRoomY > playerRoomY) this.biteRoomY--;
-    }
-    
     getRoomKey(x, y) {
         return `${x},${y}`;
     }
@@ -107,14 +141,6 @@ export class WorldManager {
         const newRoom = this.roomGenerator.generateRoom(this.currentRoomX, this.currentRoomY, stateUnlocked, this);
         this.rooms[key] = newRoom;
         return newRoom;
-    }
-    
-    loadRoom(x, y) {
-        const key = this.getRoomKey(x, y);
-        if (this.rooms[key]) {
-            return this.rooms[key];
-        }
-        return null; // Room doesn't exist yet
     }
     
     shiftRoom(dx, dy) {

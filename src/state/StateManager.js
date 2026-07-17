@@ -3,17 +3,17 @@ export class StateManager {
         this.score = 0;
         this.gameState = 'START'; // 'START', 'PLAYING', 'DIALOG', 'SHOP', 'DEAD', 'PAUSED'
         this.isSuspended = false;
+        this.biteTopicsHeard = 0; // how many of 2-Bit's gossip topics you've heard (persists across deaths)
         this.unlocked = {
-            firstScore: false,
             ui: false,
             borders: false,
             biteProgress: 0,
             glitchesTelegraphed: false,
             maxSpeedReached: false,
-            actionPhase: false,
             pauseMenu: false,
             wallBroken: false,
-            tailRider: false
+            tailRider: false,
+            cadenzaFound: false // set once Cadenza's sector is reached — silences her homing beacon
         };
         this.upgrades = {
             dataCompression: false,

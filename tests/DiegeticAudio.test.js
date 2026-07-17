@@ -61,6 +61,13 @@ describe('AudioEngine diegetic sounds', () => {
         expect(() => audio.playWub(1)).not.toThrow();
         expect(() => audio.playGlide(0.5)).not.toThrow();
     });
+
+    it('exposes Cadenza\'s song and no-ops safely before init', () => {
+        const audio = new AudioEngine();
+        expect(typeof audio.playCadenzaSong).toBe('function');
+        expect(() => audio.playCadenzaSong(1)).not.toThrow();
+        expect(() => audio.playCadenzaSong()).not.toThrow(); // default proximity
+    });
 });
 
 describe('Corruption proximity wubs', () => {
@@ -424,6 +431,7 @@ describe('Gate is a live antagonist', () => {
 
     it('tracks the player along the Y axis while unresolved', () => {
         const game = newGame();
+        game.apple = { x: 300, y: 300 }; game.obstacles = []; // keep the tracked cell clear
         game.npcs = [new NPC(200, 200, 20, 'gate', ['HALT!'])];
         game.snake.body = [{ x: 40, y: 100 }]; // head y=100, gate y=200
 
@@ -434,6 +442,7 @@ describe('Gate is a live antagonist', () => {
 
     it('does not overshoot the player row', () => {
         const game = newGame();
+        game.apple = { x: 300, y: 300 }; game.obstacles = [];
         game.npcs = [new NPC(200, 110, 20, 'gate', ['x'])];
         game.snake.body = [{ x: 40, y: 100 }]; // gap smaller than a cell
 
@@ -686,11 +695,49 @@ describe('Weak points vary per wall', () => {
     });
 });
 
+describe('Guaranteed corridors to landmark sectors', () => {
+    beforeEach(mountDom);
+
+    it('still guarantees the Hub -> Localhost spine', () => {
+        const wm = newGame().worldManager;
+        for (const x of [1, 2, 3, 4]) {
+            expect(wm.getWeakPoint(x, 0, 'right')).not.toBeNull();
+        }
+    });
+
+    it('carves an unbroken weak-point corridor from Localhost to Cadenza', () => {
+        const wm = newGame().worldManager;
+        expect(wm.landmarks.cadenza).toEqual({ x: 8, y: 3 });
+        // Horizontal leg [5,0] -> [8,0]
+        for (const x of [5, 6, 7]) {
+            expect(wm.getWeakPoint(x, 0, 'right')).not.toBeNull();
+        }
+        // Vertical leg [8,0] -> [8,3]
+        for (const y of [0, 1, 2]) {
+            expect(wm.getWeakPoint(8, y, 'down')).not.toBeNull();
+        }
+    });
+
+    it('registers every carved boundary as a forced main-path key', () => {
+        const wm = newGame().worldManager;
+        expect(wm.mainPath.has('7,0-8,0')).toBe(true); // a horizontal-leg boundary
+        expect(wm.mainPath.has('8,2-8,3')).toBe(true); // a vertical-leg boundary
+    });
+
+    it('does NOT flatten the whole Wilds — walls off the routes still vary/seal', () => {
+        const wm = newGame().worldManager;
+        const samples = [];
+        for (let y = 5; y <= 30; y++) samples.push(wm.getWeakPoint(12, y, 'right'));
+        expect(samples.some(s => s === null)).toBe(true); // some remain solid
+    });
+});
+
 describe('Denny slow-tracks and remembers the encounter', () => {
     beforeEach(mountDom);
 
     it('moves toward the player only on even ticks (half speed)', () => {
         const game = newGame();
+        game.apple = { x: 300, y: 300 }; game.obstacles = []; // keep the tracked cell clear
         game.npcs = [new NPC(200, 40, 20, 'denny', ['x'])];
         game.snake.body = [{ x: 100, y: 200 }]; // head y=200, denny y=40
 
@@ -781,6 +828,94 @@ describe('Localhost — the first Safe Zone', () => {
     });
 });
 
+describe('2-Bit drops off in Localhost and sets up shop', () => {
+    beforeEach(mountDom);
+
+    it('drops off as a shopkeeper on first reaching Localhost (and detaches from the tail)', () => {
+        const game = newGame();
+        game.state.unlocked.tailRider = true;
+        game.worldManager.rooms['5,0'] = { apple: { x: 200, y: 200 }, glitches: [], npcs: [], obstacles: [] };
+        game.worldManager.currentRoomX = 4; // one sector west of Localhost
+        game.worldManager.currentRoomY = 0;
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }]; // head + 2-Bit
+        game.dialogManager.start = () => {}; // hold the dialogue open
+
+        game.shiftScreen(1, 0); // east into Localhost [5,0]
+
+        expect(game.worldManager.currentRoomX).toBe(5);
+        expect(game.state.unlocked.biteDroppedOff).toBe(true);
+        expect(game.snake.body.length).toBe(1);               // his segment detached
+        expect(game.npcs.some(n => n.id === 'shop')).toBe(true);
+        expect(game.state.gameState).toBe('DIALOG');
+        expect(game.state.unlocked.tailRider).toBe(true);     // gear/drive stays yours
+    });
+
+    it('does NOT drop him off in a Wilds room', () => {
+        const game = newGame();
+        game.state.unlocked.tailRider = true;
+        game.worldManager.rooms['2,0'] = { apple: { x: 200, y: 200 }, glitches: [], npcs: [], obstacles: [] };
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+
+        game.shiftScreen(1, 0); // into [2,0]
+
+        expect(game.state.unlocked.biteDroppedOff).toBeFalsy();
+        expect(game.npcs.some(n => n.id === 'shop')).toBe(false);
+    });
+
+    it('bumping the shopkeeper shares a gossip topic, then opens the shop', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'shop', [])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        let topicShown = null;
+        game.dialogManager.start = (lines, cb) => { topicShown = lines; if (cb) cb(); };
+
+        step(game, { x: 20, y: 0 }); // bump 2-Bit's shop
+
+        expect(topicShown).not.toBeNull();          // he gossips first...
+        expect(game.state.biteTopicsHeard).toBe(1);
+        expect(game.state.gameState).toBe('SHOP');  // ...then the stall opens
+    });
+});
+
+describe('Terminal type-out hang & skip', () => {
+    beforeEach(mountDom);
+
+    it('the sim hangs while the terminal is printing, and resumes after', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }];
+
+        game.narrative.isPrinting = true;
+        game.input.nextDirection = { x: 20, y: 0 };
+        game.update(1000);
+        expect(game.snake.head).toEqual({ x: 100, y: 100 }); // frozen mid-log
+
+        game.narrative.isPrinting = false;
+        game.update(1000);
+        expect(game.snake.head).not.toEqual({ x: 100, y: 100 }); // resumes
+    });
+
+    it('requestSkip only flags while a log is actually printing', () => {
+        const game = newGame();
+        game.narrative.isPrinting = false;
+        game.narrative.requestSkip();
+        expect(game.narrative.skipRequested).toBe(false);
+
+        game.narrative.isPrinting = true;
+        game.narrative.requestSkip();
+        expect(game.narrative.skipRequested).toBe(true);
+    });
+});
+
 describe('Denny\'s map & the Module Slot', () => {
     beforeEach(mountDom);
 
@@ -817,20 +952,403 @@ describe('Denny\'s map & the Module Slot', () => {
         expect(game.npcs.some(n => n.id === 'mapitem')).toBe(false); // consumed, not left behind
     });
 
-    it('SPACE over the slot installs the module (map online); elsewhere it does nothing', () => {
+    it('dragging the module tail into the 3x3 slot installs it via the load animation', () => {
         const game = newGame();
         game.state.gameState = 'PLAYING';
         game.carriedModule = 'map';
         game.state.unlocked.moduleSlot = true;
-        game.dialogManager.start = (lines, cb) => cb();
+        game.state.unlocked.tailRider = false; // mapCell = tail tip
 
-        game.snake.body = [{ x: 200, y: 200 }]; // NOT on the slot
-        expect(game.tryInstallModule()).toBe(false);
+        // Tail away from the slot: no load. (Length 2 so mapCell has a real tail cell;
+        // a length-1 snake now hides the module rather than riding it on the head.)
+        game.snake.body = [{ x: 200, y: 200 }, { x: 200, y: 220 }];
+        expect(game.mapInSlot()).toBe(false);
+
+        // Tail tip inside the 3x3 slot region: a load can start, but the map is NOT
+        // online until both animation beats finish.
+        game.snake.body = [{ x: 200, y: 200 }, { x: game.moduleSlotX, y: game.moduleSlotY }];
+        expect(game.mapInSlot()).toBe(true);
+        game.startModuleLoad();
+        expect(game.moduleLoad).not.toBeNull();
         expect(game.state.unlocked.mapModule).toBeFalsy();
 
-        game.snake.body = [{ x: game.moduleSlotX, y: game.moduleSlotY }]; // on the slot
-        expect(game.tryInstallModule()).toBe(true);
+        game.dialogManager.start = (lines, cb) => cb();
+        game.updateModuleLoad(600); // beat 1 -> beat 2 (suck into socket)
+        game.updateModuleLoad(700); // beat 2 -> done (fly to HUD, map online)
+
         expect(game.state.unlocked.mapModule).toBe(true);
         expect(game.carriedModule).toBeNull();
+        expect(game.moduleLoad).toBeNull();
+    });
+});
+
+describe('Carried module rides the tail tip (installs with 2-Bit still aboard)', () => {
+    beforeEach(mountDom);
+
+    it('mapCell is the true tail tip; 2-Bit rides one segment ahead', () => {
+        const game = newGame();
+        game.carriedModule = 'map';
+        game.state.unlocked.tailRider = true;       // 2-Bit aboard
+        game.state.unlocked.biteDroppedOff = false;
+        game.snake.body = [
+            { x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 },
+        ];
+
+        expect(game.mapCell()).toEqual({ x: 60, y: 100 }); // module on the tail tip
+        expect(game.biteIndex).toBe(1);                    // 2-Bit at length-2, never sharing the cell
+    });
+
+    it('installs while 2-Bit is aboard — no waiting for the Localhost drop-off', () => {
+        // The reported bug: the map merged with 2-Bit and could not be dropped into
+        // the slot until he left. Now the module is the literal tail tip, so parking
+        // the tail in the slot loads it with him still riding.
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.carriedModule = 'map';
+        game.state.unlocked.moduleSlot = true;
+        game.state.unlocked.tailRider = true;       // <- the bug's trigger
+        game.state.unlocked.biteDroppedOff = false;
+
+        game.snake.body = [
+            { x: 200, y: 200 },
+            { x: 200, y: 220 },
+            { x: game.moduleSlotX, y: game.moduleSlotY }, // tail tip parked in the slot
+        ];
+        expect(game.mapInSlot()).toBe(true); // was false when the map rode length-2
+
+        game.dialogManager.start = (lines, cb) => cb();
+        game.startModuleLoad();
+        game.updateModuleLoad(600);
+        game.updateModuleLoad(700);
+
+        expect(game.state.unlocked.mapModule).toBe(true);
+        expect(game.carriedModule).toBeNull();
+    });
+
+    it('hides 2-Bit (biteIndex -1) only while too short to seat him AND the module', () => {
+        const game = newGame();
+        game.carriedModule = 'map';
+        game.state.unlocked.tailRider = true;
+        game.state.unlocked.biteDroppedOff = false;
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }]; // length 2 — transient
+
+        expect(game.biteIndex).toBe(-1);                    // his face hidden until re-grown
+        expect(game.mapCell()).toEqual({ x: 80, y: 100 });  // module still shown on the tip
+    });
+
+    it('with no module carried, 2-Bit is the tail tip as before', () => {
+        const game = newGame();
+        game.carriedModule = null;
+        game.state.unlocked.tailRider = true;
+        game.state.unlocked.biteDroppedOff = false;
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 }];
+
+        expect(game.biteIndex).toBe(2); // unchanged: he IS the tail tip when nothing rides it
+    });
+
+    it('never paints 2-Bit on the head — a length-1 snake hides his face (biteIndex -1)', () => {
+        // Reachable via arg-less shrink() in the glitch-damage loop: a length-2 snake
+        // taking a survivable hit drops to length 1 while tailRider is still set.
+        const game = newGame();
+        game.carriedModule = null;
+        game.state.unlocked.tailRider = true;
+        game.state.unlocked.biteDroppedOff = false;
+        game.snake.body = [{ x: 100, y: 100 }]; // just the head
+
+        expect(game.biteIndex).toBe(-1); // NOT 0 — the worm's head is never 2-Bit
+    });
+});
+
+describe('Cadenza — the homing beacon', () => {
+    beforeEach(mountDom);
+
+    it('is silent until 2-Bit points you toward her (biteDroppedOff)', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 8; // stood in her sector...
+        game.worldManager.currentRoomY = 3;
+        expect(game.state.unlocked.biteDroppedOff).toBeFalsy();
+        expect(game.cadenzaProximity()).toBe(0); // ...but the lead hasn't been given yet
+    });
+
+    it('peaks in her sector and falls off with (euclidean) room distance', () => {
+        const game = newGame();
+        game.state.unlocked.biteDroppedOff = true;
+
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 3;
+        expect(game.cadenzaProximity()).toBeCloseTo(1, 5);   // in her sector (dist 0)
+
+        game.worldManager.currentRoomX = 6; game.worldManager.currentRoomY = 0;
+        const near = game.cadenzaProximity();                // hypot(2,3)=3.61 -> ~0.549
+
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = 0;
+        const far = game.cadenzaProximity();                 // hypot(3,3)=4.24 -> ~0.470
+
+        expect(near).toBeGreaterThan(far);                   // closer room reads hotter
+        expect(far).toBeCloseTo(0.4697, 3);
+
+        game.worldManager.currentRoomX = 0; game.worldManager.currentRoomY = 0;
+        expect(game.cadenzaProximity()).toBe(0);             // Hub: hypot(8,3)=8.54 > range 8
+    });
+
+    it('gives hotter feedback on a SINGLE-axis room step (the Chebyshev-flat bug)', () => {
+        // Both a purely-east and a purely-south step from Localhost toward {8,3} must
+        // raise proximity. Chebyshev returned the SAME value for both, so the beacon
+        // gave no homing signal until BOTH axes closed — making her unfindable.
+        const game = newGame();
+        game.state.unlocked.biteDroppedOff = true;
+
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = 0;
+        const base = game.cadenzaProximity();
+        game.worldManager.currentRoomX = 6; game.worldManager.currentRoomY = 0;
+        const east = game.cadenzaProximity();
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = 1;
+        const south = game.cadenzaProximity();
+
+        expect(east).toBeGreaterThan(base);
+        expect(south).toBeGreaterThan(base);
+    });
+
+    it('goes quiet for good once she is found (cadenzaFound)', () => {
+        const game = newGame();
+        game.state.unlocked.biteDroppedOff = true;
+        game.state.unlocked.cadenzaFound = true;
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 3;
+        expect(game.cadenzaProximity()).toBe(0);
+    });
+
+    it('pings on a tightening interval as you approach (hotter = faster)', () => {
+        const game = newGame();
+        game.audio.playCadenzaSong = vi.fn();
+        game.state.unlocked.biteDroppedOff = true;
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 3; // prox 1 -> ~500ms
+
+        game.updateCadenzaBeacon(400); // below interval
+        expect(game.audio.playCadenzaSong).not.toHaveBeenCalled();
+        game.updateCadenzaBeacon(200); // 600ms >= ~500ms -> ping
+        expect(game.audio.playCadenzaSong).toHaveBeenCalledTimes(1);
+        expect(game.audio.playCadenzaSong.mock.calls[0][0]).toBeCloseTo(1, 5);
+    });
+
+    it('does not ping out of earshot, and holds its timer reset', () => {
+        const game = newGame();
+        game.audio.playCadenzaSong = vi.fn();
+        game.state.unlocked.biteDroppedOff = true;
+        game.worldManager.currentRoomX = 0; game.worldManager.currentRoomY = 0; // out of range
+        game._beaconTimer = 999;
+
+        game.updateCadenzaBeacon(1000);
+
+        expect(game.audio.playCadenzaSong).not.toHaveBeenCalled();
+        expect(game._beaconTimer).toBe(0);
+    });
+});
+
+describe('2-Bit drip-feeds gossip topics at his stall', () => {
+    beforeEach(mountDom);
+
+    function bumpShop(game) {
+        game.npcs = [new NPC(120, 100, 20, 'shop', [])];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.state.gameState = 'PLAYING';
+        step(game, { x: 20, y: 0 });
+    }
+
+    it('shares one unheard topic per visit, then goes straight to shopping', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        const shown = [];
+        game.dialogManager.start = (lines, cb) => { shown.push(lines); if (cb) cb(); };
+
+        const total = game.biteTopics.length;
+        for (let i = 0; i < total; i++) {
+            bumpShop(game);
+            expect(game.state.biteTopicsHeard).toBe(i + 1);
+            expect(game.state.gameState).toBe('SHOP');
+        }
+        expect(shown.length).toBe(total); // one per visit, no repeats
+
+        // Topics exhausted: bumping now opens the shop with no preamble.
+        shown.length = 0;
+        bumpShop(game);
+        expect(shown.length).toBe(0);
+        expect(game.state.gameState).toBe('SHOP');
+    });
+
+    it('topics heard persist across a death (knowledge, not score)', () => {
+        const game = newGame();
+        game.state.biteTopicsHeard = 2;
+        game.apple = { x: 200, y: 200 };
+
+        game.die('self');
+
+        expect(game.state.biteTopicsHeard).toBe(2);
+    });
+});
+
+describe('Night-audit regression fixes', () => {
+    beforeEach(mountDom);
+
+    it('never spawns a Glitch inside the Localhost safe zone (F04)', () => {
+        const game = newGame();
+        game.state.unlocked.biteProgress = 3;
+        const rnd = vi.spyOn(Math, 'random').mockReturnValue(0); // force the 20% glitch roll
+        try {
+            game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = 0; // Localhost
+            game.glitches = [];
+            game.spawnApple();
+            expect(game.glitches.length).toBe(0); // safe zone stays hazard-free
+
+            game.worldManager.currentRoomX = 7; game.worldManager.currentRoomY = 7; // Wilds
+            game.glitches = [];
+            game.spawnApple();
+            expect(game.glitches.length).toBe(1); // corruption spawns out in the Wilds
+        } finally {
+            rnd.mockRestore();
+        }
+    });
+
+    it('a Glitch never eats 2-Bit\'s protected tail segment (F06)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.state.unlocked.tailRider = true; // 2-Bit aboard -> minLength 2 on shrink
+        game.apple = { x: 300, y: 300 };
+        game.snake.body = [{ x: 80, y: 100 }, { x: 60, y: 100 }]; // head + 2-Bit
+        game.glitches = [{ x: 100, y: 100 }];
+
+        step(game, { x: 20, y: 0 }); // head -> (100,100) onto the glitch
+
+        expect(game.state.gameState).not.toBe('DEAD'); // survives (unguarded shrink would kill)
+        expect(game.snake.body.length).toBe(2);        // 2-Bit still aboard
+    });
+
+    it('re-clamps gear when a Glitch drain drops you below the mass gate (F20)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.state.unlocked.tailRider = true;
+        game.state.score = 30;                 // gear-3 eligible...
+        game.gear = 3; game.speed = 30;        // ...and currently at max speed
+        game.apple = { x: 300, y: 300 };
+        game.snake.body = [{ x: 80, y: 100 }, { x: 60, y: 100 }, { x: 40, y: 100 }];
+        game.glitches = [{ x: 100, y: 100 }];
+
+        step(game, { x: 20, y: 0 }); // drain 3 -> score 27, below the gear-3 gate
+
+        expect(game.gear).toBeLessThan(3);          // no ghost max speed
+        expect(game.speed).toBeGreaterThan(30);
+    });
+
+    it('lines the trailing body off-screen after a room cross — no phantom chunk (F10)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 1;
+        game.worldManager.currentRoomY = 0;
+        game.worldManager.breakWall(1, 0, 'right');
+        game.worldManager.rooms['2,0'] = { apple: { x: 300, y: 300 }, glitches: [], npcs: [], obstacles: [] };
+        const wp = game.worldManager.getWeakPoint(1, 0, 'right');
+        game.snake.body = [
+            { x: 380, y: wp.start + 40 }, { x: 360, y: wp.start + 40 }, { x: 340, y: wp.start + 40 },
+        ];
+
+        step(game, { x: 20, y: 0 }); // cross east through the doorway
+
+        expect(game.worldManager.currentRoomX).toBe(2);
+        expect(game.snake.head.x).toBe(0);          // entered from the left edge
+        for (let i = 1; i < game.snake.body.length; i++) {
+            expect(game.snake.body[i].x).toBeLessThan(0); // trail is off-screen, not a right-side chunk
+        }
+    });
+
+    it('Cadenza actually exists at her sector, and arriving silences the beacon (F01)', () => {
+        const game = newGame();
+        const cad = game.worldManager.landmarks.cadenza;
+        game.worldManager.currentRoomX = cad.x; game.worldManager.currentRoomY = cad.y;
+        const room = game.worldManager.getOrCreateRoom(game.state.unlocked);
+        expect(room.npcs.some(n => n.id === 'cadenza')).toBe(true); // she's THERE, not an empty room
+
+        const g2 = newGame();
+        g2.state.unlocked.biteDroppedOff = true;
+        g2.worldManager.currentRoomX = cad.x - 1; g2.worldManager.currentRoomY = cad.y;
+        g2.worldManager.rooms[`${cad.x},${cad.y}`] = { apple: { x: 100, y: 100 }, glitches: [], npcs: [], obstacles: [] };
+        expect(g2.cadenzaProximity()).toBeGreaterThan(0); // beacon live on approach
+
+        g2.shiftScreen(1, 0); // east into her sector
+        expect(g2.state.unlocked.cadenzaFound).toBe(true);
+        expect(g2.cadenzaProximity()).toBe(0);            // ...silenced for good
+    });
+
+    it('Denny\'s map drops in-bounds even when he\'s on the bottom row (F05)', () => {
+        const game = newGame(); // 400x400
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        const bottomY = game.canvas.height - game.gridSize;
+        game.npcs = [new NPC(120, bottomY, 20, 'denny', ['Denny: hi'])];
+        game.snake.body = [{ x: 100, y: bottomY }];
+        game.dialogManager.start = (lines, cb) => cb();
+
+        step(game, { x: 20, y: 0 }); // bump Denny on the bottom row
+
+        const map = game.npcs.find(n => n.id === 'mapitem');
+        expect(map).toBeTruthy();
+        expect(map.y).toBeGreaterThanOrEqual(0);
+        expect(map.y).toBeLessThan(game.canvas.height); // NOT dropped off the bottom edge
+    });
+
+    it('a goalie will not step onto an obstacle in its path (G5/G7)', () => {
+        const game = newGame();
+        game.apple = { x: 300, y: 300 };
+        game.obstacles = [{ x: 200, y: 180 }]; // between Gate and the player's row
+        game.npcs = [new NPC(200, 200, 20, 'gate', ['x'])];
+        game.snake.body = [{ x: 40, y: 100 }];
+
+        game.updateGate(); // its next cell (200,180) is blocked
+
+        expect(game.npcs[0].y).toBe(200); // stays put rather than ghosting through
+    });
+
+    it('lets the wake-press steer while a death log is still printing (verify-pass regression)', () => {
+        // canSteer must allow steering during a printing log, so the first key after a
+        // death sets the respawn direction (buffered) instead of being dropped — but
+        // still block steering during an install and during conversations.
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.narrative.isPrinting = true;
+        expect(game.input.canSteer()).toBe(true);   // <- was false: the wake press got dropped
+
+        game.narrative.isPrinting = false;
+        game.moduleLoad = { phase: 1, t: 0 };
+        expect(game.input.canSteer()).toBe(false);  // module install still freezes steering
+        game.moduleLoad = null;
+
+        game.state.gameState = 'DIALOG';
+        expect(game.input.canSteer()).toBe(false);  // a conversation still blocks buffered turns
+    });
+
+    it('buffers a turn pressed during a printing log (fires on resume, not dropped)', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.narrative.isPrinting = true;
+        game.input.nextDirection = { x: 0, y: 0 };
+        // Feed ArrowUp straight into the handler with stub callbacks; canSteer is the
+        // game's real predicate, so this exercises the actual gate.
+        game.input.handleKeyDown({ key: 'ArrowUp' }, () => {}, () => false, () => {}, () => {});
+        expect(game.input.nextDirection).toEqual({ x: 0, y: -game.gridSize });
+    });
+
+    it('consumes the Glitch that kills you so it can\'t camp the death cell (G1)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.snake.body = [{ x: 80, y: 100 }]; // length 1 -> a glitch hit is lethal
+        game.glitches = [{ x: 100, y: 100 }];
+
+        step(game, { x: 20, y: 0 }); // head -> (100,100), drained to death
+
+        expect(game.state.gameState).toBe('DEAD');
+        // The killer was spliced before die() saved the room, so the hub you respawn
+        // into doesn't carry a glitch parked on your face.
+        expect(game.glitches.some(gl => gl.x === 100 && gl.y === 100)).toBe(false);
     });
 });

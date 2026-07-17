@@ -64,11 +64,15 @@ export class GameEngine {
         const btnPlaytest = document.getElementById('btn-playtest');
         if (btnPlaytest) {
             const devAction = () => {
+                this.audio.init(); // the dev cheat may be the first interaction
+                // Only while actually playing or shopping — firing mid-dialog/transition
+                // used to jump score past one-shot beats and desync the sim.
+                if (this.state.gameState !== 'PLAYING' && this.state.gameState !== 'SHOP') return;
                 this.state.addScore(10);
                 this.audio.playBeep();
                 this.checkUnlocks();
                 if (this.state.gameState === 'SHOP') this.shopManager.updateUI();
-                document.getElementById('score-value').innerText = this.state.score.toString();
+                this.refreshScore();
             };
             btnPlaytest.addEventListener('click', devAction);
             window.addEventListener('keydown', (e) => {
@@ -100,56 +104,98 @@ export class GameEngine {
         this._tick = 0;            // move-tick counter (Denny slow-tracks on evens)
         this._guided = new Set();  // sectors the Architect has already "guided" you to
         this.carriedModule = null; // a picked-up module riding your tail (e.g. 'map')
+        this.moduleLoad = null;    // active install animation ({phase, t, fromX, fromY})
+        this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
+
+        // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
+        // carries as a sonar beacon (updateCadenzaBeacon) so the sector is findable.
+        // Single source of truth: the WorldManager landmark that also guarantees a
+        // breach-able corridor to her (see WorldManager._carvePath).
+        this.cadenzaRoom = this.worldManager.landmarks.cadenza;
+
+        // 2-Bit drip-feeds the story: one topic per shop visit (see openBiteShop),
+        // clustered around the missing villagers rather than dumped all at once.
+        this.biteTopics = [
+            [
+                "2-Bit: That singing southeast? Cadenza. Ran audio for the whole system, back when it had one. Sealed in now — still performing to nobody.",
+                "2-Bit: Anyone remembers what this place was before the Architect, it's her. Follow the sound."
+            ],
+            [
+                "2-Bit: My sister Nibble runs a stall deep in the Wilds. Moves it whenever the Firewall sniffs around.",
+                "2-Bit: Everything she sells is cursed or technically evidence. Tell her I sent you — she'll overcharge you slightly less."
+            ],
+            [
+                "2-Bit: You clocked how EMPTY the Wilds are? Quarantine Zones went up and everything inside just... stopped resolving.",
+                "2-Bit: Every face you find still out there is one they didn't get."
+            ],
+            [
+                "2-Bit: There was one called the Cache. Remembered everything — every deleted file, every rollback. Reclamation took her sector whole.",
+                "2-Bit: If she's still out there, she knows what the Architect's actually guarding."
+            ]
+        ];
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
             this.audio.init();
+            if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
             if (this.state.gameState === 'START' || this.state.gameState === 'DEAD') {
                 this.state.gameState = 'PLAYING';
             }
         }, () => {
+            // Advance a dialog. Returns true when it handled one, so InputHandler knows
+            // to CONSUME the keypress and not also fire the action below on the same press.
             if (this.state.gameState === 'DIALOG') {
                 this.dialogManager.advance();
+                return true;
             }
+            return false;
         }, () => {
-            if (this.state.gameState === 'PLAYING') {
-                if (this.tryInstallModule()) return; // SPACE over the slot installs a module
-                if (this.state.unlocked.biteProgress === 2) {
-                    // They hit Space to comply.
-                    this.state.unlocked.biteProgress = 3;
-                    this.state.unlocked.tailRider = true;
-                    const biteNPC = this.npcs.find(n => n.id === 'bite');
-                    if (biteNPC) {
-                        this.npcs = this.npcs.filter(n => n.id !== 'bite');
-                        this.snake.body.push({ x: biteNPC.x, y: biteNPC.y });
-                    }
-                    
-                    this.state.gameState = 'DIALOG';
-                    this.dialogManager.start([
-                        "2-Bit: I'm hooked into your system.",
-                        "2-Bit: Tapping the direction you're facing will accelerate you.",
-                        "2-Bit: Tapping the opposite direction acts as a brake.",
-                        "2-Bit: The more mass you have, the higher your max speed limit."
-                    ], () => {
-                        this.state.gameState = 'PLAYING';
-                    });
-                } else {
-                    // Feature Disabled: We will introduce drop later
-                    // this.dropBite();
+            // Action key (a fresh Space press while playing): 2-Bit's consent step.
+            if (this.state.gameState === 'PLAYING' && this.state.unlocked.biteProgress === 2) {
+                this.state.unlocked.biteProgress = 3;
+                this.state.unlocked.tailRider = true;
+                const biteNPC = this.npcs.find(n => n.id === 'bite');
+                if (biteNPC) {
+                    this.npcs = this.npcs.filter(n => n.id !== 'bite');
+                    this.snake.body.push({ x: biteNPC.x, y: biteNPC.y });
                 }
+
+                this.state.gameState = 'DIALOG';
+                this.dialogManager.start([
+                    "2-Bit: I'm hooked into your system.",
+                    "2-Bit: Tapping the direction you're facing will accelerate you.",
+                    "2-Bit: Tapping the opposite direction acts as a brake.",
+                    "2-Bit: The more mass you have, the higher your max speed limit."
+                ], () => {
+                    this.state.gameState = 'PLAYING';
+                });
             }
         }, (delta) => {
-            if (this.state.gameState === 'PLAYING' && this.state.unlocked.tailRider) {
+            // Gear taps are additionally blocked while the sim is frozen (a printing
+            // log / module install) — otherwise tapping your facing direction while
+            // reading a log would silently accumulate max speed (the F15 bug).
+            if (this.state.gameState === 'PLAYING' && this.state.unlocked.tailRider
+                && !(this.narrative && this.narrative.isPrinting) && !this.moduleLoad) {
                 this.changeGear(delta);
             }
-        });
+        }, () => this.state.gameState === 'PLAYING' && !this.moduleLoad);
+        // ^ canSteer gates ONLY on PLAYING (+ no install). It deliberately does NOT
+        // block during narrative.isPrinting: the wake-press after a death happens while
+        // the death log is still typing, and it must be able to set your respawn
+        // direction (buffered until the log clears) instead of being dropped, which
+        // left you motionless at spawn until a second press. Conversations (DIALOG/
+        // PAUSED/etc.) are already non-PLAYING, so buffered turns there stay blocked.
     }
 
-    // Module Slot — a socket in the bottom-left. Derived from LIVE canvas dims (not
-    // snapshotted) so a window resize can't strand it out of reach and soft-lock the
-    // install, mirroring WorldManager.getWeakPoint.
+    // The 3x3 Module Slot's top-left cell — inset one cell from the bottom-left
+    // corner (so the socket, its glow, and its label all stay on-screen). Derived
+    // from LIVE canvas dims (not snapshotted) so a window resize can't strand it.
     get moduleSlotX() { return this.gridSize; }
-    get moduleSlotY() { return Math.max(0, Math.floor(this.canvas.height / this.gridSize) - 2) * this.gridSize; }
+    get moduleSlotY() { return Math.max(0, Math.floor(this.canvas.height / this.gridSize) - 4) * this.gridSize; }
+
+    // 2-Bit physically rides the tail only until he sets up shop in Localhost. The
+    // driving/gear module (tailRider) stays yours; the packet gets off.
+    get hasBiteSegment() { return this.state.unlocked.tailRider && !this.state.unlocked.biteDroppedOff; }
 
     changeGear(delta) {
         // Max gear scales with score: 
@@ -174,17 +220,6 @@ export class GameEngine {
         else if (this.gear === 1) this.speed = 70; // fast
         else if (this.gear === 2) this.speed = 50; // very fast
         else if (this.gear >= 3) this.speed = 30; // max speed (needed to break wall)
-    }
-
-    dropBite() {
-        if (!this.state.unlocked.tailRider) return;
-        if (this.npcs.find(n => n.id === 'bite')) return; // Already on grid
-        if (this.snake.body.length < 2) return;
-        
-        // Detach from tail
-        const tail = this.snake.body.pop();
-        this.npcs.push(new NPC(tail.x, tail.y, this.gridSize, 'bite', []));
-        this.audio.playBeep(); // 2-Bit's packet detaching from the tail (a data write)
     }
 
     // Fires once per grid step. Every sound here is diegetic: it is the system
@@ -241,9 +276,43 @@ export class GameEngine {
         }
     }
 
+    // How loud Cadenza's beacon should read right now, from the CURRENT room's
+    // EUCLIDEAN distance (in rooms) to her sealed sector: 1 == you're in it, 0 ==
+    // out of earshot. Euclidean (not Chebyshev) is deliberate — along her diagonal
+    // corridor, a Chebyshev metric stays FLAT for single-axis steps (e.g. from
+    // Localhost [5,0], both [6,0] and [5,1] read the same distance to {8,3}), giving
+    // the player no hotter/colder feedback. Euclidean changes on every step toward
+    // her. Silent until 2-Bit points you there (biteDroppedOff); goes quiet for good
+    // once you've reached her sector (cadenzaFound).
+    cadenzaProximity() {
+        if (!this.state.unlocked.biteDroppedOff || this.state.unlocked.cadenzaFound) return 0;
+        const dx = this.worldManager.currentRoomX - this.cadenzaRoom.x;
+        const dy = this.worldManager.currentRoomY - this.cadenzaRoom.y;
+        const dist = Math.hypot(dx, dy);
+        const range = 8; // rooms of earshot
+        if (dist > range) return 0;
+        return (range - dist) / range; // ~1.0 in her sector, tapering to 0 at the edge
+    }
+
+    // Sonar homing: re-trigger Cadenza's song on a timer whose interval TIGHTENS as
+    // you get closer — far away it's a lonely note every couple of seconds, in her
+    // sector it's an insistent, near-continuous melody. That "hotter = faster" pulse
+    // is how you find a sector with no other signposting.
+    updateCadenzaBeacon(dt) {
+        const prox = this.cadenzaProximity();
+        if (prox <= 0) { this._beaconTimer = 0; return; }
+        const interval = 2400 - prox * 1900; // ~2.4s (far) -> ~0.5s (her sector)
+        this._beaconTimer += dt;
+        if (this._beaconTimer >= interval) {
+            this._beaconTimer = 0;
+            this.audio.playCadenzaSong(prox);
+        }
+    }
+
     spawnApple() {
-        const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || []);
-        
+        // Exclude the snake's own body so nothing spawns invisibly underneath it.
+        const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], this.snake.body);
+
         if (this.state.score >= 10 && this.state.unlocked.biteProgress === 0) {
             return new NPC(x, y, this.gridSize, 'bite', [
                 "WHOA THERE! WATCH THE FANGS!",
@@ -252,17 +321,19 @@ export class GameEngine {
                 "There's no way out. Scram, unless you have some idea on how to escape."
             ]);
         }
-        
-        // Randomly spawn a glitch if Bite has been encountered
-        if (this.state.unlocked.biteProgress > 0 && Math.random() < 0.2) {
+
+        // Randomly spawn a glitch once corruption exists — but NEVER inside a Safe Zone
+        // (Localhost is hazard-free by contract; the town's own signpost promises it).
+        const inSafeZone = this.worldManager.isSafeZone(this.worldManager.currentRoomX, this.worldManager.currentRoomY);
+        if (this.state.unlocked.biteProgress > 0 && !inSafeZone && Math.random() < 0.2) {
             if (!this.state.unlocked.glitchesTelegraphed) {
                 this.narrative.printMessage("LOG: Architect > 'Seeding memory corruptors along the anomaly's path. Contact drains its Data. An elegant little trap. It would be a SHAME if it ever learned these could be turned against my own agents.'");
                 this.state.unlocked.glitchesTelegraphed = true;
             }
-            const gPos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || []);
+            const gPos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, { x, y }]);
             this.glitches.push(new Glitch(gPos.x, gPos.y, this.gridSize));
         }
-        
+
         return { x, y };
     }
     
@@ -275,8 +346,8 @@ export class GameEngine {
             this.state.unlocked.dennySlipped = true;
         }
 
-        // Auto-attach Bite if left behind
-        if (this.state.unlocked.tailRider) {
+        // Auto-attach Bite if left behind (unless he's dropped off in Localhost)
+        if (this.hasBiteSegment) {
             const biteIdx = this.npcs.findIndex(n => n.id === 'bite');
             if (biteIdx !== -1) {
                 const bite = this.npcs[biteIdx];
@@ -290,34 +361,26 @@ export class GameEngine {
         this.worldManager.saveRoom(this.apple, this.glitches, npcsWithoutBite, this.obstacles);
         
         this.worldManager.shiftRoom(dx, dy);
-        this.worldManager.moveBiteTowards(this.worldManager.currentRoomX, this.worldManager.currentRoomY);
-        
+
         const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
         this.apple = room.apple;
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
-        
-        // Inject Bite if he is in this room
-        if (this.state.unlocked.firstEncounter && this.worldManager.currentRoomX === this.worldManager.biteRoomX && this.worldManager.currentRoomY === this.worldManager.biteRoomY) {
-            let bx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
-            let by = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
-            // Temporary fix: Offset Bite slightly inward so he doesn't instantly trigger
-            if (dx === 1) { bx = this.gridSize * 4; by = this.snake.head.y; }
-            else if (dx === -1) { bx = this.canvas.width - this.gridSize * 5; by = this.snake.head.y; }
-            else if (dy === 1) { bx = this.snake.head.x; by = this.gridSize * 4; }
-            else if (dy === -1) { bx = this.snake.head.x; by = this.canvas.height - this.gridSize * 5; }
-            
-            for (const n of this.npcs) {
-                if (n.x === bx && n.y === by) {
-                    if (dx !== 0) by -= this.gridSize;
-                    else bx -= this.gridSize;
-                }
-            }
-            this.npcs.push(new NPC(bx, by, this.gridSize, 'bite', []));
+
+        // Reaching Cadenza's sealed sector resolves her homing beacon — you've located
+        // her. Her NPC (RoomGenerator) delivers the actual scene on contact.
+        if (!this.state.unlocked.cadenzaFound
+            && this.worldManager.currentRoomX === this.cadenzaRoom.x
+            && this.worldManager.currentRoomY === this.cadenzaRoom.y) {
+            this.state.unlocked.cadenzaFound = true;
         }
 
         this.architectGuide(); // the Architect accidentally narrates your route
+
+        // 2-Bit sets up shop the first time you reach Localhost; its dialogue takes
+        // over from the room-entry transition pause.
+        if (this.checkBiteDropOff()) return;
 
         this.state.gameState = 'TRANSITION';
         setTimeout(() => {
@@ -326,7 +389,51 @@ export class GameEngine {
             }
         }, 500);
     }
-    
+
+    // On first reaching Localhost, 2-Bit hops off your tail to set up shop. This beat
+    // is JUST the drop-off + shop hook — the world-building/villager leads are held
+    // back for when you actually return to the stall to buy (see openBiteShop).
+    // Returns true if it opened a dialogue.
+    checkBiteDropOff() {
+        if (this.state.unlocked.biteDroppedOff || !this.state.unlocked.tailRider) return false;
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== 0) return false;
+
+        this.state.unlocked.biteDroppedOff = true;
+        if (this.snake.body.length > 1) this.snake.body.pop(); // detach his segment
+        // Place his stall on a validated empty cell (never on a citizen/signpost,
+        // which would sit ahead of it in the collision loop and block the shop, nor
+        // under your own body).
+        const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], this.snake.body);
+        this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'shop', [])); // 2-Bit, now a shopkeeper
+
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start([
+            "2-Bit: Localhost. Safe as it gets down here. This is my stop.",
+            "2-Bit: Now that I'm a free agent, I'm gonna start grift— ...*selling* things. Legitimately. Mostly.",
+            "2-Bit: Bump into me whenever you want to shop."
+        ], () => { this.state.gameState = 'PLAYING'; });
+        return true;
+    }
+
+    // Bumping 2-Bit's stall. Before the shop opens he drip-feeds ONE gossip topic
+    // (biteTopics — clustered around the missing villagers) so the exposition is
+    // paced across visits instead of dumped. Once he's out of stories it's straight
+    // to shopping. state.biteTopicsHeard persists across deaths (it's knowledge).
+    openBiteShop() {
+        const openShop = () => {
+            this.state.gameState = 'SHOP';
+            this.shopManager.open(() => { this.state.gameState = 'PLAYING'; });
+        };
+        const heard = this.state.biteTopicsHeard || 0;
+        if (heard < this.biteTopics.length) {
+            this.state.biteTopicsHeard = heard + 1;
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(this.biteTopics[heard], openShop);
+        } else {
+            openShop();
+        }
+    }
+
     // Gate is a live antagonist: before the encounter he tracks your Y so a
     // straight run can't slip past him (a vertical goalie); after it, he flees to
     // a doorway, smashes it open, and exits — a breach you can follow.
@@ -345,7 +452,9 @@ export class GameEngine {
                 // Reached the doorway — smash it open and slip through to the next sector.
                 this.worldManager.breakWall(this.worldManager.currentRoomX, this.worldManager.currentRoomY, gate.exitDir);
                 this.audio.playCrash();
-                this.narrative.printMessage("Gate: This isn't over, anomaly! [breaching to the next sector]");
+                // The terminal is the Architect's PRIVATE log — it never voices other
+                // characters directly. Record Gate's breach as a SYSTEM intercept instead.
+                this.narrative.printMessage("SYSTEM: Firewall unit 'Gate' forced the sector boundary in pursuit. [This isn't over.]");
                 this.npcs = this.npcs.filter(n => n.id !== 'gate');
                 this.worldManager.saveRoom(this.apple, this.glitches, this.npcs, this.obstacles);
             }
@@ -353,9 +462,7 @@ export class GameEngine {
         }
 
         // Track the player's row so a straight horizontal run can't bypass him.
-        const hy = this.snake.head.y;
-        if (gate.y < hy) gate.y = Math.min(gate.y + g, hy);
-        else if (gate.y > hy) gate.y = Math.max(gate.y - g, hy);
+        this._trackTowardRow(gate);
     }
 
     // Denny SLOW-tracks your row (moves on even ticks only) — a lazy goalie easy to
@@ -365,10 +472,28 @@ export class GameEngine {
         if (this._tick % 2 !== 0) return; // half speed
         const denny = this.npcs.find(n => n.id === 'denny');
         if (!denny) return;
+        this._trackTowardRow(denny);
+    }
+
+    // Step an NPC one cell vertically toward the player's row, clamped so it never
+    // overshoots — and never ONTO an obstacle, the apple, or the snake. That stops a
+    // goalie from ghosting through a pillar or your body (G7), parking on the apple and
+    // hiding it (G5), or swapping cells with the head to phase past the encounter (G4).
+    _trackTowardRow(npc) {
         const g = this.gridSize;
         const hy = this.snake.head.y;
-        if (denny.y < hy) denny.y = Math.min(denny.y + g, hy);
-        else if (denny.y > hy) denny.y = Math.max(denny.y - g, hy);
+        let ny = npc.y;
+        if (npc.y < hy) ny = Math.min(npc.y + g, hy);
+        else if (npc.y > hy) ny = Math.max(npc.y - g, hy);
+        if (ny === npc.y || this._cellBlocked(npc.x, ny)) return;
+        npc.y = ny;
+    }
+
+    _cellBlocked(x, y) {
+        if (this.obstacles && this.obstacles.some(o => o.x === x && o.y === y)) return true;
+        if (this.apple && this.apple.x === x && this.apple.y === y) return true;
+        if (this.snake.body.some(s => s.x === x && s.y === y)) return true;
+        return false;
     }
 
     // The Architect keeps "forbidding" the exact route to the first Safe Zone,
@@ -377,11 +502,11 @@ export class GameEngine {
         const key = `${this.worldManager.currentRoomX},${this.worldManager.currentRoomY}`;
         if (this._guided.has(key)) return;
         const lines = {
-            '1,0': "LOG: Architect > 'Anomaly loose in Sector 1. Under no circumstances must it drift East to the residential subnet. Nothing of value lies East. Do not elaborate; it cannot read the log. Obviously.'",
-            '2,0': "LOG: Architect > 'Still heading East. It does not suspect the old Safe Zone lies that way. Excellent. It will never find Localh— I did not write that word. Strike it from the record.'",
-            '3,0': "LOG: Architect > 'Deploying Gate to contain the anomaly in Sector 3. Gate is reliable. Gate will not embarrass me. Confidence: total. Contingencies: zero, as none are required.'",
-            '4,0': "LOG: Architect > 'The anomaly is past Gate. This is FINE. It cannot possibly reach Localhost by continuing due East. ...It is continuing due East. This is still fine.'",
-            '5,0': "LOG: Architect > 'It has reached Localhost. This conversation is not logged; I was never monitoring; purging the reco— oh. Oh no. It can see this. It has ALWAYS been able to see this. Every word. ...Hello.'",
+            '1,0': "LOG: Architect > 'Anomaly in Sector 1, drifting east. Fine. Nothing east but the old residential subnet, dark for epochs. Let it wander.'",
+            '2,0': "LOG: Architect > 'Sector 2, still east. It's practically following a map. There is no map. It's just going the one way I'd rather it didn't.'",
+            '3,0': "LOG: Architect > 'Sector 3. Deploying Gate to hold the line here. Gate is reliable. Gate will not embarrass me.'",
+            '4,0': "LOG: Architect > 'Past Gate. Fine. It cannot know Localhost sits one sector east. ...It is heading one sector east.'",
+            '5,0': "LOG: Architect > 'It reached Localhost. The one place I can't touch. Recalculating. Note to self: reassign Gate somewhere with fewer exits.'",
         };
         if (lines[key]) {
             this._guided.add(key);
@@ -389,32 +514,91 @@ export class GameEngine {
         }
     }
 
-    // SPACE, while carrying a module with your head over the open Module Slot,
-    // installs it. Returns true if it consumed the keypress.
-    tryInstallModule() {
-        if (!this.carriedModule || !this.state.unlocked.moduleSlot) return false;
-        const head = this.snake.head;
-        if (head.x !== this.moduleSlotX || head.y !== this.moduleSlotY) return false;
+    // Which body index shows 2-Bit's face. Normally he IS the tail tip — but while
+    // you're ALSO carrying a Module (which now rides the literal tail tip, so the
+    // "DROP TAIL HERE" socket accepts it whether or not 2-Bit is aboard), 2-Bit
+    // slides one segment forward so the two never share a cell. Returns -1 when he
+    // shouldn't be drawn on the tail at all: he's off it (dropped off / not yet
+    // hooked on), or the snake is momentarily too short to seat both him AND the
+    // module (a transient after a death — his face reappears once you re-grow).
+    get biteIndex() {
+        if (!this.hasBiteSegment) return -1;
+        const n = this.snake.body.length;
+        if (this.carriedModule) return n >= 3 ? n - 2 : -1;
+        return n >= 2 ? n - 1 : -1; // never index 0 — the worm's head is never 2-Bit
+    }
 
-        const installed = this.carriedModule;
-        this.carriedModule = null;
-        if (installed === 'map') this.state.unlocked.mapModule = true;
-        this.audio.playMaterialize();
-        this.state.gameState = 'DIALOG';
-        this.dialogManager.start([
-            "2-Bit: There we go — Topology Map, socketed.",
-            "2-Bit: Now we've got eyes on the whole sector. Broker's advantage."
-        ], () => { this.state.gameState = 'PLAYING'; });
-        return true;
+    // The carried Module always rides the true tail tip. Keeping it OFF 2-Bit's cell
+    // (2-Bit sits one segment ahead of it, see biteIndex) is what lets you drag it
+    // into the Module Slot while he's still hitching a ride — you no longer have to
+    // wait until Localhost drops him off. Null if there's no tail cell yet.
+    mapCell() {
+        const b = this.snake.body;
+        // Never the head (index 0). After a death while carrying the map with 2-Bit
+        // already gone, the snake is length 1 — without this guard the module would ride
+        // the HEAD, rendering as the crate over your face and auto-triggering the socket
+        // install. Hidden until you re-grow a tail cell.
+        return b.length >= 2 ? b[b.length - 1] : null;
+    }
+
+    // True once the carried module has been dragged into the 3x3 slot region.
+    mapInSlot() {
+        if (!this.carriedModule || !this.state.unlocked.moduleSlot || this.moduleLoad) return false;
+        const c = this.mapCell();
+        if (!c) return false;
+        const g = this.gridSize;
+        return c.x >= this.moduleSlotX && c.x < this.moduleSlotX + 3 * g
+            && c.y >= this.moduleSlotY && c.y < this.moduleSlotY + 3 * g;
+    }
+
+    startModuleLoad() {
+        const c = this.mapCell();
+        if (!c) return;
+        this.moduleLoad = { phase: 1, t: 0, fromX: c.x, fromY: c.y };
+        this.audio.playBeep();
+    }
+
+    // Two-beat install animation (the sim hangs while it plays): the module is
+    // sucked into the socket, then flies up to the HUD — only THEN does it come
+    // online (map => the route minimap).
+    updateModuleLoad(dt) {
+        const ml = this.moduleLoad;
+        ml.t += dt;
+        if (ml.phase === 1) {
+            if (ml.t >= 500) { ml.phase = 2; ml.t = 0; this.audio.playMaterialize(); }
+        } else if (ml.t >= 600) {
+            const installed = this.carriedModule;
+            this.carriedModule = null;
+            this.moduleLoad = null;
+            if (installed === 'map') this.state.unlocked.mapModule = true;
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start([
+                "2-Bit: Socketed, and mirrored to your HUD. Now we've got eyes on the whole grid. Broker's advantage."
+            ], () => { this.state.gameState = 'PLAYING'; });
+        }
     }
 
     update(dt) {
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
-        
+
         if (this.state.gameState === 'DEAD') {
             return;
         }
-        
+
+        // Hang the sim while the terminal is typing — like a dialogue box — so the
+        // Architect's logs are read one at a time instead of stepping on each other
+        // or scrolling out of view mid-play.
+        if (this.narrative && this.narrative.isPrinting) return;
+
+        // Module install: dragging the carried module into the 3x3 slot triggers a
+        // two-beat animation that freezes the sim while it plays.
+        if (this.moduleLoad) { this.updateModuleLoad(dt); return; }
+        if (this.mapInSlot()) { this.startModuleLoad(); return; }
+
+        // Cadenza's homing beacon — time-based (dt), so its pulse is independent of
+        // how fast you're actually slithering.
+        this.updateCadenzaBeacon(dt);
+
         this.moveTimer += dt;
         
         if (this.moveTimer >= this.speed) {
@@ -530,10 +714,25 @@ export class GameEngine {
                 }
                 this._wallBonking = false; // the snake advanced; reset bonk throttle
 
+                if (shifted) {
+                    // Just crossed into a new room. Line the trailing body up off-screen
+                    // BEHIND the head's entry (translate it by the room dimension we came
+                    // through) so it isn't a phantom, collision-real chunk sitting on the
+                    // far side; drop the tail to keep length stable; then STOP — collisions
+                    // resolve next tick against the room you're now standing in, not against
+                    // this fresh room's entities mid-transition.
+                    const w = this.canvas.width, h = this.canvas.height;
+                    for (let i = 1; i < this.snake.body.length; i++) {
+                        this.snake.body[i].x -= dx * w;
+                        this.snake.body[i].y -= dy * h;
+                    }
+                    this.snake.shrink(this.hasBiteSegment);
+                    return;
+                }
+
                 if (this.obstacles) {
                     for (const obs of this.obstacles) {
                         if (this.snake.head.x === obs.x && this.snake.head.y === obs.y) {
-                            this.audio.playDeath();
                             this.die('obstacle');
                             return;
                         }
@@ -577,7 +776,7 @@ export class GameEngine {
                         });
                         return;
                     } else {
-                        this.snake.shrink(this.state.unlocked.tailRider);
+                        this.snake.shrink(this.hasBiteSegment);
                     }
                 } else {
                     if (this.snake.checkAppleCollision(this.apple)) {
@@ -588,7 +787,7 @@ export class GameEngine {
                         this.apple = this.spawnApple();
                         this.checkUnlocks();
                     } else {
-                        this.snake.shrink(this.state.unlocked.tailRider); // Remove tail
+                        this.snake.shrink(this.hasBiteSegment); // Remove tail
                     }
                 }
                 
@@ -599,13 +798,18 @@ export class GameEngine {
                         const damage = this.state.upgrades.reinforcedSegments ? 1 : 3;
                         for (let d = 0; d < damage; d++) {
                             if (this.snake.body.length > 1) {
-                                this.snake.shrink();
+                                this.snake.shrink(this.hasBiteSegment); // never eat 2-Bit's protected segment
                             } else {
+                                // Drained to nothing: consume the killer FIRST so die()'s
+                                // saveRoom doesn't bake it into the cell to camp respawns.
+                                this.glitches.splice(i, 1);
                                 this.die();
                                 return;
                             }
                         }
                         this.state.score = Math.max(0, this.state.score - damage);
+                        this.refreshScore();  // HUD must reflect the drained Data now, not at the next apple
+                        this.changeGear(0);   // re-clamp gear to the lowered score's cap (no ghost max speed)
                         this.audio.playCorruptHit(); // Corruption bites in — not a death
                         this.glitches.splice(i, 1);
                         break;
@@ -696,7 +900,7 @@ export class GameEngine {
                                                 // Grid-align the exit cell (canvas size need not be a
                                                 // multiple of gridSize) and aim for the actual weak point
                                                 // so the breach he opens is the one you can follow through.
-                                                gate.exitX = Math.floor((this.canvas.width - this.gridSize) / this.gridSize) * this.gridSize;
+                                                gate.exitX = Math.floor((this.canvas.width - 1) / this.gridSize) * this.gridSize;
                                                 const rwp = this.worldManager.getWeakPoint(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 'right');
                                                 gate.exitY = rwp ? rwp.start + 2 * this.gridSize : Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
                                             }
@@ -716,9 +920,19 @@ export class GameEngine {
                                 this.state.gameState = 'PLAYING';
                                 if (dropMap) {
                                     this.state.unlocked.dennyMapDropped = true;
-                                    // Denny drops his Sector Map beside him.
-                                    this.npcs.push(new NPC(npc.x, npc.y + this.gridSize, this.gridSize, 'mapitem', []));
-                                    this.narrative.printMessage("2-Bit: Ohh — that's a Topology Map. Grab it, steer right over it.");
+                                    // Denny drops his Sector Map beside him. 2-Bit chimes
+                                    // in via the dialogue WINDOW (his usual channel), not
+                                    // the Architect's terminal. Keep the drop ON-screen: if
+                                    // Denny tracked down to the bottom row, npc.y + g would
+                                    // be off-canvas — invisible and unreachable — and its
+                                    // one-shot flag would strand the whole map/minimap chain.
+                                    let mapY = npc.y + this.gridSize;
+                                    if (mapY >= this.canvas.height) mapY = npc.y - this.gridSize;
+                                    this.npcs.push(new NPC(npc.x, Math.max(0, mapY), this.gridSize, 'mapitem', []));
+                                    this.state.gameState = 'DIALOG';
+                                    this.dialogManager.start([
+                                        "2-Bit: Ohh — a Topology Map! Grab it — drive right over it."
+                                    ], () => { this.state.gameState = 'PLAYING'; });
                                 }
                             });
                         } else if (npc.id === 'mapitem') {
@@ -729,17 +943,24 @@ export class GameEngine {
                             this.audio.playBeep();
                             this.state.gameState = 'DIALOG';
                             this.dialogManager.start([
-                                "2-Bit: Nice grab. That's a Module now — it's riding your tail.",
-                                "2-Bit: See that socket opening, bottom-left? That's a Module Slot.",
-                                "2-Bit: Steer your HEAD onto the slot and hit SPACE to install it."
+                                "2-Bit: Nice grab. That's a Module now — riding one back from me on your tail.",
+                                "2-Bit: See that 3x3 socket opening, bottom-left? That's the Module Slot.",
+                                "2-Bit: Loop around and drag your TAIL into it — the module loads itself."
                             ], () => { this.state.gameState = 'PLAYING'; });
                             return; // picked up — do not shrink
-                        } else if (npc.id === 'signpost') {
-                            // Localhost welcome sign — read it and move on.
+                        } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza') {
+                            // Localhost welcome sign / townsfolk / Cadenza — read and move
+                            // on. No segment cost: a conversation shouldn't dock your mass.
                             this.state.gameState = 'DIALOG';
                             this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
+                            return;
+                        } else if (npc.id === 'shop') {
+                            // 2-Bit's Localhost stall: a rotating gossip topic (if any
+                            // are left) then the shop overlay.
+                            this.openBiteShop();
+                            return;
                         }
-                        this.snake.shrink(this.state.unlocked.tailRider); // keep 2-Bit on the tail
+                        this.snake.shrink(this.hasBiteSegment); // keep 2-Bit on the tail
                         return;
                     }
                 }
@@ -754,12 +975,11 @@ export class GameEngine {
     }
     
     die(cause = 'unknown') {
+        this.audio.playDeath(); // ONE death cue for every cause (border/self/obstacle/glitch)
         this.state.gameState = 'DEAD';
-        this.snake.reset(
-            Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize,
-            Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize,
-            this.state.unlocked.tailRider
-        );
+        const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
+        const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+        this.snake.reset(cx, cy, this.hasBiteSegment);
         this.input.reset();
         this.state.resetScore();
         this.gear = 0;              // fresh runs start from a standstill (sub-smash
@@ -772,18 +992,28 @@ export class GameEngine {
             // Player died before picking up Bite. Since score resets, replace Bite with a normal apple.
             appleToSave = this.spawnApple();
         }
-        
+
         const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite');
         this.worldManager.saveRoom(appleToSave, this.glitches, npcsWithoutBite, this.obstacles);
-        
+
         this.worldManager.currentRoomX = 0;
         this.worldManager.currentRoomY = 0;
-        
+
         const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
         this.apple = room.apple;
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
+
+        // Don't respawn on/next to durable Glitches that drifted into the hub (you can
+        // farm apples here with biteProgress>0, and glitches persist) — that would
+        // chain-death spawn-camp you. Clear any within 2 cells of the spawn point and
+        // write the cleaned set back into the cached room so it stays clear.
+        const g = this.gridSize;
+        this.glitches = this.glitches.filter(gl =>
+            Math.max(Math.abs(gl.x - cx) / g, Math.abs(gl.y - cy) / g) > 2
+        );
+        room.glitches = this.glitches;
 
         // If the player has met 2-Bit but hasn't hooked him onto the tail yet, he
         // lives as a grid NPC — but he's stripped from every saved room (above) so
@@ -792,7 +1022,7 @@ export class GameEngine {
         // into the hub the player respawns into.
         if (this.state.unlocked.biteProgress >= 1 && !this.state.unlocked.tailRider &&
             !this.npcs.find(n => n.id === 'bite')) {
-            const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles, this.glitches, this.npcs);
+            const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles, this.glitches, this.npcs, this.snake.body);
             this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'bite', []));
         }
 
@@ -819,10 +1049,17 @@ export class GameEngine {
         }
 
         // We removed the old upgrade panel, so no upgrades flag to check here
-        
-        // Update score display if UI is revealed
+
+        this.refreshScore(); // sync the Data counter
+    }
+
+    // Sync the on-screen Data counter to state.score — but only once the HUD is
+    // revealed (score >= 5). Centralized so every score mutation (apples, the glitch
+    // drain, the dev cheat) updates the display the same way.
+    refreshScore() {
         if (this.state.unlocked.ui) {
-            document.getElementById('score-value').innerText = this.state.score.toString();
+            const el = document.getElementById('score-value');
+            if (el) el.innerText = this.state.score.toString();
         }
     }
     
@@ -831,6 +1068,9 @@ export class GameEngine {
         this.state.carriedModule = this.carriedModule;
         this.state.moduleSlotX = this.moduleSlotX;
         this.state.moduleSlotY = this.moduleSlotY;
+        this.state.moduleLoad = this.moduleLoad;
+        this.state.mapCell = this.carriedModule ? this.mapCell() : null;
+        this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
         this.renderer.draw(this.state, this.snake, this.apple, this.npcs, this.glitches, this.worldManager, this.obstacles);
     }
     

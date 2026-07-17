@@ -327,6 +327,59 @@ export class AudioEngine {
         thud.start(now); thud.stop(now + 0.25);
     }
 
+    // Diegetic: Cadenza's distant singing bleeding through the sealed sectors — a
+    // soft, pretty two-note vocal motif with a singer's vibrato. Unlike every harsh
+    // system voice, this one is MUSICAL on purpose: she's a person, not a process.
+    // A sonar-style homing beacon (the closer you are the more often Game re-triggers
+    // it). `proximity` in (0, 1]: louder, brighter and less muffled the nearer you
+    // get — 1 == you're in her sector.
+    playCadenzaSong(proximity = 0.5) {
+        if (!this.initialized) return;
+
+        const now = this.ctx.currentTime;
+        const p = Math.max(0.05, Math.min(1, proximity));
+
+        // A gentle rising minor-third motif (two sung notes). The PITCH is constant;
+        // only clarity and volume track distance, so you read "warmer" by ear.
+        const notes = [523.25, 622.25]; // C5 -> Eb5
+        const noteDur = 0.34;
+
+        // Distance muffles her: a low-pass that opens as you approach (far = boxy and
+        // faint, near = clear and present).
+        const lp = this.ctx.createBiquadFilter();
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(500 + p * 3500, now); // ~500Hz far -> ~4kHz near
+        lp.Q.setValueAtTime(0.7, now);
+        lp.connect(this.master);
+
+        notes.forEach((freq, i) => {
+            const t0 = now + i * noteDur;
+            const osc = this.ctx.createOscillator();
+            osc.type = 'triangle'; // soft, voice-like
+            osc.frequency.setValueAtTime(freq, t0);
+
+            // Vibrato — a singer's wavering pitch, wider the closer you can hear her.
+            const vib = this.ctx.createOscillator();
+            vib.type = 'sine';
+            vib.frequency.setValueAtTime(5.5, t0);
+            const vibDepth = this.ctx.createGain();
+            vibDepth.gain.setValueAtTime(4 + p * 4, t0);
+            vib.connect(vibDepth);
+            vibDepth.connect(osc.frequency);
+
+            const g = this.ctx.createGain();
+            const peak = 0.015 + p * 0.06; // faint when far, present when near
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(peak, t0 + 0.06);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + noteDur);
+
+            osc.connect(g);
+            g.connect(lp);
+            osc.start(t0); osc.stop(t0 + noteDur);
+            vib.start(t0); vib.stop(t0 + noteDur);
+        });
+    }
+
     // Diegetic: a partial hit on a weak wall — a sharp fracture crackle, lighter
     // than the full breach (playCrash). Sub-max ramming chips the barrier.
     playCrack() {

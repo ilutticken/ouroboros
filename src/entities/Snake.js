@@ -13,11 +13,14 @@ export class Snake {
         newHead.x += direction.x;
         newHead.y += direction.y;
         
-        // Unfolding Mechanic: Initially, screen wraps (no borders)
+        // Unfolding Mechanic: Initially, screen wraps (no borders). Wrap to the true
+        // last reachable column/row: (canvasSize-1)/gridSize floored — equals size-g
+        // when the canvas is a grid multiple, and the wall-adjacent cell otherwise
+        // (the wrapper's clientWidth/Height need not be a multiple of gridSize).
         if (!bordersUnlocked) {
-            if (newHead.x < 0) newHead.x = Math.floor(canvasWidth / this.gridSize) * this.gridSize - this.gridSize;
+            if (newHead.x < 0) newHead.x = Math.floor((canvasWidth - 1) / this.gridSize) * this.gridSize;
             if (newHead.x >= canvasWidth) newHead.x = 0;
-            if (newHead.y < 0) newHead.y = Math.floor(canvasHeight / this.gridSize) * this.gridSize - this.gridSize;
+            if (newHead.y < 0) newHead.y = Math.floor((canvasHeight - 1) / this.gridSize) * this.gridSize;
             if (newHead.y >= canvasHeight) newHead.y = 0;
         } else {
             // Borders are unlocked, we can die to them.

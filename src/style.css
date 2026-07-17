@@ -46,6 +46,16 @@ body {
 .hidden {
     opacity: 0;
     pointer-events: none;
+    /* Also drop hidden elements OUT of the tab order and make them truly
+       non-interactive — opacity:0 alone left buttons focusable, so Tab + Space/Enter
+       could click the dev cheat or a shop button mid-gameplay and corrupt the state.
+       visibility:hidden wins even over #shop-overlay's id-specificity pointer-events. */
+    visibility: hidden;
+}
+
+/* A hidden shop row must collapse, not leave a blank gap where it used to be. */
+.shop-item.hidden {
+    display: none;
 }
 
 #score-display {

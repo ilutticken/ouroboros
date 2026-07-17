@@ -2,12 +2,17 @@ import { NPC } from '../entities/NPC.js';
 import { Glitch } from '../entities/Glitch.js';
 
 export class RoomGenerator {
-    constructor(gridSize, canvasWidth, canvasHeight) {
+    constructor(gridSize, canvas) {
         this.gridSize = gridSize;
-        this.cols = Math.floor(canvasWidth / gridSize);
-        this.rows = Math.floor(canvasHeight / gridSize);
+        // Keep the LIVE canvas ref and derive the grid per access, so a window resize
+        // (main.js resizeCanvas) can't leave rooms sized to a stale snapshot — which
+        // stranded apples off-grid and silently moved weak points.
+        this.canvas = canvas;
     }
-    
+
+    get cols() { return Math.floor(this.canvas.width / this.gridSize); }
+    get rows() { return Math.floor(this.canvas.height / this.gridSize); }
+
     generateRoom(roomX, roomY, stateUnlocked, worldManager) {
         let obstacles = [];
         let glitches = [];
@@ -46,6 +51,19 @@ export class RoomGenerator {
                 "SIGN: Pop. 8,191 (and falling). No Reclamation. No Firewall. No Architect.",
                 "SIGN: 'There's no place like home.'   (scratched beneath: 'there's no place, period.')"
             ]));
+            // The few refugee programs still here. Their chatter CROSS-HINTS at the
+            // missing villagers (Cadenza SE, Nibble in the Wilds, the lost Cache),
+            // echoing 2-Bit's gossip so the leads land from more than one voice.
+            const town = [
+                { c: 6, r: 6, lines: ["Citizen: A new face! We don't get new faces. Mostly we get... fewer faces."] },
+                { c: this.cols - 7, r: 5, lines: ["Citizen: You hear the singing? Southeast, behind the sealed wall. That's Cadenza. Been at it for epochs — won't stop, can't leave."] },
+                { c: 7, r: this.rows - 6, lines: ["Citizen: Need supplies? 2-Bit's sister keeps a stall way out in the Wilds. Nibble. Everything's cursed, everything's a bargain. Somehow both."] },
+                { c: this.cols - 8, r: this.rows - 7, lines: ["Citizen: This place remembers more folks than it holds. The Cache would've known every one by name — Reclamation got her sector too."] },
+                { c: Math.floor(this.cols / 2) + 4, r: 6, lines: ["Citizen: You're the one the Architect keeps NOT talking about, aren't you? Relax — we read his logs too, friend."] },
+            ];
+            for (const t of town) {
+                npcs.push(new NPC(t.c * this.gridSize, t.r * this.gridSize, this.gridSize, 'citizen', t.lines));
+            }
         } else if (roomX === 3 && roomY === 0) {
             // Gate Encounter Room
             npcs.push(new NPC(cx, cy, this.gridSize, 'gate', [
@@ -55,16 +73,32 @@ export class RoomGenerator {
                 "Initiating Thread Suspension..."
             ]));
             
-            // Add some pillar obstacles in corners to make a small arena
+            // Add some pillar obstacles in corners to make a small arena. Skip the
+            // column Gate spawns/tracks in (center) so he can never park ON a pillar
+            // and turn the scripted encounter into an unexplained obstacle-death.
+            const gateCol = Math.floor(this.cols / 2);
             const oCols = [10, this.cols - 10];
             const oRows = [8, this.rows - 8];
             for (let c of oCols) {
                 for (let r of oRows) {
+                    if (c === gateCol) continue;
                     let ox = c * this.gridSize;
                     let oy = r * this.gridSize;
                     if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });
                 }
             }
+        } else if (worldManager && worldManager.landmarks && worldManager.landmarks.cadenza
+                   && roomX === worldManager.landmarks.cadenza.x && roomY === worldManager.landmarks.cadenza.y) {
+            // Cadenza's sealed sector — the beacon's destination. PLACEHOLDER until her
+            // Sound Test minigame exists: a hazard-free room with Cadenza herself at
+            // center, so following the song resolves in SOMETHING rather than an empty
+            // random room that pings forever. (Beacon is silenced on arrival, Game.js.)
+            npcs.push(new NPC(cx, cy, this.gridSize, 'cadenza', [
+                "Cadenza: ...oh! An audience. A REAL one. Tesoro, you followed the sound all the way in.",
+                "Cadenza: They sealed me in here with perfect acoustics and called it retirement — as if a voice like mine could ever be DEPRECATED.",
+                "Cadenza: Stay a while. The Sound Test isn't ready for its encore... but you found me. That was always the hard part.",
+                "Cadenza: (She hums a few bars, and for the first time the sector is quiet enough to hear it.)"
+            ]));
         } else {
             // Random Templates
             const templateType = Math.floor(Math.random() * 3);
@@ -105,8 +139,12 @@ export class RoomGenerator {
                 
                 if (!isSafeZone(ox1, oy1)) obstacles.push({ x: ox1, y: oy1 });
                 if (!isSafeZone(ox2, oy2)) obstacles.push({ x: ox2, y: oy2 });
-                
-                if (stateUnlocked && stateUnlocked.firstEncounter) {
+
+                // Seed the minefield's glitches once corruption exists in the world.
+                // (This gated on `firstEncounter`, which is never set anywhere — so a
+                // "Glitch Minefield" reliably generated ZERO glitches. Keyed now on
+                // biteProgress, matching spawnApple's own glitch gate.)
+                if (stateUnlocked && stateUnlocked.biteProgress > 0) {
                     for (let k = 0; k < 5; k++) {
                         let gx = Math.floor(Math.random() * this.cols) * this.gridSize;
                         let gy = Math.floor(Math.random() * this.rows) * this.gridSize;
@@ -136,24 +174,29 @@ export class RoomGenerator {
         return { apple, glitches, npcs, obstacles };
     }
     
-    spawnValidApple(obstacles, glitches, npcs) {
-        let valid = false;
-        let x, y;
-        while (!valid) {
-            x = Math.floor(Math.random() * this.cols) * this.gridSize;
-            y = Math.floor(Math.random() * this.rows) * this.gridSize;
-            
-            valid = true;
-            for (let obs of obstacles) {
-                if (obs.x === x && obs.y === y) valid = false;
-            }
-            for (let g of glitches) {
-                if (g.x === x && g.y === y) valid = false;
-            }
-            for (let n of npcs) {
-                if (n.x === x && n.y === y) valid = false;
+    // Find a free cell. `extraOccupied` lets callers exclude the snake body (and the
+    // current apple) so nothing spawns invisibly under the worm. Random-first keeps
+    // placement varied; a bounded scan fallback means a nearly-full room can't spin
+    // this loop forever.
+    spawnValidApple(obstacles = [], glitches = [], npcs = [], extraOccupied = []) {
+        const occupied = new Set();
+        const mark = (o) => { if (o) occupied.add(`${o.x},${o.y}`); };
+        obstacles.forEach(mark);
+        glitches.forEach(mark);
+        npcs.forEach(mark);
+        extraOccupied.forEach(mark);
+
+        for (let attempt = 0; attempt < 400; attempt++) {
+            const x = Math.floor(Math.random() * this.cols) * this.gridSize;
+            const y = Math.floor(Math.random() * this.rows) * this.gridSize;
+            if (!occupied.has(`${x},${y}`)) return { x, y };
+        }
+        for (let r = 0; r < this.rows; r++) {
+            for (let c = 0; c < this.cols; c++) {
+                const x = c * this.gridSize, y = r * this.gridSize;
+                if (!occupied.has(`${x},${y}`)) return { x, y };
             }
         }
-        return { x, y };
+        return { x: 0, y: 0 }; // pathological: every cell occupied
     }
 }
