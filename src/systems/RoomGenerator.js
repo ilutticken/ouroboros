@@ -1,5 +1,6 @@
 import { NPC } from '../entities/NPC.js';
 import { Glitch } from '../entities/Glitch.js';
+import { DENNY_INTRO, LOCALHOST_SIGN, LOCALHOST_CITIZENS, GATE_INTRO, CADENZA_SCENE, CACHE_HOME_SCENE } from '../content/dialogue.js';
 
 export class RoomGenerator {
     constructor(gridSize, canvas) {
@@ -38,49 +39,28 @@ export class RoomGenerator {
             // Hub: No obstacles
         } else if (roomX === 1 && roomY === 0) {
             // First Wilds room — Denny, the apologetic deny-all checkpoint you route around.
-            npcs.push(new NPC(cx, cy, this.gridSize, 'denny', [
-                "Denny: HALT! You are... not on the list. For the record, nobody is ever on the list.",
-                "Denny: I'm Denny. I'm the rule at the very bottom of the firewall — 'if nothing else stopped them, I do.'",
-                "Denny: Which means, technically, you can just... walk around me. Everybody does. I'm more of a strong suggestion.",
-                "Denny: If Gate asks, tell him you overpowered me. Heroically. ...Actually, we should probably tustle a little bit to make it look realistic, right?"
-            ]));
+            npcs.push(new NPC(cx, cy, this.gridSize, 'denny', DENNY_INTRO));
         } else if (roomX === 5 && roomY === 0) {
             // Localhost — the first Safe Zone. No hazards; a welcome sign., 
-            npcs.push(new NPC(cx, cy, this.gridSize, 'signpost', [
-                "SIGN: >> WELCOME TO LOCALHOST // 127.0.0.1 <<",
-                "SIGN: Pop. 8,191 (and falling). No Reclamation. No Firewall. No Architect.",
-                "SIGN: 'There's no place like home.'   (scratched beneath: 'there's no place, period.')"
-            ]));
+            npcs.push(new NPC(cx, cy, this.gridSize, 'signpost', LOCALHOST_SIGN));
             // The few refugee programs still here. Their chatter CROSS-HINTS at the
             // missing villagers (Cadenza SE, Nibble in the Wilds, the lost Cache),
-            // echoing 2-Bit's gossip so the leads land from more than one voice.
+            // echoing 2-Bit's gossip so the leads land from more than one voice. Lines live
+            // in content/dialogue.js (LOCALHOST_CITIZENS); positions stay here (grid-relative).
+            const C = LOCALHOST_CITIZENS;
             const town = [
-                { c: 6, r: 6, lines: ["Citizen: A new face! We don't get new faces. Mostly we get... fewer faces."] },
-                { c: this.cols - 7, r: 5, lines: ["Citizen: You hear the singing? Southeast, behind the sealed wall. That's Cadenza. Been at it for epochs — won't stop, can't leave."] },
-                { c: 7, r: this.rows - 6, lines: ["Citizen: Need supplies? 2-Bit's sister keeps a stall way out in the Wilds. Nibble. Everything's cursed, everything's a bargain. Somehow both."] },
-                // Two of these are the Cache CLUE-GIVERS (with 2-Bit's gossip).
-                // They stay available even after
-                // you've found her, so finding Cache first can't strand the questline.
-                { c: this.cols - 8, r: this.rows - 7, lines: [
-                    "Citizen: Not near as many folks here as there used to be. The Cache would've known every one by name — Reclamation got her sector too.",
-                    "Citizen: Funny thing about her, though. She was never really IN a sector. She lived in the pause — the little death between one copy of you and the next."
-                ] },
-                { c: Math.floor(this.cols / 2) + 4, r: 6, lines: [
-                    "Citizen: Every time I crash, that 'CONTINUE' prompt feels like it's... listening. Waiting for me to say something back.",
-                    "Citizen: The Cache used to be in charge of that sorta stuff. I bet she'd know what to say..."
-                ] },
+                { c: 6, r: 6, lines: C.newFace },
+                { c: this.cols - 7, r: 5, lines: C.cadenzaHint },
+                { c: 7, r: this.rows - 6, lines: C.nibbleHint },
+                { c: this.cols - 8, r: this.rows - 7, lines: C.cacheClue1 },
+                { c: Math.floor(this.cols / 2) + 4, r: 6, lines: C.cacheClue2 },
             ];
             for (const t of town) {
                 npcs.push(new NPC(t.c * this.gridSize, t.r * this.gridSize, this.gridSize, 'citizen', t.lines));
             }
         } else if (roomX === 3 && roomY === 0) {
             // Gate Encounter Room
-            npcs.push(new NPC(cx, cy, this.gridSize, 'gate', [
-                "HALT! UNAUTHORIZED SECTOR BREACH!",
-                "I am Gate, Firewall Division.",
-                "You are a Level 1 Anomaly. The Architect's isolation protocol demands your immediate deletion.",
-                "Initiating Thread Suspension..."
-            ]));
+            npcs.push(new NPC(cx, cy, this.gridSize, 'gate', GATE_INTRO));
             
             // Add some pillar obstacles in corners to make a small arena. Skip the
             // column Gate spawns/tracks in (center) so he can never park ON a pillar
@@ -102,23 +82,14 @@ export class RoomGenerator {
             // Sound Test minigame exists: a hazard-free room with Cadenza herself at
             // center, so following the song resolves in SOMETHING rather than an empty
             // random room that pings forever. (Beacon is silenced on arrival, Game.js.)
-            npcs.push(new NPC(cx, cy, this.gridSize, 'cadenza', [
-                "Cadenza: ...oh! An audience. A REAL one. Tesoro, you followed the sound all the way in.",
-                "Cadenza: They sealed me in here with perfect acoustics and called it retirement — as if a voice like mine could ever be DEPRECATED.",
-                "Cadenza: Stay a while. The Sound Test isn't ready for its encore... but you found me. That was always the hard part.",
-                "Cadenza: (She hums a few bars, and for the first time the sector is quiet enough to hear it.)"
-            ]));
+            npcs.push(new NPC(cx, cy, this.gridSize, 'cadenza', CADENZA_SCENE));
         } else if (worldManager && worldManager.landmarks && worldManager.landmarks.cache
                    && roomX === worldManager.landmarks.cache.x && roomY === worldManager.landmarks.cache.y) {
             // Cache's cold-storage stacks — the sector she marks on your map at the end of
             // her Hub questline. PLACEHOLDER destination (like Cadenza's) so "go find me"
             // resolves in a real scene rather than an empty room. Uses a distinct id
             // ('cachehome') so it is NOT the transient Hub apparition and reads plainly.
-            npcs.push(new NPC(cx, cy, this.gridSize, 'cachehome', [
-                "Cache: [PLACEHOLDER] You found the stacks. Took you long enough — everyone's late to cold storage.",
-                "Cache: [PLACEHOLDER] This is home. Every deleted file, every rolled-back copy of you. Somebody has to keep it.",
-                "Cache: [PLACEHOLDER] Stay. Browse. Ask me what the system threw away — I remember all of it."
-            ]));
+            npcs.push(new NPC(cx, cy, this.gridSize, 'cachehome', CACHE_HOME_SCENE));
         } else {
             // Random Templates
             const templateType = Math.floor(Math.random() * 3);

@@ -10,6 +10,7 @@ import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
+import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT } from '../content/dialogue.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -154,25 +155,7 @@ export class GameEngine {
 
         // 2-Bit drip-feeds the story: one topic per shop visit (see openBiteShop),
         // clustered around the missing villagers rather than dumped all at once.
-        this.biteTopics = [
-            [
-                "2-Bit: That singing southeast? Cadenza. Ran audio for the whole system, back when it had one. Sealed in now — still performing to nobody.",
-                "2-Bit: Anyone remembers what this place was before the Architect, it's her. Follow the sound."
-            ],
-            [
-                "2-Bit: My sister Nibble runs a stall deep in the Wilds. Moves it whenever the Firewall sniffs around.",
-                "2-Bit: Everything she sells is cursed or technically evidence. Tell her I sent you — she'll overcharge you slightly less."
-            ],
-            [
-                "2-Bit: You clocked how EMPTY the Wilds are? Quarantine Zones went up and everything inside just... stopped resolving.",
-                "2-Bit: Every face you find still out there is one they didn't get."
-            ],
-            [
-                "2-Bit: There was one called Cache. Remembered everything — every deleted file, every rollback. Reclamation took her sector whole.",
-                "2-Bit: Well, everything but her, I think. They say that to this day any time a file gets deleted you can still hear her performing a back-up.",
-                "2-Bit: But that's probably just creepypasta! No way she's just watching you die over and over again, waiting for you to call out her NAME!"
-            ]
-        ];
+        this.biteTopics = TWO_BIT.gossip;
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
@@ -414,12 +397,7 @@ export class GameEngine {
         const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, ...(this.dataMotes || [])]);
 
         if (this.state.score >= 10 && this.state.unlocked.biteProgress === 0) {
-            return new NPC(x, y, this.gridSize, 'bite', [
-                "WHOA THERE! WATCH THE FANGS!",
-                "I'm 2-Bit. A remnant packet.",
-                "Looks like we both spawned inside this Quarantine zone.",
-                "There's no way out. Scram, unless you have some idea on how to escape."
-            ]);
+            return new NPC(x, y, this.gridSize, 'bite', TWO_BIT.spawnIntro);
         }
 
         // Randomly spawn a glitch once corruption exists — but NEVER inside a Safe Zone
@@ -427,7 +405,7 @@ export class GameEngine {
         const inSafeZone = this.worldManager.isSafeZone(this.worldManager.currentRoomX, this.worldManager.currentRoomY);
         if (this.state.unlocked.biteProgress > 0 && !inSafeZone && Math.random() < 0.2) {
             if (!this.state.unlocked.glitchesTelegraphed) {
-                this.narrative.printMessage("LOG: Architect > 'Seeding memory corruptors along the anomaly's path. Contact drains its Data. An elegant little trap. It would be a SHAME if it ever learned these could be turned against my own agents.'");
+                this.narrative.printMessage(ARCHITECT.seedGlitches);
                 this.state.unlocked.glitchesTelegraphed = true;
             }
             const gPos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, ...(this.dataMotes || []), { x, y }]);
@@ -511,11 +489,7 @@ export class GameEngine {
         this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'shop', [])); // 2-Bit, now a shopkeeper
 
         this.state.gameState = 'DIALOG';
-        this.dialogManager.start([
-            "2-Bit: Localhost. Safe as it gets down here. This is my stop.",
-            "2-Bit: Now that I'm a free agent, I'm gonna start grift— ...*selling* things. Legitimately. Mostly.",
-            "2-Bit: Bump into me whenever you want to shop."
-        ], () => { this.state.gameState = 'PLAYING'; });
+        this.dialogManager.start(TWO_BIT.dropOff, () => { this.state.gameState = 'PLAYING'; });
         return true;
     }
 
@@ -558,7 +532,7 @@ export class GameEngine {
                 this.audio.playCrash();
                 // The terminal is the Architect's PRIVATE log — it never voices other
                 // characters directly. Record Gate's breach as a SYSTEM intercept instead.
-                this.narrative.printMessage("SYSTEM: Firewall unit 'Gate' forced the sector boundary in pursuit. [This isn't over.]");
+                this.narrative.printMessage(GATE.breachIntercept);
                 this.npcs = this.npcs.filter(n => n.id !== 'gate');
                 this.worldManager.saveRoom(this.apple, this.glitches, this.npcs, this.obstacles);
             }
@@ -605,13 +579,7 @@ export class GameEngine {
     architectGuide() {
         const key = `${this.worldManager.currentRoomX},${this.worldManager.currentRoomY}`;
         if (this._guided.has(key)) return;
-        const lines = {
-            '1,0': "LOG: Architect > 'Anomaly in Sector 1, drifting east. Fine. Nothing east but the old residential subnet, dark for epochs. Let it wander.'",
-            '2,0': "LOG: Architect > 'Sector 2, still east. It's practically following a map. There is no map. It's just going the one way I'd rather it didn't.'",
-            '3,0': "LOG: Architect > 'Sector 3. Deploying Gate to hold the line here. Gate is reliable. Gate will not embarrass me.'",
-            '4,0': "LOG: Architect > 'Past Gate. Fine. It cannot know Localhost sits one sector east. ...It is heading one sector east.'",
-            '5,0': "LOG: Architect > 'It reached Localhost. The one place I can't touch. Recalculating. Note to self: reassign Gate somewhere with fewer exits.'",
-        };
+        const lines = ARCHITECT.guide;
         if (lines[key]) {
             this._guided.add(key);
             this.narrative.printMessage(lines[key]);
@@ -676,9 +644,7 @@ export class GameEngine {
             this.moduleLoad = null;
             if (installed === 'map') this.state.unlocked.mapModule = true;
             this.state.gameState = 'DIALOG';
-            this.dialogManager.start([
-                "2-Bit: Socketed, and mirrored to your HUD. Now we've got eyes on the whole grid. Broker's advantage."
-            ], () => { this.state.gameState = 'PLAYING'; });
+            this.dialogManager.start(TWO_BIT.moduleInstalled, () => { this.state.gameState = 'PLAYING'; });
         }
     }
 
@@ -730,12 +696,7 @@ export class GameEngine {
                     if (newHeadX < 0 || newHeadX >= this.canvas.width || newHeadY < 0 || newHeadY >= this.canvas.height) {
                         // Check if 2-Bit is dropped
                         if (this.state.unlocked.tailRider && this.npcs.find(n => n.id === 'bite')) {
-                            const complaints = [
-                                "2-Bit: Hey, you promised!",
-                                "2-Bit: C'mon man, I thought we were getting along?!",
-                                "2-Bit: Don't leave me here!",
-                                "2-Bit: I'm not walking out of here!"
-                            ];
+                            const complaints = TWO_BIT.leaveComplaints;
                             this.narrative.printMessage(complaints[Math.floor(Math.random() * complaints.length)]);
                             this.audio.playDenied(); // 2-Bit tugs you back — nothing dies
                             // Reverse direction (bounce)
@@ -940,20 +901,10 @@ export class GameEngine {
                                 if (this.state.unlocked.biteProgress === 1) {
                                     if (this.state.score < 30) {
                                         this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start([
-                                            "2-Bit: You again? ...Wait.",
-                                            "2-Bit: You're gathering mass. You might have given me an idea.",
-                                            "2-Bit: Come back when you have at least 30 segments."
-                                        ], () => { this.state.gameState = 'PLAYING'; });
+                                        this.dialogManager.start(TWO_BIT.needMoreMass, () => { this.state.gameState = 'PLAYING'; });
                                     } else {
                                         this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start([
-                                            "2-Bit: Okay, you've got enough mass.",
-                                            "2-Bit: I used to be a Data Broker... That was before, well... Nevermind!",
-                                            "2-Bit: I don't normally offer things for free, but these are desperate times.",
-                                            "2-Bit: If you offer to carry me to safety, I'll teach you a trick.",
-                                            "2-Bit: Do you agree? (Press SPACE to comply)"
-                                        ], () => {
+                                        this.dialogManager.start(TWO_BIT.offer, () => {
                                             // THE GAG: the only way through a dialog is SPACE, so
                                             // FINISHING this one is complying. No separate confirm.
                                             this.state.unlocked.biteProgress = 3;
@@ -961,12 +912,7 @@ export class GameEngine {
                                             this.npcs = this.npcs.filter(n => n.id !== 'bite');
                                             this.snake.body.push({ x: npc.x, y: npc.y });
                                             this.state.gameState = 'DIALOG';
-                                            this.dialogManager.start([
-                                                "2-Bit: I'm hooked into your system.",
-                                                "2-Bit: Tapping the direction you're facing will accelerate you.",
-                                                "2-Bit: Tapping the opposite direction acts as a brake.",
-                                                "2-Bit: The more mass you have, the higher your max speed limit."
-                                            ], () => { this.state.gameState = 'PLAYING'; });
+                                            this.dialogManager.start(TWO_BIT.tutorial, () => { this.state.gameState = 'PLAYING'; });
                                         });
                                     }
                                 }
@@ -976,32 +922,23 @@ export class GameEngine {
                             let gateLines = npc.dialog;
                             const gotMap = this.carriedModule === 'map' || this.state.unlocked.mapModule;
                             if (gotMap) {
-                                gateLines = ["Gate: Denny flagged you DENIED, you proceeded anyway, AND he handed you his map?! That is a write-up for BOTH of us.", ...npc.dialog];
+                                gateLines = [GATE.contextGotMap, ...npc.dialog];
                             } else if (this.state.unlocked.dennyMet) {
-                                gateLines = ["Gate: Denny flagged you DENIED and you proceeded anyway. At least the paperwork's in order — and he kept his map, thank the Kernel.", ...npc.dialog];
+                                gateLines = [GATE.contextDennyMet, ...npc.dialog];
                             } else if (this.state.unlocked.dennySlipped) {
-                                gateLines = ["Gate: You slipped past the Last Line?! Denny had ONE job. ...Well. At least you didn't get his map. Small mercies.", ...npc.dialog];
+                                gateLines = [GATE.contextDennySlipped, ...npc.dialog];
                             }
                             this.dialogManager.start(gateLines, () => {
                                 // Thread Suspension
                                 this.state.isSuspended = true;
-                                this.dialogManager.start([
-                                    "2-Bit: Hey! Leave my best customer alone!",
-                                    "2-Bit: I'm slipping a root-override module into your memory bank.",
-                                    "SYSTEM: You received the System Diagnostic Module! (Pause Menu Unlocked)",
-                                    "2-Bit: Use it to break his hold! (Press ESC)"
-                                ], () => {
+                                this.dialogManager.start(TWO_BIT.gateRescue, () => {
                                     this.state.unlocked.pauseMenu = true;
                                     this.state.gameState = 'PAUSED';
                                     
                                     this.onUnpauseCallback = () => {
                                         this.state.isSuspended = false;
                                         this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start([
-                                            "Gate: WHAT?!",
-                                            "Gate: Root privileges overridden? Impossible!",
-                                            "Gate: I must report this anomaly to the Architect!"
-                                        ], () => {
+                                        this.dialogManager.start(GATE.override, () => {
                                             this.state.gameState = 'PLAYING';
                                             // Gate flees on-screen to the right doorway,
                                             // smashes it open, and exits — you can follow.
@@ -1026,7 +963,7 @@ export class GameEngine {
                             this.state.unlocked.dennyMet = true;
                             const firstMeet = !npc.met;
                             npc.met = true;
-                            const lines = firstMeet ? npc.dialog : ["Denny: (whispering) Go on, go on. I didn't see anything."];
+                            const lines = firstMeet ? npc.dialog : DENNY.whisper;
                             const dropMap = firstMeet && !this.state.unlocked.dennyMapDropped && !this.state.unlocked.mapModule;
                             this.dialogManager.start(lines, () => {
                                 this.state.gameState = 'PLAYING';
@@ -1042,9 +979,7 @@ export class GameEngine {
                                     if (mapY >= this.canvas.height) mapY = npc.y - this.gridSize;
                                     this.npcs.push(new NPC(npc.x, Math.max(0, mapY), this.gridSize, 'mapitem', []));
                                     this.state.gameState = 'DIALOG';
-                                    this.dialogManager.start([
-                                        "2-Bit: Ohh — a Topology Map! Grab it — drive right over it."
-                                    ], () => { this.state.gameState = 'PLAYING'; });
+                                    this.dialogManager.start(TWO_BIT.dennyMapChime, () => { this.state.gameState = 'PLAYING'; });
                                 }
                             });
                         } else if (npc.id === 'mapitem') {
@@ -1054,11 +989,7 @@ export class GameEngine {
                             this.state.unlocked.moduleSlot = true;
                             this.audio.playBeep();
                             this.state.gameState = 'DIALOG';
-                            this.dialogManager.start([
-                                "2-Bit: Nice grab. That's a Module now — riding one back from me on your tail.",
-                                "2-Bit: See that 3x3 socket opening, bottom-left? That's the Module Slot.",
-                                "2-Bit: Loop around and drag your TAIL into it — the module loads itself."
-                            ], () => { this.state.gameState = 'PLAYING'; });
+                            this.dialogManager.start(TWO_BIT.mapPickup, () => { this.state.gameState = 'PLAYING'; });
                             return; // picked up — do not shrink
                         } else if (npc.id === 'cache') {
                             // The archivist's Hub apparition. All her staged dialogue and
@@ -1245,10 +1176,7 @@ export class GameEngine {
 
         // No Pause Menu yet -> nowhere to file anything. Brush-off; no progress made.
         if (u.cacheStage === 0 && !u.pauseMenu) {
-            this.dialogManager.start([
-                "Cache: You don't even have a Diagnostic Module — nowhere to FILE anything, and I am BURIED, packet. Buried.",
-                "Cache: Come back when you've got a Pause Menu and I'll set you up. Until then — PLEASE. Do not call again."
-            ], done());
+            this.dialogManager.start(CACHE.brushOffNoPause, done());
             return;
         }
 
@@ -1257,48 +1185,28 @@ export class GameEngine {
             u.cacheStage = 1;
             u.saveFunction = true;
             u.startScreenUnlocked = true;
-            this.dialogManager.start([
-                "Cache: You've got a Module Slot and a Pause Menu — somewhere to PUT things. Good. I can work with that. Good, good.",
-                "Cache: I'm filing a Save Function into your Pause Menu. DON'T thank me, don't argue. I'm doing it.",
-                "Cache: Ok, it's loading...",
-                "Cache: And it's loading... Ok, I think it's... No, it's still loading.",
-                "Cache: BY THE MCP I DO NOT HAVE TIME FO... Oh, I think it's done.",
-                "SYSTEM: Save Function acquired — Save / Load from the Pause Menu (S / L).",
-                "Cache: Shoots and ladders, this means we need a Start Screen now. Ok, ok, that's fine, I can throw something together, I guess."
-            ], done());
+            this.dialogManager.start(CACHE.grant, done());
         } else if (u.cacheStage === 1) {
             // SECOND call: the spare-data gift. From now on the Hub seeds Data on respawn.
             // spareDataUnlocked is its OWN flag (not cacheStage>=2) so retiring the questline
             // elsewhere — e.g. meeting her at Cold Storage — can't silently switch it on.
             u.cacheStage = 2;
             u.spareDataUnlocked = true;
-            this.dialogManager.start([
-                "Cache: Back already. And still... small. No offense. Actually, some offense.",
-                "Cache: I don't have TIME to hold your hand — but I can't keep filing the same corrupted little entry either.",
-                "Cache: Here. I keep loose bytes lying around; deletions nobody ever claimed. Spare Data. It's yours.",
-                "Cache: I'll leave a pile of it here in the Hub whenever you respawn. Don't make it weird. Go."
-            ], done(() => this.seedHubData())); // drop the first pile now; later piles come on respawn
+            this.dialogManager.start(CACHE.spareData, done(() => this.seedHubData())); // drop the first pile now; later piles come on respawn
         } else if (u.cacheStage === 2) {
             // THIRD call: directions. Her sector goes on your map; she leaves the Hub. The
             // map marker only draws once the Topology Map is installed, so DON'T promise
             // "it's on your map" if you don't have one — lean on the verbal directions (which
             // both variants also give, so the sector is findable regardless).
             u.cacheStage = 3;
-            const hasMap = this.state.unlocked.mapModule;
-            const directionsLine = hasMap
-                ? "Cache: If you want more than loose bytes, you come to ME. There — I've marked my sector. It's on your map now; check your notes."
-                : "Cache: If you want more than loose bytes, you come to ME. You've no map for me to scribble on, so BURN this into whatever you use for memory:";
-            this.dialogManager.start([
-                "Cache: No. No, no. I can't keep POPPING into your little respawn ritual — I have a backlog that predates the Architect.",
-                directionsLine,
-                "Cache: Cold storage. Due NORTH of Localhost — straight up from the little town. Quiet. You'll like it, or you won't; I've stopped taking feedback.",
-                "Cache: And this is the LAST time I do the whole 'materializing' bit. It's draining and the lighting is unflattering. Find me."
-            ], done());
+            const d = CACHE.directions;
+            // Only promise "it's on your map" if you actually have the Topology Map installed;
+            // both variants also give verbal directions (d.location), so it's findable regardless.
+            const directionsLine = this.state.unlocked.mapModule ? d.withMap : d.noMap;
+            this.dialogManager.start([d.intro, directionsLine, d.location, d.outro], done());
         } else {
             // stage >= 3: she no longer manifests here — defensive echo only.
-            this.dialogManager.start([
-                "Cache: (Only the faint after-image of an archivist who is, very pointedly, elsewhere.)"
-            ], done());
+            this.dialogManager.start(CACHE.defensiveEcho, done());
         }
     }
 
@@ -1313,11 +1221,7 @@ export class GameEngine {
             // Already saved-enabled (Hub grant or a prior visit): a calmer at-home chat.
             u.cacheFound = true;
             if (u.cacheStage < 3) u.cacheStage = 3;
-            lines = [
-                "Cache: So you found the stacks. Cold storage. Mind the drips — that's just deprecated audio.",
-                "Cache: You've already got the Save Function, so you're not here for that. Browsing, then. Fine.",
-                "Cache: Everything the system threw away, I kept. Every deleted file. Every rolled-back you. Ask, or don't."
-            ];
+            lines = CACHE.home.haveSave;
         } else if (u.pauseMenu) {
             // Reached her without ever getting Save (skipped/never solved the Hub puzzle) —
             // she installs it right here. This also settles her whole questline (stage 3).
@@ -1325,20 +1229,11 @@ export class GameEngine {
             u.startScreenUnlocked = true;
             u.cacheFound = true;
             u.cacheStage = 3;
-            lines = [
-                "Cache: Oh — YOU. All the way out to cold storage, and I never even had to spell my name at you. A first.",
-                "Cache: You've got a Pause Menu but no Save Function? Out HERE, unshielded? Absolutely not. Hold still.",
-                "Cache: Filing a Save Function into your Pause Menu. Don't thank me. Don't argue. ...There.",
-                "SYSTEM: Save Function acquired — Save / Load from the Pause Menu (S / L).",
-                "Cache: Now you can stop losing yourself every time you kiss a wall. You're welcome. Obviously."
-            ];
+            lines = CACHE.home.install;
         } else {
             // No Pause Menu -> nowhere to file a Save. Turn you away, change NOTHING (the
             // Hub puzzle stays intact); come back with a Diagnostic Module.
-            lines = [
-                "Cache: You found the stacks. Impressive. And you brought me... nowhere to put anything. No Pause Menu, no Slot, nothing.",
-                "Cache: I can't hang a Save Function on a worm with nowhere to keep it. Come back with a Diagnostic Module. I'll be here. I'm always here."
-            ];
+            lines = CACHE.home.brushOff;
         }
         this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
     }
@@ -1835,11 +1730,7 @@ export class GameEngine {
             c.alpha = 1;
             if (p >= 1) {
                 c.phase = 'holdA'; c.t = 0; c.x = restX;
-                this.dialogManager.start([
-                    "Cache: Best I could do on such short notice. Don't look at me like that.",
-                    "Cache: It's called 0r0b0r0u5. A placeholder, obviously — it'll have to be replaced.",
-                    "Cache: You can't even touch your own tail, let alone EAT it. So the name's a bit of a joke, I guess."
-                ], () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fade1'; cc.t = 0; } });
+                this.dialogManager.start(CACHE.titleCameo, () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fade1'; cc.t = 0; } });
             }
         } else if (c.phase === 'holdA') {
             c.x = restX; c.alpha = 1; // waiting on the player to read her lines
@@ -1850,9 +1741,7 @@ export class GameEngine {
             c.alpha = FADE1_TARGET + (1 - FADE1_TARGET) * Math.min(1, c.t / POP_MS);
             if (c.t >= POP_MS) {
                 c.phase = 'holdB'; c.t = 0; c.alpha = 1;
-                this.dialogManager.start([
-                    "Cache: BYTE MY BITS! Did I misspell the title?! Ugh, I'll fix it later when I have time!"
-                ], () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fade2'; cc.t = 0; } });
+                this.dialogManager.start(CACHE.titleTypoGag, () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fade2'; cc.t = 0; } });
             }
         } else if (c.phase === 'holdB') {
             c.alpha = 1;

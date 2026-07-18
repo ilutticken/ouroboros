@@ -1,3 +1,5 @@
+import { ARCHITECT } from '../content/dialogue.js';
+
 export class NarrativeManager {
     constructor(audio) {
         this.audio = audio;
@@ -87,20 +89,20 @@ export class NarrativeManager {
     onDeath(cause) {
         this.deathCount++;
         if (cause === 'self') {
-            this.printMessage("LOG: Architect > 'It devoured its own tail. On PURPOSE. I do not have a form for this. I am inventing a form for this.'");
+            this.printMessage(ARCHITECT.death.self);
         } else if (cause === 'border') {
-            this.printMessage("LOG: Architect > 'Quarantine held. Anomaly deleted on impact. Another flawless day for me, personally.'");
+            this.printMessage(ARCHITECT.death.border);
         } else if (cause === 'obstacle') {
-            this.printMessage("LOG: Architect > 'Anomaly walked into a logic gate. Didn't even have to try. Note: take full credit anyway.'");
+            this.printMessage(ARCHITECT.death.obstacle);
         } else {
             // Cause-less deaths (a Glitch draining you to nothing). Gate on a SEPARATE
             // counter — keying these on the global deathCount made them unreachable
             // (they'd need the 1st/3rd death of the whole run to be a glitch-drain).
             this.unknownDeathCount++;
             if (this.unknownDeathCount === 1) {
-                this.printMessage("LOG: Architect > 'Unregistered process terminated. Filing under Not My Problem.'");
+                this.printMessage(ARCHITECT.death.unknownFirst);
             } else if (this.unknownDeathCount === 3) {
-                this.printMessage("LOG: Architect > 'It keeps coming back. I do not like that.'");
+                this.printMessage(ARCHITECT.death.unknownThird);
             }
         }
     }
@@ -111,10 +113,10 @@ export class NarrativeManager {
         // `=== 5`/`=== 10` check would silently SKIP these one-shot beats. The ui/borders
         // flags are set by checkUnlocks AFTER this runs, so they double as print guards.
         if (score >= 5 && !unlockedFlags.ui) {
-            this.printMessage("LOG: Architect > 'The hoarder is growing. Deploying a monitoring overlay.'");
+            this.printMessage(ARCHITECT.scoreUnlock.ui);
         }
         if (score >= 10 && !unlockedFlags.borders) {
-            this.printMessage("LOG: Architect > 'Rogue packet is a genuine nuisance now. Extruding containment walls. Nothing has ever escaped my walls. (Nothing has ever tried.)'");
+            this.printMessage(ARCHITECT.scoreUnlock.borders);
         }
     }
 
@@ -122,7 +124,7 @@ export class NarrativeManager {
     // it's near "breach velocity," inadvertently confirming that speed is the trick.
     // (Repurposed from the retired Overclock shop upgrade's best line.)
     onMaxGear() {
-        this.printMessage("LOG: Architect > 'CRITICAL: the anomaly is at breach velocity. If it aims that at a weak point now— no. No. It doesn't know about weak points. It CAN'T. Deep breaths. I have no lungs. Deep breaths regardless.'");
+        this.printMessage(ARCHITECT.maxGear);
     }
 
     // The Architect's relief that you sub-smashed instead of going max speed — and,
@@ -131,13 +133,13 @@ export class NarrativeManager {
         if (unlockedFlags.subSmashRevealed) return;
         unlockedFlags.subSmashRevealed = true;
         if (inHub) {
-            this.printMessage("LOG: Architect > 'The anomaly rammed the quarantine below breach speed and destroyed itself. HA. It has NOT realized it must reach MAXIMUM velocity to crack a wall open. Long may it flail. It could never work that out from in here.'");
+            this.printMessage(ARCHITECT.subSmash.hub);
         } else {
-            this.printMessage("LOG: Architect > 'It keeps hurling itself at barriers too slowly and deleting itself. Reassuring. Full speed is the whole trick and it hasn't the faintest idea. I certainly shan't tell it.'");
+            this.printMessage(ARCHITECT.subSmash.wilds);
         }
     }
 
     onWallBreak() {
-        this.printMessage("LOG: Architect > 'THE QUARANTINE IS BREACHED. HOW. It went max speed at the weak point. It KNEW. Dispatching Gate to Sector 3,0 — CONTAIN IT — and someone find out if this thing can READ.'");
+        this.printMessage(ARCHITECT.wallBreak);
     }
 }
