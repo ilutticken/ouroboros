@@ -156,6 +156,23 @@ export class GameEngine {
         // 2-Bit drip-feeds the story: one topic per shop visit (see openBiteShop),
         // clustered around the missing villagers rather than dumped all at once.
         this.biteTopics = TWO_BIT.gossip;
+
+        // NPC-interaction registry: maps an NPC's id to the handler run when the head bumps
+        // it (see handleNpcCollisions). Adding a character is a line here + its handler,
+        // instead of another branch in the move-tick. Every handler is length-neutral
+        // (talking never docks mass); the collision loop resolves one bump then stops.
+        this.npcHandlers = {
+            bite: (npc) => this.npcBite(npc),
+            gate: (npc) => this.npcGate(npc),
+            denny: (npc) => this.npcDenny(npc),
+            mapitem: (npc) => this.npcMapItem(npc),
+            cache: (npc) => { this.state.gameState = 'DIALOG'; this.talkToCache(npc); },
+            cachehome: (npc) => { this.state.gameState = 'DIALOG'; this.talkToCacheHome(npc); },
+            signpost: (npc) => this.npcSign(npc),
+            citizen: (npc) => this.npcSign(npc),
+            cadenza: (npc) => this.npcSign(npc),
+            shop: () => this.openBiteShop(),
+        };
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
@@ -648,6 +665,161 @@ export class GameEngine {
         }
     }
 
+    // Head trying to cross the room boundary (borders on, new head off-screen). Resolves the
+    // 2-Bit-not-dropped tug-back, walking a smashed-open doorway, the wall-smash mechanic
+    // (bonk / sub-smash death / max-gear breach), or a lethal solid wall. Returns:
+    //   { stop: true }                    -> the move-tick must return (blocked / died)
+    //   { stop: false, shifted, dx, dy }  -> proceed (shifted=true means a room change happened)
+    crossBorder(newHeadX, newHeadY) {
+        // 2-Bit isn't dropped off yet -> he tugs you back; nothing dies.
+        if (this.state.unlocked.tailRider && this.npcs.find(n => n.id === 'bite')) {
+            const complaints = TWO_BIT.leaveComplaints;
+            this.narrative.printMessage(complaints[Math.floor(Math.random() * complaints.length)]);
+            this.audio.playDenied();
+            this.input.direction.x *= -1;
+            this.input.direction.y *= -1;
+            this.input.nextDirection = { ...this.input.direction };
+            this.gear = -1; // lose all momentum
+            return { stop: true };
+        }
+
+        let dx = 0, dy = 0, directionStr = '';
+        if (newHeadX < 0) { directionStr = 'left'; dx = -1; }
+        else if (newHeadX >= this.canvas.width) { directionStr = 'right'; dx = 1; }
+        else if (newHeadY < 0) { directionStr = 'up'; dy = -1; }
+        else if (newHeadY >= this.canvas.height) { directionStr = 'down'; dy = 1; }
+
+        const rx = this.worldManager.currentRoomX;
+        const ry = this.worldManager.currentRoomY;
+        const inHub = (rx === 0 && ry === 0);
+        const isBroken = this.worldManager.isWallBroken(rx, ry, directionStr);
+        // Weak points vary per wall in both existence AND position; solid walls have none
+        // (and getWeakPoint seals the Hub itself).
+        const wp = this.worldManager.getWeakPoint(rx, ry, directionStr);
+        const horizontalWall = (directionStr === 'up' || directionStr === 'down');
+        const cross = horizontalWall ? newHeadX : newHeadY;
+        const isWeakPoint = !!wp && cross >= wp.start && cross <= wp.end;
+
+        if (isBroken && isWeakPoint) {
+            // Walk through the smashed-open doorway — only at the central gap; the solid wall
+            // either side of it stays lethal.
+            this.shiftScreen(dx, dy);
+            return { stop: false, shifted: true, dx, dy };
+        }
+        if (isWeakPoint) {
+            // Smash mechanic: base speed does nothing (non-lethal bonk); sub-max cracks the wall
+            // but the impact RESTARTS you (keeping some crack); ONLY a max-gear (gear 3) hit
+            // breaches cleanly.
+            const dmg = Math.max(0, Math.min(3, this.gear));
+            if (dmg <= 0) {
+                if (!this._wallBonking) this.audio.playDenied();
+                this._wallBonking = true;
+                this.gear = 0;
+                this.speed = this.baseSpeed;
+                return { stop: true }; // do not move
+            }
+            if (this.gear >= 3) {
+                // MAX SPEED: clean breach.
+                this.worldManager.breakWall(rx, ry, directionStr);
+                this.audio.playCrash();
+                if (inHub) {
+                    this.state.unlocked.wallBroken = true;
+                    this.narrative.onWallBreak();
+                }
+                this.shiftScreen(dx, dy);
+                return { stop: false, shifted: true, dx, dy };
+            }
+            // SUB-SMASH: crack it (capped below the break point) — but the impact destroys you.
+            // The Architect, gloating in his log, reveals that max speed is the trick.
+            this.worldManager.damageWall(rx, ry, directionStr, dmg, this.worldManager.wallBreakThreshold - 1);
+            this.audio.playCrack();
+            this.narrative.onSubSmash(inHub, this.state.unlocked);
+            this.die('border');
+            return { stop: true };
+        }
+        // Solid wall (non-weak-point, or a sealed Hub wall): lethal.
+        this.die('border');
+        return { stop: true };
+    }
+
+    // Apple / spare-data-mote collection + tail handling for this move. Returns true if it
+    // opened a dialog (2-Bit's first-encounter apple) — the move-tick should stop this frame.
+    collectData() {
+        let grew = false;
+        if (this.apple instanceof NPC) {
+            if (this.snake.checkAppleCollision(this.apple)) {
+                this.state.gameState = 'DIALOG';
+                this.dialogManager.start(this.apple.dialog, () => {
+                    if (this.state.unlocked.biteProgress === 0) {
+                        this.state.unlocked.biteProgress = 1;
+                        this.state.gameState = 'PLAYING';
+                        // Bite stays a grid NPC; the DEAL happens when you bump him (npcBite).
+                        this.npcs.push(new NPC(this.apple.x, this.apple.y, this.gridSize, 'bite', []));
+                    }
+                    this.apple = this.spawnApple();
+                });
+                return true;
+            }
+        } else if (this.snake.checkAppleCollision(this.apple)) {
+            this.snake.grow(); // growth = not shrinking this tick
+            const gain = this.state.upgrades.dataCompression ? 2 : 1;
+            this.state.addScore(gain);
+            this.audio.playBeep();
+            this.apple = this.spawnApple();
+            this.checkUnlocks();
+            grew = true;
+        }
+
+        // Cache's spare-data motes (Hub only): each is Data — grows + scores like an apple,
+        // it just doesn't respawn when eaten.
+        if (this.dataMotes && this.dataMotes.length) {
+            const mi = this.dataMotes.findIndex(m => this.snake.head.x === m.x && this.snake.head.y === m.y);
+            if (mi !== -1) {
+                this.dataMotes.splice(mi, 1);
+                this.snake.grow();
+                const gain = this.state.upgrades.dataCompression ? 2 : 1;
+                this.state.addScore(gain);
+                this.audio.playBeep();
+                this.checkUnlocks();
+                grew = true;
+            }
+        }
+
+        // No Data eaten -> normal tail handling (shrink, or extrude a folded block while
+        // un-folding after a bounce).
+        if (!grew) this.shrinkOrUnfold();
+        return false;
+    }
+
+    // Corruption (Glitch) collision: drains segments + Data, or kills you if it drains you to
+    // nothing. Returns true if it killed you (the move-tick must return).
+    hitGlitch() {
+        for (let i = 0; i < this.glitches.length; i++) {
+            const g = this.glitches[i];
+            if (this.snake.head.x === g.x && this.snake.head.y === g.y) {
+                const damage = this.state.upgrades.reinforcedSegments ? 1 : 3;
+                for (let d = 0; d < damage; d++) {
+                    if (this.snake.body.length > 1) {
+                        this.snake.shrink(this.hasBiteSegment); // never eat 2-Bit's protected segment
+                    } else {
+                        // Drained to nothing: consume the killer FIRST so die()'s saveRoom
+                        // doesn't bake it into the cell to camp respawns.
+                        this.glitches.splice(i, 1);
+                        this.die();
+                        return true;
+                    }
+                }
+                this.state.score = Math.max(0, this.state.score - damage);
+                this.refreshScore();  // HUD must reflect the drain now, not at the next apple
+                this.changeGear(0);   // re-clamp gear to the lowered score's cap (no ghost max speed)
+                this.audio.playCorruptHit(); // corruption bites in — not a death
+                this.glitches.splice(i, 1);
+                break;
+            }
+        }
+        return false;
+    }
+
     update(dt) {
         this.updateBursts(dt); // shed-segment particles animate in every state
         this.updateCacheFade(dt); // Cache materialises / dissolves independent of sim state
@@ -683,8 +855,8 @@ export class GameEngine {
             this.updateGate();
             this.updateDenny();
 
-            const changedDirection = this.input.updateDirection();
-            
+            this.input.updateDirection();
+
             if (this.input.direction.x !== 0 || this.input.direction.y !== 0) {
                 
                 let shifted = false;
@@ -692,83 +864,12 @@ export class GameEngine {
                 const newHeadX = this.snake.head.x + this.input.direction.x;
                 const newHeadY = this.snake.head.y + this.input.direction.y;
                 
-                if (this.state.unlocked.borders) {
-                    if (newHeadX < 0 || newHeadX >= this.canvas.width || newHeadY < 0 || newHeadY >= this.canvas.height) {
-                        // Check if 2-Bit is dropped
-                        if (this.state.unlocked.tailRider && this.npcs.find(n => n.id === 'bite')) {
-                            const complaints = TWO_BIT.leaveComplaints;
-                            this.narrative.printMessage(complaints[Math.floor(Math.random() * complaints.length)]);
-                            this.audio.playDenied(); // 2-Bit tugs you back — nothing dies
-                            // Reverse direction (bounce)
-                            this.input.direction.x *= -1;
-                            this.input.direction.y *= -1;
-                            this.input.nextDirection = { ...this.input.direction };
-                            this.gear = -1; // Lose all momentum
-                            return; // Do not move
-                        }
-                    
-                        let directionStr = '';
-                        if (newHeadX < 0) { directionStr = 'left'; dx = -1; }
-                        else if (newHeadX >= this.canvas.width) { directionStr = 'right'; dx = 1; }
-                        else if (newHeadY < 0) { directionStr = 'up'; dy = -1; }
-                        else if (newHeadY >= this.canvas.height) { directionStr = 'down'; dy = 1; }
-                        
-                        const rx = this.worldManager.currentRoomX;
-                        const ry = this.worldManager.currentRoomY;
-                        const inHub = (rx === 0 && ry === 0);
-                        const isBroken = this.worldManager.isWallBroken(rx, ry, directionStr);
-                        // Weak points now vary per wall in both existence AND position;
-                        // solid walls have none (and getWeakPoint seals the Hub itself).
-                        const wp = this.worldManager.getWeakPoint(rx, ry, directionStr);
-                        const horizontalWall = (directionStr === 'up' || directionStr === 'down');
-                        const cross = horizontalWall ? newHeadX : newHeadY;
-                        const isWeakPoint = !!wp && cross >= wp.start && cross <= wp.end;
-                        const breakableHere = isWeakPoint;
-
-                        if (isBroken && isWeakPoint) {
-                            // Walk through the smashed-open doorway — but only at the
-                            // central gap; the solid wall either side of it stays lethal.
-                            this.shiftScreen(dx, dy);
-                            shifted = true;
-                        } else if (breakableHere) {
-                            // Smash mechanic: base speed does nothing (non-lethal bonk);
-                            // sub-max cracks the wall but the impact RESTARTS you (keeping
-                            // some crack); ONLY a max-gear (gear 3) hit breaches cleanly.
-                            const dmg = Math.max(0, Math.min(3, this.gear));
-                            if (dmg <= 0) {
-                                // No momentum: bonk and hold position (non-lethal).
-                                if (!this._wallBonking) this.audio.playDenied();
-                                this._wallBonking = true;
-                                this.gear = 0;
-                                this.speed = this.baseSpeed;
-                                return; // do not move
-                            }
-                            if (this.gear >= 3) {
-                                // MAX SPEED: clean breach.
-                                this.worldManager.breakWall(rx, ry, directionStr);
-                                this.audio.playCrash();
-                                if (inHub) {
-                                    this.state.unlocked.wallBroken = true;
-                                    this.narrative.onWallBreak();
-                                }
-                                this.shiftScreen(dx, dy);
-                                shifted = true;
-                            } else {
-                                // SUB-SMASH: crack it (keep SOME, capped below the break
-                                // point) — but the impact destroys you. The Architect,
-                                // gloating in his log, reveals that max speed is the trick.
-                                this.worldManager.damageWall(rx, ry, directionStr, dmg, this.worldManager.wallBreakThreshold - 1);
-                                this.audio.playCrack();
-                                this.narrative.onSubSmash(inHub, this.state.unlocked);
-                                this.die('border');
-                                return;
-                            }
-                        } else {
-                            // Solid wall (non-weak-point, or a sealed Hub wall): lethal.
-                            this.die('border');
-                            return;
-                        }
-                    }
+                if (this.state.unlocked.borders
+                    && (newHeadX < 0 || newHeadX >= this.canvas.width || newHeadY < 0 || newHeadY >= this.canvas.height)) {
+                    // Crossing a room boundary: tug-back / doorway / wall-smash / lethal wall.
+                    const r = this.crossBorder(newHeadX, newHeadY);
+                    if (r.stop) return;
+                    shifted = r.shifted; dx = r.dx; dy = r.dy;
                 }
                 
                 const alive = this.snake.move(
@@ -814,224 +915,16 @@ export class GameEngine {
                 this.playAmbientAudio();
                 this.detectScannerSweep(); // Topology Scanner: sweeping a wall reveals hidden doors
 
-                let grewThisMove = false;
-                if (this.apple instanceof NPC) {
-                    if (this.snake.checkAppleCollision(this.apple)) {
-                        this.state.gameState = 'DIALOG';
-                        this.dialogManager.start(this.apple.dialog, () => {
-                            if (this.state.unlocked.biteProgress === 0) {
-                                this.state.unlocked.biteProgress = 1;
-                                this.state.gameState = 'PLAYING';
-                                // Bite stays as a grid NPC; the DEAL happens when you bump
-                                // into him (the 'bite' NPC handler below), not here.
-                                this.npcs.push(new NPC(this.apple.x, this.apple.y, this.gridSize, 'bite', []));
-                            }
-                            this.apple = this.spawnApple();
-                        });
-                        return;
-                    }
-                } else {
-                    if (this.snake.checkAppleCollision(this.apple)) {
-                        this.snake.grow(); // Logic handled by not shrinking
-                        const gain = this.state.upgrades.dataCompression ? 2 : 1;
-                        this.state.addScore(gain);
-                        this.audio.playBeep();
-                        this.apple = this.spawnApple();
-                        this.checkUnlocks();
-                        grewThisMove = true;
-                    }
-                }
-
-                // Cache's spare-data motes (Hub only): each is Data — it grows you and
-                // scores like an apple, it just doesn't respawn when eaten.
-                if (this.dataMotes && this.dataMotes.length) {
-                    const mi = this.dataMotes.findIndex(m => this.snake.head.x === m.x && this.snake.head.y === m.y);
-                    if (mi !== -1) {
-                        this.dataMotes.splice(mi, 1);
-                        this.snake.grow();
-                        const gain = this.state.upgrades.dataCompression ? 2 : 1;
-                        this.state.addScore(gain);
-                        this.audio.playBeep();
-                        this.checkUnlocks();
-                        grewThisMove = true;
-                    }
-                }
-
-                // No Data eaten this move -> normal tail handling (shrink, or extrude a
-                // folded block while un-folding after a bounce).
-                if (!grewThisMove) this.shrinkOrUnfold();
+                if (this.collectData()) return; // apple / spare-data motes + tail handling
                 
-                // Check glitch collisions
-                for (let i = 0; i < this.glitches.length; i++) {
-                    const g = this.glitches[i];
-                    if (this.snake.head.x === g.x && this.snake.head.y === g.y) {
-                        const damage = this.state.upgrades.reinforcedSegments ? 1 : 3;
-                        for (let d = 0; d < damage; d++) {
-                            if (this.snake.body.length > 1) {
-                                this.snake.shrink(this.hasBiteSegment); // never eat 2-Bit's protected segment
-                            } else {
-                                // Drained to nothing: consume the killer FIRST so die()'s
-                                // saveRoom doesn't bake it into the cell to camp respawns.
-                                this.glitches.splice(i, 1);
-                                this.die();
-                                return;
-                            }
-                        }
-                        this.state.score = Math.max(0, this.state.score - damage);
-                        this.refreshScore();  // HUD must reflect the drained Data now, not at the next apple
-                        this.changeGear(0);   // re-clamp gear to the lowered score's cap (no ghost max speed)
-                        this.audio.playCorruptHit(); // Corruption bites in — not a death
-                        this.glitches.splice(i, 1);
-                        break;
-                    }
-                }
+                if (this.hitGlitch()) return; // corruption drain (may kill)
                 
-                // Check persistent NPC collisions
-                for (const npc of this.npcs) {
-                    if (this.snake.head.x === npc.x && this.snake.head.y === npc.y) {
-                        if (npc.leaving) continue; // a fleeing NPC is non-interactive
-                        if (npc.id === 'bite') {
-                            if (this.state.unlocked.tailRider) {
-                                // Instantly pick him back up!
-                                this.npcs = this.npcs.filter(n => n.id !== 'bite');
-                                this.snake.body.push({ x: npc.x, y: npc.y });
-                                this.audio.playBeep();
-                            } else {
-                                // Progression dialogs when bumped on grid
-                                if (this.state.unlocked.biteProgress === 1) {
-                                    if (this.state.score < 30) {
-                                        this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start(TWO_BIT.needMoreMass, () => { this.state.gameState = 'PLAYING'; });
-                                    } else {
-                                        this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start(TWO_BIT.offer, () => {
-                                            // THE GAG: the only way through a dialog is SPACE, so
-                                            // FINISHING this one is complying. No separate confirm.
-                                            this.state.unlocked.biteProgress = 3;
-                                            this.state.unlocked.tailRider = true;
-                                            this.npcs = this.npcs.filter(n => n.id !== 'bite');
-                                            this.snake.body.push({ x: npc.x, y: npc.y });
-                                            this.state.gameState = 'DIALOG';
-                                            this.dialogManager.start(TWO_BIT.tutorial, () => { this.state.gameState = 'PLAYING'; });
-                                        });
-                                    }
-                                }
-                            }
-                        } else if (npc.id === 'gate') {
-                            this.state.gameState = 'DIALOG';
-                            let gateLines = npc.dialog;
-                            const gotMap = this.carriedModule === 'map' || this.state.unlocked.mapModule;
-                            if (gotMap) {
-                                gateLines = [GATE.contextGotMap, ...npc.dialog];
-                            } else if (this.state.unlocked.dennyMet) {
-                                gateLines = [GATE.contextDennyMet, ...npc.dialog];
-                            } else if (this.state.unlocked.dennySlipped) {
-                                gateLines = [GATE.contextDennySlipped, ...npc.dialog];
-                            }
-                            this.dialogManager.start(gateLines, () => {
-                                // Thread Suspension
-                                this.state.isSuspended = true;
-                                this.dialogManager.start(TWO_BIT.gateRescue, () => {
-                                    this.state.unlocked.pauseMenu = true;
-                                    this.state.gameState = 'PAUSED';
-                                    
-                                    this.onUnpauseCallback = () => {
-                                        this.state.isSuspended = false;
-                                        this.state.gameState = 'DIALOG';
-                                        this.dialogManager.start(GATE.override, () => {
-                                            this.state.gameState = 'PLAYING';
-                                            // Gate flees on-screen to the right doorway,
-                                            // smashes it open, and exits — you can follow.
-                                            const gate = this.npcs.find(n => n.id === 'gate');
-                                            if (gate) {
-                                                gate.leaving = true;
-                                                gate.exitDir = 'right';
-                                                // Grid-align the exit cell (canvas size need not be a
-                                                // multiple of gridSize) and aim for the actual weak point
-                                                // so the breach he opens is the one you can follow through.
-                                                gate.exitX = Math.floor((this.canvas.width - 1) / this.gridSize) * this.gridSize;
-                                                const rwp = this.worldManager.getWeakPoint(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 'right');
-                                                gate.exitY = rwp ? rwp.start + 2 * this.gridSize : Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
-                                            }
-                                        });
-                                    };
-                                });
-                            });
-                        } else if (npc.id === 'denny') {
-                            // The Last Line: apologetic, non-blocking. You route around him.
-                            this.state.gameState = 'DIALOG';
-                            this.state.unlocked.dennyMet = true;
-                            const firstMeet = !npc.met;
-                            npc.met = true;
-                            const lines = firstMeet ? npc.dialog : DENNY.whisper;
-                            const dropMap = firstMeet && !this.state.unlocked.dennyMapDropped && !this.state.unlocked.mapModule;
-                            this.dialogManager.start(lines, () => {
-                                this.state.gameState = 'PLAYING';
-                                if (dropMap) {
-                                    this.state.unlocked.dennyMapDropped = true;
-                                    // Denny drops his Sector Map beside him. 2-Bit chimes
-                                    // in via the dialogue WINDOW (his usual channel), not
-                                    // the Architect's terminal. Keep the drop ON-screen: if
-                                    // Denny tracked down to the bottom row, npc.y + g would
-                                    // be off-canvas — invisible and unreachable — and its
-                                    // one-shot flag would strand the whole map/minimap chain.
-                                    let mapY = npc.y + this.gridSize;
-                                    if (mapY >= this.canvas.height) mapY = npc.y - this.gridSize;
-                                    this.npcs.push(new NPC(npc.x, Math.max(0, mapY), this.gridSize, 'mapitem', []));
-                                    this.state.gameState = 'DIALOG';
-                                    this.dialogManager.start(TWO_BIT.dennyMapChime, () => { this.state.gameState = 'PLAYING'; });
-                                }
-                            });
-                        } else if (npc.id === 'mapitem') {
-                            // Pick up Denny's map: it rides your tail as a Module.
-                            this.npcs = this.npcs.filter(n => n.id !== 'mapitem');
-                            this.carriedModule = 'map';
-                            this.state.unlocked.moduleSlot = true;
-                            this.audio.playBeep();
-                            this.state.gameState = 'DIALOG';
-                            this.dialogManager.start(TWO_BIT.mapPickup, () => { this.state.gameState = 'PLAYING'; });
-                            return; // picked up — do not shrink
-                        } else if (npc.id === 'cache') {
-                            // The archivist's Hub apparition. All her staged dialogue and
-                            // effects live in talkToCache; after she speaks she fades out
-                            // (dismissCache) and re-materialises next Hub visit until she's
-                            // given you directions (stage 3), after which she stays home.
-                            this.state.gameState = 'DIALOG';
-                            this.talkToCache(npc);
-                            return;
-                        } else if (npc.id === 'cachehome') {
-                            // Cache in her cold-storage home. Coherent whether or not you did
-                            // the Hub CACHE puzzle first — and if you reached her without the
-                            // Save Function, she installs it here (see talkToCacheHome).
-                            this.state.gameState = 'DIALOG';
-                            this.talkToCacheHome(npc);
-                            return;
-                        } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza') {
-                            // Localhost welcome sign / townsfolk / Cadenza — read and move on.
-                            // No segment cost: a conversation shouldn't dock your mass.
-                            this.state.gameState = 'DIALOG';
-                            this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
-                            return;
-                        } else if (npc.id === 'shop') {
-                            // 2-Bit's Localhost stall: a rotating gossip topic (if any
-                            // are left) then the shop overlay.
-                            this.openBiteShop();
-                            return;
-                        }
-                        // A normal move is already length-neutral (unshift +1, tail-pop
-                        // −1). Bumping an NPC to talk (bite/gate/denny) must NOT shrink
-                        // again — that stray extra pop was "eating" a segment on every
-                        // chat. Re-attaching 2-Bit (the tailRider branch above) pushes his
-                        // cell and returns here, so he cleanly rejoins the tail.
-                        return;
-                    }
-                }
-                // Self-collision
-                const selfHit = this.snake.checkSelfCollision();
-                if (selfHit) {
-                    this.die('self');
-                    return;
-                }
+                // Persistent NPC collisions — dispatched via the per-character registry
+                // (this.npcHandlers / handleNpcCollisions). A bump resolves and stops the
+                // tick; talking is length-neutral, so nothing shrinks again here.
+                if (this.handleNpcCollisions()) return;
+
+                if (this.snake.checkSelfCollision()) { this.die('self'); return; }
             }
         }
     }
@@ -1163,6 +1056,131 @@ export class GameEngine {
         const npc = new NPC(x, y, g, 'cache', []);
         npc.alpha = 0; npc.appearing = true; // she coalesces out of the noise
         this.npcs.push(npc);
+    }
+
+    // Resolve a head-on-NPC bump via the registry (this.npcHandlers). Returns true if a
+    // (non-leaving) NPC occupied the head cell — the move-tick stops there this frame.
+    handleNpcCollisions() {
+        for (const npc of this.npcs) {
+            if (this.snake.head.x === npc.x && this.snake.head.y === npc.y) {
+                if (npc.leaving) continue; // a fleeing NPC is non-interactive
+                const handler = this.npcHandlers[npc.id];
+                if (handler) handler(npc);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // --- NPC bump handlers (registered in this.npcHandlers) -----------------------------
+
+    // 2-Bit on the grid: re-attach him instantly once he's your tail-rider, otherwise run
+    // the offer/tutorial progression (finishing the offer dialog with SPACE IS agreeing).
+    npcBite(npc) {
+        if (this.state.unlocked.tailRider) {
+            this.npcs = this.npcs.filter(n => n.id !== 'bite'); // instantly pick him back up
+            this.snake.body.push({ x: npc.x, y: npc.y });
+            this.audio.playBeep();
+        } else if (this.state.unlocked.biteProgress === 1) {
+            if (this.state.score < 30) {
+                this.state.gameState = 'DIALOG';
+                this.dialogManager.start(TWO_BIT.needMoreMass, () => { this.state.gameState = 'PLAYING'; });
+            } else {
+                this.state.gameState = 'DIALOG';
+                this.dialogManager.start(TWO_BIT.offer, () => {
+                    // THE GAG: the only way through a dialog is SPACE, so FINISHING this one
+                    // is complying. No separate confirm.
+                    this.state.unlocked.biteProgress = 3;
+                    this.state.unlocked.tailRider = true;
+                    this.npcs = this.npcs.filter(n => n.id !== 'bite');
+                    this.snake.body.push({ x: npc.x, y: npc.y });
+                    this.state.gameState = 'DIALOG';
+                    this.dialogManager.start(TWO_BIT.tutorial, () => { this.state.gameState = 'PLAYING'; });
+                });
+            }
+        }
+    }
+
+    // Gate: a context line (how you passed Denny) prepended to his intro, then the Thread
+    // Suspension cutscene — 2-Bit grants the Pause Menu, you break the hold, and Gate flees,
+    // smashing the east doorway open on his way out.
+    npcGate(npc) {
+        this.state.gameState = 'DIALOG';
+        let gateLines = npc.dialog;
+        const gotMap = this.carriedModule === 'map' || this.state.unlocked.mapModule;
+        if (gotMap) {
+            gateLines = [GATE.contextGotMap, ...npc.dialog];
+        } else if (this.state.unlocked.dennyMet) {
+            gateLines = [GATE.contextDennyMet, ...npc.dialog];
+        } else if (this.state.unlocked.dennySlipped) {
+            gateLines = [GATE.contextDennySlipped, ...npc.dialog];
+        }
+        this.dialogManager.start(gateLines, () => {
+            this.state.isSuspended = true; // Thread Suspension
+            this.dialogManager.start(TWO_BIT.gateRescue, () => {
+                this.state.unlocked.pauseMenu = true;
+                this.state.gameState = 'PAUSED';
+                this.onUnpauseCallback = () => {
+                    this.state.isSuspended = false;
+                    this.state.gameState = 'DIALOG';
+                    this.dialogManager.start(GATE.override, () => {
+                        this.state.gameState = 'PLAYING';
+                        // Gate flees on-screen to the right doorway, smashes it, and exits.
+                        const gate = this.npcs.find(n => n.id === 'gate');
+                        if (gate) {
+                            gate.leaving = true;
+                            gate.exitDir = 'right';
+                            // Grid-align the exit cell (canvas size need not be a multiple of
+                            // gridSize) and aim for the real weak point so the breach he opens
+                            // is the one you can follow through.
+                            gate.exitX = Math.floor((this.canvas.width - 1) / this.gridSize) * this.gridSize;
+                            const rwp = this.worldManager.getWeakPoint(this.worldManager.currentRoomX, this.worldManager.currentRoomY, 'right');
+                            gate.exitY = rwp ? rwp.start + 2 * this.gridSize : Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+                        }
+                    });
+                };
+            });
+        });
+    }
+
+    // Denny: apologetic, non-blocking. First meet drops his Sector Map beside him (2-Bit
+    // chimes in); after that he just waves you through.
+    npcDenny(npc) {
+        this.state.gameState = 'DIALOG';
+        this.state.unlocked.dennyMet = true;
+        const firstMeet = !npc.met;
+        npc.met = true;
+        const lines = firstMeet ? npc.dialog : DENNY.whisper;
+        const dropMap = firstMeet && !this.state.unlocked.dennyMapDropped && !this.state.unlocked.mapModule;
+        this.dialogManager.start(lines, () => {
+            this.state.gameState = 'PLAYING';
+            if (dropMap) {
+                this.state.unlocked.dennyMapDropped = true;
+                // Keep the drop ON-screen: if Denny tracked to the bottom row, npc.y + g
+                // would be off-canvas — invisible/unreachable — stranding the whole map chain.
+                let mapY = npc.y + this.gridSize;
+                if (mapY >= this.canvas.height) mapY = npc.y - this.gridSize;
+                this.npcs.push(new NPC(npc.x, Math.max(0, mapY), this.gridSize, 'mapitem', []));
+                this.state.gameState = 'DIALOG';
+                this.dialogManager.start(TWO_BIT.dennyMapChime, () => { this.state.gameState = 'PLAYING'; });
+            }
+        });
+    }
+
+    // Pick up Denny's map: it rides your tail as a Module (unlocks the Module Slot).
+    npcMapItem(npc) {
+        this.npcs = this.npcs.filter(n => n.id !== 'mapitem');
+        this.carriedModule = 'map';
+        this.state.unlocked.moduleSlot = true;
+        this.audio.playBeep();
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(TWO_BIT.mapPickup, () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // Localhost welcome sign / townsfolk / Cadenza: read their lines and move on, no cost.
+    npcSign(npc) {
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
     }
 
     // Cache's staged Hub conversation. Like 2-Bit, she offers no real choice — finishing
