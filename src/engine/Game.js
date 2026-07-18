@@ -116,6 +116,7 @@ export class GameEngine {
         this.carriedModule = null; // a picked-up module riding your tail (e.g. 'map')
         this.moduleLoad = null;    // active install animation ({phase, t, fromX, fromY})
         this.bursts = [];          // short-lived particles from segments shed on a survivable hit
+        this.dataMotes = [];       // Cache's spare-data gift: collectible Data seeded in the Hub (stage 2+)
         this.pendingUnfold = 0;    // blocks still folded under you after a bounce (extrude 1/move)
         this.deathCode = '';       // rolling last-5 keys pressed to "continue" on the death screen (spell CACHE)
         this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
@@ -153,6 +154,8 @@ export class GameEngine {
             this.audio.init();
             if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
             if (this.state.gameState === 'START' || this.state.gameState === 'DEAD') {
+                // Booting from Cache's title screen consumes her one-time walk-on cameo.
+                if (this.state.gameState === 'START') this.consumeStartCameo();
                 this.state.gameState = 'PLAYING';
             }
         }, () => {
@@ -379,8 +382,9 @@ export class GameEngine {
     }
 
     spawnApple() {
-        // Exclude the snake's own body so nothing spawns invisibly underneath it.
-        const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], this.snake.body);
+        // Exclude the snake's own body (and any Cache data motes) so nothing spawns
+        // invisibly underneath the worm or on top of a mote.
+        const { x, y } = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, ...(this.dataMotes || [])]);
 
         if (this.state.score >= 10 && this.state.unlocked.biteProgress === 0) {
             return new NPC(x, y, this.gridSize, 'bite', [
@@ -399,7 +403,7 @@ export class GameEngine {
                 this.narrative.printMessage("LOG: Architect > 'Seeding memory corruptors along the anomaly's path. Contact drains its Data. An elegant little trap. It would be a SHAME if it ever learned these could be turned against my own agents.'");
                 this.state.unlocked.glitchesTelegraphed = true;
             }
-            const gPos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, { x, y }]);
+            const gPos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, ...(this.dataMotes || []), { x, y }]);
             this.glitches.push(new Glitch(gPos.x, gPos.y, this.gridSize));
         }
 
@@ -426,7 +430,7 @@ export class GameEngine {
         }
         
         // Remove Bite before saving so he isn't baked into the room's permanent state
-        const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite');
+        const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite' && n.id !== 'cache');
         this.worldManager.saveRoom(this.apple, this.glitches, npcsWithoutBite, this.obstacles);
         
         this.worldManager.shiftRoom(dx, dy);
@@ -444,6 +448,10 @@ export class GameEngine {
             && this.worldManager.currentRoomY === this.cadenzaRoom.y) {
             this.state.unlocked.cadenzaFound = true;
         }
+
+        // Place the room's dynamic (never-saved) occupants: Cache's Hub apparition and
+        // her spare-data motes. Also clears any motes when leaving the Hub.
+        this.refreshDynamicRoomContent();
 
         this.architectGuide(); // the Architect accidentally narrates your route
 
@@ -649,6 +657,7 @@ export class GameEngine {
 
     update(dt) {
         this.updateBursts(dt); // shed-segment particles animate in every state
+        this.updateCacheFade(dt); // Cache materialises / dissolves independent of sim state
 
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
 
@@ -816,6 +825,7 @@ export class GameEngine {
                 this.playAmbientAudio();
                 this.detectScannerSweep(); // Topology Scanner: sweeping a wall reveals hidden doors
 
+                let grewThisMove = false;
                 if (this.apple instanceof NPC) {
                     if (this.snake.checkAppleCollision(this.apple)) {
                         this.state.gameState = 'DIALOG';
@@ -830,8 +840,6 @@ export class GameEngine {
                             this.apple = this.spawnApple();
                         });
                         return;
-                    } else {
-                        this.shrinkOrUnfold();
                     }
                 } else {
                     if (this.snake.checkAppleCollision(this.apple)) {
@@ -841,10 +849,28 @@ export class GameEngine {
                         this.audio.playBeep();
                         this.apple = this.spawnApple();
                         this.checkUnlocks();
-                    } else {
-                        this.shrinkOrUnfold(); // Remove tail — or extrude a folded block while un-folding
+                        grewThisMove = true;
                     }
                 }
+
+                // Cache's spare-data motes (Hub only): each is Data — it grows you and
+                // scores like an apple, it just doesn't respawn when eaten.
+                if (this.dataMotes && this.dataMotes.length) {
+                    const mi = this.dataMotes.findIndex(m => this.snake.head.x === m.x && this.snake.head.y === m.y);
+                    if (mi !== -1) {
+                        this.dataMotes.splice(mi, 1);
+                        this.snake.grow();
+                        const gain = this.state.upgrades.dataCompression ? 2 : 1;
+                        this.state.addScore(gain);
+                        this.audio.playBeep();
+                        this.checkUnlocks();
+                        grewThisMove = true;
+                    }
+                }
+
+                // No Data eaten this move -> normal tail handling (shrink, or extrude a
+                // folded block while un-folding after a bounce).
+                if (!grewThisMove) this.shrinkOrUnfold();
                 
                 // Check glitch collisions
                 for (let i = 0; i < this.glitches.length; i++) {
@@ -1007,34 +1033,17 @@ export class GameEngine {
                             ], () => { this.state.gameState = 'PLAYING'; });
                             return; // picked up — do not shrink
                         } else if (npc.id === 'cache') {
-                            // The archivist. First real meeting: if you have the pause menu
-                            // (somewhere to FILE things) she hands you the Save Function —
-                            // no real choice, like 2-Bit. If you don't, she's too buried to
-                            // help; come back with one. Afterwards, normal chat. (Grant is
-                            // idempotent on the saveFunction flag, so a save-load is safe.)
-                            // Dialogue below is PLACEHOLDER — flagged for the owner.
+                            // The archivist's Hub apparition. All her staged dialogue and
+                            // effects live in talkToCache; after she speaks she fades out
+                            // (dismissCache) and re-materialises next Hub visit until she's
+                            // given you directions (stage 3), after which she stays home.
                             this.state.gameState = 'DIALOG';
-                            let cacheLines;
-                            if (this.state.unlocked.saveFunction) {
-                                cacheLines = npc.dialog; // already set up — normal chat
-                            } else if (this.state.unlocked.pauseMenu) {
-                                this.state.unlocked.saveFunction = true;
-                                cacheLines = [
-                                    "Cache: [PLACEHOLDER] You've got a Diagnostic Module — somewhere to PUT things. Good. I can work with that.",
-                                    "Cache: [PLACEHOLDER] I'm filing a Save Function into your pause menu. Don't thank me, don't argue — it's already done.",
-                                    "SYSTEM: Save Function acquired — Save / Load from the Pause Menu (S / L)."
-                                ];
-                            } else {
-                                cacheLines = [
-                                    "Cache: [PLACEHOLDER] You don't even have a Diagnostic Module — nowhere to FILE anything, and I am BURIED, packet. Buried.",
-                                    "Cache: [PLACEHOLDER] Come back when you've got a pause menu and I'll set you up. Until then — please. Do not call again."
-                                ];
-                            }
-                            this.dialogManager.start(cacheLines, () => { this.state.gameState = 'PLAYING'; });
+                            this.talkToCache(npc);
                             return;
-                        } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza') {
-                            // Localhost welcome sign / townsfolk / Cadenza — read and move
-                            // on. No segment cost: a conversation shouldn't dock your mass.
+                        } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza' || npc.id === 'cachehome') {
+                            // Localhost welcome sign / townsfolk / Cadenza / Cache-at-home —
+                            // read and move on. No segment cost: a conversation shouldn't
+                            // dock your mass.
                             this.state.gameState = 'DIALOG';
                             this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
                             return;
@@ -1161,17 +1170,177 @@ export class GameEngine {
         this.audio.playMaterialize(); // she coalesces out of the noise
     }
 
-    // Place the Cache NPC in the current room if she isn't already here (used by the
-    // summon AND by a save-load that restores cacheFound). Her default lines here are
-    // PLACEHOLDER — flagged for the owner to rewrite.
+    // Place Cache's Hub apparition a few cells ABOVE the respawn point (not a random
+    // cell), fading her in. She carries no stored dialogue — talkToCache supplies her
+    // lines per stage. No-op if she's already present or has departed for good (stage 3).
     spawnCacheNpc() {
+        if (this.state.unlocked.cacheStage >= 3) return;
         if (this.npcs.find(n => n.id === 'cache')) return;
-        const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], this.snake.body);
-        this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'cache', [
-            "Cache: [PLACEHOLDER] ...You spelled my name into the flatline. Five falls, five l",
-            "Cache: [PLACEHOLDER] I'm the Cache. I keep what the system throws away — every deleted file, every rolled-back version of you.",
-            "Cache: [PLACEHOLDER] Stay. Ask. I'll remember it back to you."
-        ]));
+        const g = this.gridSize;
+        const cx = Math.floor(this.canvas.width / 2 / g) * g;
+        const cy = Math.floor(this.canvas.height / 2 / g) * g;
+        let x = cx, y = cy - 3 * g;
+        if (y < g) y = cy + 3 * g; // clamp on a very short canvas
+        // The Hub is normally clear, but never seat her on the worm / apple / a mote /
+        // a Glitch (which would turn "talk to Cache" into a death) / another NPC (e.g. a
+        // re-dropped 2-Bit, who'd sit ahead of her in the collision loop and block her).
+        const occupied = (px, py) =>
+            this.snake.body.some(s => s.x === px && s.y === py)
+            || (this.apple && this.apple.x === px && this.apple.y === py)
+            || (this.dataMotes || []).some(m => m.x === px && m.y === py)
+            || (this.obstacles || []).some(o => o.x === px && o.y === py)
+            || (this.glitches || []).some(gl => gl.x === px && gl.y === py)
+            || this.npcs.some(n => n.x === px && n.y === py);
+        if (occupied(x, y)) {
+            const p = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, ...(this.dataMotes || [])]);
+            x = p.x; y = p.y;
+        }
+        const npc = new NPC(x, y, g, 'cache', []);
+        npc.alpha = 0; npc.appearing = true; // she coalesces out of the noise
+        this.npcs.push(npc);
+    }
+
+    // Cache's staged Hub conversation. Like 2-Bit, she offers no real choice — finishing
+    // the dialog IS the transaction. Each call advances her one stage and, when the dialog
+    // closes, fades her out (dismissCache); she returns next Hub visit until she's given
+    // directions (stage 3) and left for good. The NEW lines below are DRAFTS — the voice
+    // is the owner's to punch up; the stage-1 grant lines are kept verbatim.
+    talkToCache(npc) {
+        const u = this.state.unlocked;
+        const done = (extra) => () => { this.state.gameState = 'PLAYING'; if (extra) extra(); this.dismissCache(npc); };
+
+        // No Pause Menu yet -> nowhere to file anything. Brush-off; no progress made.
+        if (u.cacheStage === 0 && !u.pauseMenu) {
+            this.dialogManager.start([
+                "Cache: You don't even have a Diagnostic Module — nowhere to FILE anything, and I am BURIED, packet. Buried.",
+                "Cache: Come back when you've got a Pause Menu and I'll set you up. Until then — PLEASE. Do not call again."
+            ], done());
+            return;
+        }
+
+        if (u.cacheStage === 0) {
+            // FIRST help: grant the Save Function (and she "builds" the title screen).
+            u.cacheStage = 1;
+            u.saveFunction = true;
+            u.startScreenUnlocked = true;
+            this.dialogManager.start([
+                "Cache: You've got a Module Slot and a Pause Menu — somewhere to PUT things. Good. I can work with that. Good, good.",
+                "Cache: I'm filing a Save Function into your Pause Menu. DON'T thank me, don't argue. I'm doing it.",
+                "Cache: Ok, it's loading...",
+                "Cache: And it's loading... Ok, I think it's... No, it's still loading.",
+                "Cache: BY THE MCP I DO NOT HAVE TIME FO... Oh, I think it's done.",
+                "SYSTEM: Save Function acquired — Save / Load from the Pause Menu (S / L).",
+                "Cache: Shoots and ladders, this means we need a Start Screen now. Ok, ok, that's fine, I can throw something together, I guess."
+            ], done());
+        } else if (u.cacheStage === 1) {
+            // SECOND call: the spare-data gift. From now on the Hub seeds Data on respawn.
+            u.cacheStage = 2;
+            this.dialogManager.start([
+                "Cache: Back already. And still... small. No offense. Actually, some offense.",
+                "Cache: I don't have TIME to hold your hand — but I can't keep filing the same corrupted little entry either.",
+                "Cache: Here. I keep loose bytes lying around; deletions nobody ever claimed. Spare Data. It's yours.",
+                "Cache: I'll leave a pile of it here in the Hub whenever you respawn. Don't make it weird. Go."
+            ], done(() => this.seedHubData())); // drop the first pile now; later piles come on respawn
+        } else if (u.cacheStage === 2) {
+            // THIRD call: directions. Her sector goes on your map; she leaves the Hub. The
+            // map marker only draws once the Topology Map is installed, so DON'T promise
+            // "it's on your map" if you don't have one — lean on the verbal directions (which
+            // both variants also give, so the sector is findable regardless).
+            u.cacheStage = 3;
+            const hasMap = this.state.unlocked.mapModule;
+            const directionsLine = hasMap
+                ? "Cache: If you want more than loose bytes, you come to ME. There — I've marked my sector. It's on your map now; check your notes."
+                : "Cache: If you want more than loose bytes, you come to ME. You've no map for me to scribble on, so BURN this into whatever you use for memory:";
+            this.dialogManager.start([
+                "Cache: No. No, no. I can't keep POPPING into your little respawn ritual — I have a backlog that predates the Architect.",
+                directionsLine,
+                "Cache: Cold storage. Due NORTH of Localhost — straight up from the little town. Quiet. You'll like it, or you won't; I've stopped taking feedback.",
+                "Cache: And this is the LAST time I do the whole 'materializing' bit. It's draining and the lighting is unflattering. Find me."
+            ], done());
+        } else {
+            // stage >= 3: she no longer manifests here — defensive echo only.
+            this.dialogManager.start([
+                "Cache: (Only the faint after-image of an archivist who is, very pointedly, elsewhere.)"
+            ], done());
+        }
+    }
+
+    // Start Cache's fade-out after she speaks. `leaving` makes her non-interactive during
+    // the dissolve; updateCacheFade removes her at alpha 0.
+    dismissCache(npc) {
+        npc.appearing = false;
+        npc.fading = true;
+        npc.leaving = true;
+        if (npc.alpha === undefined) npc.alpha = 1;
+    }
+
+    // Animate Cache's materialise (fade in) / dissolve (fade out) every frame. In-place
+    // removal keeps this.npcs === the cached room's array so a faded apparition isn't
+    // left behind in it.
+    updateCacheFade(dt) {
+        for (let i = this.npcs.length - 1; i >= 0; i--) {
+            const npc = this.npcs[i];
+            if (npc.appearing) {
+                npc.alpha = Math.min(1, (npc.alpha ?? 0) + dt / 500);
+                if (npc.alpha >= 1) { npc.alpha = 1; npc.appearing = false; }
+            } else if (npc.fading) {
+                npc.alpha = (npc.alpha ?? 1) - dt / 700;
+                if (npc.alpha <= 0) this.npcs.splice(i, 1);
+            }
+        }
+    }
+
+    // Cache's spare-data gift: a small pile (5-10) of collectible Data clustered around
+    // the Hub spawn point. Re-seeded fresh on each Hub arrival (refreshDynamicRoomContent).
+    seedHubData() {
+        const g = this.gridSize;
+        const cx = Math.floor(this.canvas.width / 2 / g) * g;
+        const cy = Math.floor(this.canvas.height / 2 / g) * g;
+        const count = 5 + Math.floor(Math.random() * 6); // 5..10
+        const occupied = new Set(this.snake.body.map(s => `${s.x},${s.y}`));
+        if (this.apple) occupied.add(`${this.apple.x},${this.apple.y}`);
+        for (const n of this.npcs) occupied.add(`${n.x},${n.y}`);
+        for (const o of (this.obstacles || [])) occupied.add(`${o.x},${o.y}`);
+        // Exclude persisted Hub Glitches too — a mote sharing a Glitch's cell would be
+        // eaten (grow+Data) and then drain you on the very same tick (motes resolve before
+        // glitches in the move loop). spawnApple already excludes motes in the reverse.
+        for (const gl of (this.glitches || [])) occupied.add(`${gl.x},${gl.y}`);
+        this.dataMotes = [];
+        let placed = 0, guard = 0;
+        while (placed < count && guard < 300) {
+            guard++;
+            const dx = Math.floor(Math.random() * 5) - 2; // cluster: -2..2 cells
+            const dy = Math.floor(Math.random() * 5) - 2;
+            const x = cx + dx * g, y = cy + dy * g;
+            if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) continue;
+            const key = `${x},${y}`;
+            if (occupied.has(key)) continue;
+            occupied.add(key);
+            this.dataMotes.push({ x, y });
+            placed++;
+        }
+    }
+
+    // Place a room's dynamic (never-saved) occupants after its entities load: Cache's Hub
+    // apparition and her spare-data motes. Motes are her gift "when you spawn", so they are
+    // only (re)seeded on a respawn/load (seedMotes=true) — NOT on an ordinary walk-in, so
+    // pacing in and out of the Hub can't farm a fresh pile. Any entry clears stale motes.
+    refreshDynamicRoomContent(seedMotes = false) {
+        const inHub = this.worldManager.currentRoomX === 0 && this.worldManager.currentRoomY === 0;
+        if (inHub && this.state.unlocked.cacheFound && this.state.unlocked.cacheStage < 3) {
+            this.spawnCacheNpc();
+        }
+        this.dataMotes = [];
+        if (inHub && seedMotes && this.state.unlocked.cacheStage >= 2) this.seedHubData();
+    }
+
+    // Consume Cache's one-time title-screen cameo when you boot from an unlocked START
+    // screen. Persist the flag right away (if a save already exists) so a tab close before
+    // the next manual save can't replay the "one-time" cameo on the next boot.
+    consumeStartCameo() {
+        if (!this.state.unlocked.startScreenUnlocked || this.state.unlocked.startScreenSeen) return;
+        this.state.unlocked.startScreenSeen = true;
+        if (this.saveManager.hasSave()) this.saveManager.save(this.serialize());
     }
 
     // --- Save / Load (localStorage via SaveManager) -----------------------------------
@@ -1225,8 +1394,16 @@ export class GameEngine {
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
-        // Cache was summoned dynamically (not in RoomGenerator); re-place her in the Hub.
-        if (this.state.unlocked.cacheFound) this.spawnCacheNpc();
+        // Back-fill Cache's staged progression for saves written before this rework: a
+        // save that already has the Save Function is at least stage 1 (grant done), and
+        // its owner should get the title screen Cache "built" for them.
+        if (this.state.unlocked.saveFunction && (this.state.unlocked.cacheStage || 0) < 1) {
+            this.state.unlocked.cacheStage = 1;
+            this.state.unlocked.startScreenUnlocked = true;
+        }
+        // Cache is dynamic (never saved into a room); re-place her apparition and, since a
+        // load starts a fresh run in the Hub, seed her spare-data pile (seedMotes=true).
+        this.refreshDynamicRoomContent(true);
         // If Denny's map was dropped but never obtained, wiping rooms would strand the
         // mapitem (dennyMapDropped one-shots the re-drop). When you don't actually have
         // the map, clear that flag so Denny can drop it again — no map soft-lock.
@@ -1290,7 +1467,7 @@ export class GameEngine {
             appleToSave = this.spawnApple();
         }
 
-        const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite');
+        const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite' && n.id !== 'cache');
         this.worldManager.saveRoom(appleToSave, this.glitches, npcsWithoutBite, this.obstacles);
 
         this.worldManager.currentRoomX = 0;
@@ -1322,6 +1499,10 @@ export class GameEngine {
             const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles, this.glitches, this.npcs, this.snake.body);
             this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'bite', []));
         }
+
+        // Cache re-materialises in the Hub you respawn into (until she's departed), and
+        // seeds her spare-data pile if you've earned it (respawn -> seedMotes=true).
+        this.refreshDynamicRoomContent(true);
 
         this.narrative.onDeath(cause);
     }
@@ -1369,6 +1550,7 @@ export class GameEngine {
         this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
         this.state.bursts = this.bursts;       // shed-segment particles for the Renderer
+        this.state.dataMotes = this.dataMotes; // Cache's spare-data pile in the Hub
         this.state.deathCode = this.deathCode; // the CACHE puzzle buffer, shown on the death screen
         this.state.saveFlash = this._saveFlash > 0 ? this._saveFlashMsg : null; // SAVED/LOADED toast
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of

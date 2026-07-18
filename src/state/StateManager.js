@@ -15,7 +15,13 @@ export class StateManager {
             tailRider: false,
             cadenzaFound: false, // set once Cadenza's sector is reached — silences her homing beacon
             cacheFound: false,  // set once you've spelled CACHE across death screens — she manifests in the Hub
-            saveFunction: false // Cache grants this (if you have the pause menu) — unlocks Save/Load
+            saveFunction: false, // Cache grants this (if you have the pause menu) — unlocks Save/Load
+            // Cache's staged Hub conversation: 0 = not yet helped, 1 = Save Function granted,
+            // 2 = spare-data gift given (Hub seeds data on respawn), 3 = directions given
+            // (her sector is on your map and she stops manifesting in the Hub).
+            cacheStage: 0,
+            startScreenUnlocked: false, // Cache builds the title screen when she grants Save (stage 1)
+            startScreenSeen: false      // her one-time title-screen walk-on cameo has played
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data

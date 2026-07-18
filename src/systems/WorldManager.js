@@ -31,8 +31,8 @@ export class WorldManager {
         // character has a home) and its route auto-generates.
         this.landmarks = {
             cadenza: { x: 8, y: 3 }, // the sealed singer, southeast of Localhost
+            cache: { x: 5, y: -4 },  // the archivist's cold storage, due north of Localhost
             // nibble: { x: ?, y: ? }, // black-market stall, deep Wilds — add when built
-            // cache:  { x: ?, y: ? }, // the lost archivist — add when built
         };
         for (const room of Object.values(this.landmarks)) {
             this._carvePath(5, 0, room.x, room.y);

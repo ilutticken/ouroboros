@@ -143,12 +143,28 @@ export class Renderer {
         this.ctx.fillStyle = '#ff0055';
         this.ctx.shadowColor = '#ff0055';
         this.ctx.fillRect(apple.x + 2, apple.y + 2, this.gridSize - 4, this.gridSize - 4);
-        
+
+        // Cache's spare-data motes (Hub only): small Data pips with a cold archival glow,
+        // so they read as HERS and as smaller than the main apple.
+        if (state.dataMotes && state.dataMotes.length) {
+            const g = this.gridSize;
+            const pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 300));
+            for (const m of state.dataMotes) {
+                this.ctx.fillStyle = '#ff2f6b';
+                this.ctx.shadowColor = '#cfd8ff';
+                this.ctx.shadowBlur = 6 * pulse;
+                this.ctx.fillRect(m.x + 6, m.y + 6, g - 12, g - 12);
+            }
+            this.ctx.shadowBlur = 0;
+        }
+
         // Draw persistent NPCs
         if (npcs) {
             for (const npc of npcs) {
                 // Re-assert the frame glow each iteration (drawNpcFeatures zeroes it).
                 this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+                // Cache's apparition materialises/dissolves — honour her alpha (others = 1).
+                this.ctx.globalAlpha = (npc.alpha === undefined) ? 1 : Math.max(0, Math.min(1, npc.alpha));
                 if (npc.id === 'gate') {
                     this.ctx.fillStyle = '#0088ff';
                     this.ctx.shadowColor = '#0088ff';
@@ -167,7 +183,7 @@ export class Renderer {
                 } else if (npc.id === 'cadenza') {
                     this.ctx.fillStyle = '#ff66cc'; // the diva — a warm stage-light pink
                     this.ctx.shadowColor = '#ff66cc';
-                } else if (npc.id === 'cache') {
+                } else if (npc.id === 'cache' || npc.id === 'cachehome') {
                     this.ctx.fillStyle = '#cfd8ff'; // the archivist — a pale, cold memory-blue
                     this.ctx.shadowColor = '#cfd8ff';
                 } else {
@@ -176,6 +192,7 @@ export class Renderer {
                 }
                 this.ctx.fillRect(npc.x + 2, npc.y + 2, this.gridSize - 4, this.gridSize - 4);
                 this.drawNpcFeatures(npc); // little 8-bit face/glyph so they aren't plain dots
+                this.ctx.globalAlpha = 1; // reset after a possibly-faded apparition
             }
         }
         
@@ -316,15 +333,24 @@ export class Renderer {
             }
         }
 
-        // Boot: a faint blinking prompt so a player staring at a lone square in the void
-        // knows the system is waiting on a keypress. Kept small/dim to preserve the
-        // stark A-Dark-Room opening.
-        if (state.gameState === 'START' && Math.floor(Date.now() / 600) % 2 === 0) {
-            this.ctx.shadowBlur = 0;
-            this.ctx.fillStyle = 'rgba(0, 255, 204, 0.5)';
-            this.ctx.font = '9px "Press Start 2P", monospace';
-            this.ctx.textAlign = 'center';
-            this.ctx.fillText('press any key', this.canvas.width / 2, this.canvas.height - 28);
+        // Boot / title. Before Cache "builds" it (startScreenUnlocked) the boot screen is
+        // the bare A-Dark-Room void with a faint prompt — preserving the stark cold open.
+        // After, it's her placeholder title treatment, with a one-time walk-on cameo.
+        if (state.gameState === 'START') {
+            if (state.unlocked && state.unlocked.startScreenUnlocked) {
+                this.drawStartScreen(state);
+            } else {
+                this._startCameoT0 = null;
+                if (Math.floor(Date.now() / 600) % 2 === 0) {
+                    this.ctx.shadowBlur = 0;
+                    this.ctx.fillStyle = 'rgba(0, 255, 204, 0.5)';
+                    this.ctx.font = '9px "Press Start 2P", monospace';
+                    this.ctx.textAlign = 'center';
+                    this.ctx.fillText('press any key', this.canvas.width / 2, this.canvas.height - 28);
+                }
+            }
+        } else {
+            this._startCameoT0 = null; // reset the walk-on latch once we leave the title
         }
     }
 
@@ -458,8 +484,13 @@ export class Renderer {
 
         const visited = new Set(roomKeys);
         const coords = roomKeys.map(k => k.split(',').map(Number));
+        // Cache marks her sector on your map at the end of her Hub questline. Fold it into
+        // the bounds (even if unvisited) so the marker sits in the right direction.
+        const cacheLm = worldManager.landmarks && worldManager.landmarks.cache;
+        const showCache = !!cacheLm && state.unlocked && state.unlocked.cacheStage >= 3;
+        const boundsCoords = showCache ? [...coords, [cacheLm.x, cacheLm.y]] : coords;
         let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        for (const [x, y] of coords) {
+        for (const [x, y] of boundsCoords) {
             minX = Math.min(minX, x); maxX = Math.max(maxX, x);
             minY = Math.min(minY, y); maxY = Math.max(maxY, y);
         }
@@ -517,5 +548,88 @@ export class Renderer {
         this.ctx.lineWidth = 1;
         const ring = dot + 6; // larger than the gold safe-zone node so it truly encircles
         this.ctx.strokeRect(px - ring / 2, py - ring / 2, ring, ring);
+
+        // Cache's marked sector — a blinking archival-blue pip with a small 'C' tag, even
+        // if you haven't been there yet. "You have a place for her in your notes."
+        if (showCache) {
+            const mx = gx(cacheLm.x), my = gy(cacheLm.y);
+            const blink = 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 400));
+            const d = dot + 2;
+            this.ctx.fillStyle = `rgba(207, 216, 255, ${0.45 + 0.55 * blink})`;
+            this.ctx.shadowColor = '#cfd8ff';
+            this.ctx.shadowBlur = 6 * blink;
+            this.ctx.fillRect(mx - d / 2, my - d / 2, d, d);
+            this.ctx.shadowBlur = 0;
+            this.ctx.fillStyle = '#cfd8ff';
+            this.ctx.font = '6px "Press Start 2P", monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('C', mx, my - d);
+        }
+    }
+
+    // Cache's hastily-assembled placeholder title screen (shown on START once she's
+    // granted the Save Function and "thrown one together").
+    drawStartScreen(state) {
+        const W = this.canvas.width, H = this.canvas.height, midX = W / 2;
+        this.ctx.shadowBlur = 0;
+        this.ctx.fillStyle = 'rgba(3, 6, 10, 0.88)';
+        this.ctx.fillRect(0, 0, W, H);
+
+        // Wordmark — sized down to fit narrow canvases.
+        const fs = Math.max(14, Math.min(34, Math.floor(W / 11)));
+        this.ctx.textAlign = 'center';
+        this.ctx.fillStyle = '#cfd8ff';
+        this.ctx.shadowColor = '#8f9dff';
+        this.ctx.shadowBlur = 16;
+        this.ctx.font = `${fs}px "Press Start 2P", monospace`;
+        this.ctx.fillText('0r0b0r0u5', midX, H * 0.34);
+        this.ctx.shadowBlur = 0;
+        this.ctx.fillStyle = '#5a6b8c';
+        this.ctx.font = '8px "Press Start 2P", monospace';
+        this.ctx.fillText('[ placeholder title // pending replacement ]', midX, H * 0.34 + fs * 0.8);
+
+        // First boot after she builds it: Cache walks on and disclaims her handiwork.
+        if (state.unlocked && !state.unlocked.startScreenSeen) this.drawStartCacheCameo(H, midX);
+
+        if (Math.floor(Date.now() / 500) % 2 === 0) {
+            this.ctx.fillStyle = '#00ffcc';
+            this.ctx.font = '10px "Press Start 2P", monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('press any key to start', midX, H - 40);
+        }
+    }
+
+    // Cache slides in from the left and leaves a self-deprecating note about the name.
+    drawStartCacheCameo(H, midX) {
+        const g = this.gridSize;
+        if (this._startCameoT0 == null) this._startCameoT0 = Date.now();
+        const p = Math.max(0, Math.min(1, (Date.now() - this._startCameoT0) / 1200));
+        const restX = Math.max(g, midX - 160);
+        const x = -g + (restX + g) * (p * (2 - p)); // easeOut slide-in
+        const y = H * 0.52 + Math.sin(Date.now() / 200) * 2; // tiny idle bob
+
+        this.ctx.shadowColor = '#cfd8ff';
+        this.ctx.shadowBlur = 10;
+        this.ctx.fillStyle = '#cfd8ff';
+        this.ctx.fillRect(x, y, g, g);
+        this.drawEyes(x, y, '#1a2233');
+        this.ctx.shadowBlur = 0;
+
+        if (p > 0.85) {
+            this.ctx.textAlign = 'left';
+            this.ctx.fillStyle = '#aeb9dd';
+            this.ctx.font = '7px "Press Start 2P", monospace';
+            const lines = [
+                "Cache: Best I could do on short notice.",
+                "It's called 0r0b0r0u5. Placeholder,",
+                "obviously — it'll get replaced.",
+                "You can't even touch your own tail, let",
+                "alone EAT it. So the name's a joke, I guess.",
+            ];
+            let ly = y - 10 - (lines.length - 1) * 11;
+            if (ly < 12) ly = 12;
+            for (const line of lines) { this.ctx.fillText(line, x + g + 8, ly); ly += 11; }
+            this.ctx.textAlign = 'center';
+        }
     }
 }

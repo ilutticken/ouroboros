@@ -1840,3 +1840,214 @@ describe('Death redo — Crumple Buffer: die vs shed-fold-bounce', () => {
         expect(game.bursts.length).toBe(0);
     });
 });
+
+describe('Cache — staged Hub questline', () => {
+    beforeEach(mountDom);
+
+    // A game with Cache found, in the Hub, and dialog that completes instantly so we can
+    // observe a whole staged conversation (grant / gift / directions) in one call.
+    function cacheGame() {
+        const game = newGame();
+        game.dialogManager.start = (lines, onComplete) => { game._lastLines = lines; if (onComplete) onComplete(); };
+        game.worldManager.currentRoomX = 0;
+        game.worldManager.currentRoomY = 0;
+        game.state.unlocked.cacheFound = true;
+        game.state.unlocked.cacheStage = 0;
+        return game;
+    }
+    function freshCacheNpc(game) {
+        const npc = new NPC(200, 140, 20, 'cache', []);
+        game.npcs = [npc];
+        return npc;
+    }
+
+    it('stage 0 WITH a Pause Menu grants Save + unlocks the Start Screen (-> stage 1)', () => {
+        const game = cacheGame();
+        game.state.unlocked.pauseMenu = true;
+        game.talkToCache(freshCacheNpc(game));
+        expect(game.state.unlocked.saveFunction).toBe(true);
+        expect(game.state.unlocked.startScreenUnlocked).toBe(true);
+        expect(game.state.unlocked.cacheStage).toBe(1);
+    });
+
+    it('stage 0 with NO Pause Menu brushes off and does NOT advance', () => {
+        const game = cacheGame();
+        game.state.unlocked.pauseMenu = false;
+        game.talkToCache(freshCacheNpc(game));
+        expect(game.state.unlocked.saveFunction).toBe(false);
+        expect(game.state.unlocked.cacheStage).toBe(0);
+    });
+
+    it('second call gifts spare data — seeds 5-10 motes clustered in the Hub (-> stage 2)', () => {
+        const game = cacheGame();
+        game.state.unlocked.pauseMenu = true;
+        game.state.unlocked.cacheStage = 1;
+        game.talkToCache(freshCacheNpc(game));
+        expect(game.state.unlocked.cacheStage).toBe(2);
+        expect(game.dataMotes.length).toBeGreaterThanOrEqual(5);
+        expect(game.dataMotes.length).toBeLessThanOrEqual(10);
+    });
+
+    it('third call marks her sector and she departs for good (-> stage 3, no re-manifest)', () => {
+        const game = cacheGame();
+        game.state.unlocked.cacheStage = 2;
+        game.talkToCache(freshCacheNpc(game));
+        expect(game.state.unlocked.cacheStage).toBe(3);
+        game.npcs = [];
+        game.spawnCacheNpc();
+        expect(game.npcs.some(n => n.id === 'cache')).toBe(false); // stays home now
+    });
+
+    it('stage-3 directions adapt to whether you have a map (no hollow "on your map")', () => {
+        const withMap = cacheGame();
+        withMap.state.unlocked.cacheStage = 2;
+        withMap.state.unlocked.mapModule = true;
+        withMap.talkToCache(freshCacheNpc(withMap));
+        expect(withMap._lastLines.join(' ')).toContain('on your map');
+
+        const noMap = cacheGame();
+        noMap.state.unlocked.cacheStage = 2;
+        noMap.state.unlocked.mapModule = false;
+        noMap.talkToCache(freshCacheNpc(noMap));
+        expect(noMap._lastLines.join(' ')).not.toContain('on your map'); // no hollow promise
+        expect(noMap._lastLines.join(' ').toLowerCase()).toContain('north of localhost'); // verbal fallback
+    });
+
+    it('after speaking she fades out and is removed from the room', () => {
+        const game = cacheGame();
+        game.state.unlocked.pauseMenu = true;
+        const npc = freshCacheNpc(game);
+        game.talkToCache(npc);
+        expect(npc.fading).toBe(true);
+        expect(npc.leaving).toBe(true);           // non-interactive while dissolving
+        for (let i = 0; i < 20; i++) game.updateCacheFade(100);
+        expect(game.npcs.some(n => n === npc)).toBe(false);
+    });
+
+    it('materialises a few cells ABOVE the spawn point (not a random cell)', () => {
+        const game = newGame(400, 400);
+        game.state.unlocked.cacheFound = true;
+        game.state.unlocked.cacheStage = 0;
+        game.npcs = [];
+        game.snake.body = [{ x: 200, y: 200 }];
+        game.apple = { x: 0, y: 0 };
+        game.spawnCacheNpc();
+        const cache = game.npcs.find(n => n.id === 'cache');
+        const cy = Math.floor(400 / 2 / 20) * 20;
+        expect(cache).toBeTruthy();
+        expect(cache.x).toBe(200);
+        expect(cache.y).toBeLessThan(cy);
+    });
+
+    it('respawning in the Hub re-manifests Cache and re-seeds her data (stage 2)', () => {
+        const game = newGame();
+        game.state.unlocked.cacheFound = true;
+        game.state.unlocked.cacheStage = 2;
+        game.state.upgrades.crumpleLevel = 0;   // a real death -> full Hub reset
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.die('test');
+        expect(game.npcs.some(n => n.id === 'cache')).toBe(true);
+        expect(game.dataMotes.length).toBeGreaterThanOrEqual(5);
+    });
+
+    it('eating a spare-data mote grants Data AND grows you', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.ui = true;
+        game.state.unlocked.borders = false;
+        game.apple = { x: 380, y: 380 };
+        game.glitches = [];
+        game.npcs = [];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        game.dataMotes = [{ x: 120, y: 100 }];
+        step(game, { x: 20, y: 0 });
+        expect(game.dataMotes.length).toBe(0);
+        expect(game.state.score).toBe(1);
+        expect(game.snake.body.length).toBe(3);
+    });
+
+    it('applySave back-fills stage/Start-Screen for pre-rework saves that already had Save', () => {
+        const a = newGame();
+        a.state.unlocked.saveFunction = true;
+        const snap = a.serialize();
+        delete snap.unlocked.cacheStage;          // simulate a save from before this rework
+        delete snap.unlocked.startScreenUnlocked;
+        const b = newGame();
+        b.applySave(snap);
+        expect(b.state.unlocked.cacheStage).toBe(1);
+        expect(b.state.unlocked.startScreenUnlocked).toBe(true);
+    });
+
+    it('serialize/applySave round-trips cacheStage + Start-Screen flags', () => {
+        const a = newGame();
+        a.state.unlocked.cacheStage = 2;
+        a.state.unlocked.startScreenUnlocked = true;
+        a.state.unlocked.startScreenSeen = true;
+        const b = newGame();
+        b.applySave(a.serialize());
+        expect(b.state.unlocked.cacheStage).toBe(2);
+        expect(b.state.unlocked.startScreenUnlocked).toBe(true);
+        expect(b.state.unlocked.startScreenSeen).toBe(true);
+    });
+
+    it('the Cache sector generates a distinct at-home NPC (a real destination)', () => {
+        const game = newGame();
+        const lm = game.worldManager.landmarks.cache;
+        expect(lm).toBeTruthy();
+        const room = game.worldManager.roomGenerator.generateRoom(lm.x, lm.y, game.state.unlocked, game.worldManager);
+        expect(room.npcs.some(n => n.id === 'cachehome')).toBe(true);
+        expect(room.npcs.some(n => n.id === 'cache')).toBe(false); // NOT the Hub apparition
+    });
+
+    // --- verification-pass fixes ---
+
+    it('seedHubData never places a mote on a Hub glitch (eat+drain on one tick)', () => {
+        const game = newGame(400, 400);
+        game.snake.body = [{ x: 200, y: 200 }];
+        game.apple = { x: 0, y: 0 };
+        game.npcs = [];
+        game.glitches = [new Glitch(220, 200, 20), new Glitch(180, 220, 20), new Glitch(200, 180, 20)];
+        game.seedHubData();
+        expect(game.dataMotes.length).toBeGreaterThanOrEqual(5);
+        for (const m of game.dataMotes) {
+            expect(game.glitches.some(gl => gl.x === m.x && gl.y === m.y)).toBe(false);
+        }
+    });
+
+    it('Cache never materialises on a Hub glitch (talking to her stays safe)', () => {
+        const game = newGame(400, 400);
+        game.state.unlocked.cacheFound = true;
+        game.state.unlocked.cacheStage = 0;
+        game.npcs = [];
+        game.snake.body = [{ x: 200, y: 200 }];
+        game.apple = { x: 0, y: 0 };
+        game.glitches = [new Glitch(200, 200 - 3 * 20, 20)]; // exactly her primary cell (200,140)
+        game.spawnCacheNpc();
+        const cache = game.npcs.find(n => n.id === 'cache');
+        expect(cache).toBeTruthy();
+        expect(game.glitches.some(gl => gl.x === cache.x && gl.y === cache.y)).toBe(false);
+    });
+
+    it('motes seed only on respawn/load, NOT on an ordinary walk-in (no farm)', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 0;
+        game.worldManager.currentRoomY = 0;
+        game.state.unlocked.cacheStage = 2;
+        game.dataMotes = [{ x: 40, y: 40 }];       // stale motes from a prior life
+        game.refreshDynamicRoomContent();          // walk-in: clears, does NOT reseed
+        expect(game.dataMotes.length).toBe(0);
+        game.refreshDynamicRoomContent(true);      // respawn/load: seeds a fresh pile
+        expect(game.dataMotes.length).toBeGreaterThanOrEqual(5);
+    });
+
+    it('consuming the title cameo persists startScreenSeen (one-time across boots)', () => {
+        const game = newGame();
+        game.saveManager.clear();
+        game.state.unlocked.startScreenUnlocked = true;
+        game.state.unlocked.startScreenSeen = false;
+        game.saveGame();                            // existing save written with seen=false
+        game.consumeStartCameo();
+        expect(game.state.unlocked.startScreenSeen).toBe(true);
+        expect(game.saveManager.load().unlocked.startScreenSeen).toBe(true);
+    });
+});

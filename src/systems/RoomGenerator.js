@@ -108,6 +108,17 @@ export class RoomGenerator {
                 "Cadenza: Stay a while. The Sound Test isn't ready for its encore... but you found me. That was always the hard part.",
                 "Cadenza: (She hums a few bars, and for the first time the sector is quiet enough to hear it.)"
             ]));
+        } else if (worldManager && worldManager.landmarks && worldManager.landmarks.cache
+                   && roomX === worldManager.landmarks.cache.x && roomY === worldManager.landmarks.cache.y) {
+            // Cache's cold-storage stacks — the sector she marks on your map at the end of
+            // her Hub questline. PLACEHOLDER destination (like Cadenza's) so "go find me"
+            // resolves in a real scene rather than an empty room. Uses a distinct id
+            // ('cachehome') so it is NOT the transient Hub apparition and reads plainly.
+            npcs.push(new NPC(cx, cy, this.gridSize, 'cachehome', [
+                "Cache: [PLACEHOLDER] You found the stacks. Took you long enough — everyone's late to cold storage.",
+                "Cache: [PLACEHOLDER] This is home. Every deleted file, every rolled-back copy of you. Somebody has to keep it.",
+                "Cache: [PLACEHOLDER] Stay. Browse. Ask me what the system threw away — I remember all of it."
+            ]));
         } else {
             // Random Templates
             const templateType = Math.floor(Math.random() * 3);
