@@ -13,7 +13,9 @@ export class StateManager {
             pauseMenu: false,
             wallBroken: false,
             tailRider: false,
-            cadenzaFound: false // set once Cadenza's sector is reached — silences her homing beacon
+            cadenzaFound: false, // set once Cadenza's sector is reached — silences her homing beacon
+            cacheFound: false,  // set once you've spelled CACHE across death screens — she manifests in the Hub
+            saveFunction: false // Cache grants this (if you have the pause menu) — unlocks Save/Load
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data

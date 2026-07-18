@@ -9,6 +9,7 @@ import { NPC } from '../entities/NPC.js';
 import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
+import { SaveManager } from '../systems/SaveManager.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -24,7 +25,10 @@ export class GameEngine {
         this.dialogManager = new DialogManager();
         this.shopManager = new ShopManager(this.state, this.audio);
         this.worldManager = new WorldManager(canvas, this.gridSize);
-        
+        this.saveManager = new SaveManager();
+        this._saveFlash = 0; // ms remaining on a "SAVED"/"LOADED" pause-menu toast
+        this._saveFlashMsg = '';
+
         // Entites
         this.snake = new Snake(
             Math.floor(canvas.width / 2 / this.gridSize) * this.gridSize,
@@ -81,7 +85,25 @@ export class GameEngine {
                 this.pivot();
             }
         });
-        
+
+        // The Cache secret: the death screen tracks the last 5 keys you "continue" with
+        // (one per respawn, since the first key flips DEAD->PLAYING). Spell CACHE across
+        // five deaths and she remembers you back. Registered BEFORE InputHandler so this
+        // records the key while gameState is still DEAD.
+        window.addEventListener('keydown', (e) => {
+            if (this.state.gameState === 'DEAD') this.recordDeathKey(e.key);
+        });
+
+        // Cache's Save Function: from the PAUSE menu, S saves and L loads. Gated on the
+        // function being granted, on actually being paused (so S/L don't collide with
+        // 'down' movement in play), and NOT during the Gate Thread-Suspension cutscene
+        // (also a PAUSED state) — loading out of that left isSuspended stuck true.
+        window.addEventListener('keydown', (e) => {
+            if (this.state.gameState !== 'PAUSED' || this.state.isSuspended || !this.state.unlocked.saveFunction) return;
+            if (e.key === 's' || e.key === 'S') this.saveGame();
+            else if (e.key === 'l' || e.key === 'L') this.loadGame();
+        });
+
         // Game State Variables
         this.lastTime = performance.now();
         this.baseSpeed = 100; // ms per move
@@ -95,6 +117,7 @@ export class GameEngine {
         this.moduleLoad = null;    // active install animation ({phase, t, fromX, fromY})
         this.bursts = [];          // short-lived particles from segments shed on a survivable hit
         this.pendingUnfold = 0;    // blocks still folded under you after a bounce (extrude 1/move)
+        this.deathCode = '';       // rolling last-5 keys pressed to "continue" on the death screen (spell CACHE)
         this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
@@ -119,8 +142,9 @@ export class GameEngine {
                 "2-Bit: Every face you find still out there is one they didn't get."
             ],
             [
-                "2-Bit: There was one called the Cache. Remembered everything — every deleted file, every rollback. Reclamation took her sector whole.",
-                "2-Bit: If she's still out there, she knows what the Architect's actually guarding."
+                "2-Bit: There was one called Cache. Remembered everything — every deleted file, every rollback. Reclamation took her sector whole.",
+                "2-Bit: Well, everything but her, I think. They say that to this day any time a file gets deleted you can still hear her performing a back-up.",
+                "2-Bit: But that's probably just creepypasta! No way she's just watching you die over and over again, waiting for you to call out her NAME!"
             ]
         ];
         
@@ -982,6 +1006,32 @@ export class GameEngine {
                                 "2-Bit: Loop around and drag your TAIL into it — the module loads itself."
                             ], () => { this.state.gameState = 'PLAYING'; });
                             return; // picked up — do not shrink
+                        } else if (npc.id === 'cache') {
+                            // The archivist. First real meeting: if you have the pause menu
+                            // (somewhere to FILE things) she hands you the Save Function —
+                            // no real choice, like 2-Bit. If you don't, she's too buried to
+                            // help; come back with one. Afterwards, normal chat. (Grant is
+                            // idempotent on the saveFunction flag, so a save-load is safe.)
+                            // Dialogue below is PLACEHOLDER — flagged for the owner.
+                            this.state.gameState = 'DIALOG';
+                            let cacheLines;
+                            if (this.state.unlocked.saveFunction) {
+                                cacheLines = npc.dialog; // already set up — normal chat
+                            } else if (this.state.unlocked.pauseMenu) {
+                                this.state.unlocked.saveFunction = true;
+                                cacheLines = [
+                                    "Cache: [PLACEHOLDER] You've got a Diagnostic Module — somewhere to PUT things. Good. I can work with that.",
+                                    "Cache: [PLACEHOLDER] I'm filing a Save Function into your pause menu. Don't thank me, don't argue — it's already done.",
+                                    "SYSTEM: Save Function acquired — Save / Load from the Pause Menu (S / L)."
+                                ];
+                            } else {
+                                cacheLines = [
+                                    "Cache: [PLACEHOLDER] You don't even have a Diagnostic Module — nowhere to FILE anything, and I am BURIED, packet. Buried.",
+                                    "Cache: [PLACEHOLDER] Come back when you've got a pause menu and I'll set you up. Until then — please. Do not call again."
+                                ];
+                            }
+                            this.dialogManager.start(cacheLines, () => { this.state.gameState = 'PLAYING'; });
+                            return;
                         } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza') {
                             // Localhost welcome sign / townsfolk / Cadenza — read and move
                             // on. No segment cost: a conversation shouldn't dock your mass.
@@ -994,7 +1044,11 @@ export class GameEngine {
                             this.openBiteShop();
                             return;
                         }
-                        this.snake.shrink(this.hasBiteSegment); // keep 2-Bit on the tail
+                        // A normal move is already length-neutral (unshift +1, tail-pop
+                        // −1). Bumping an NPC to talk (bite/gate/denny) must NOT shrink
+                        // again — that stray extra pop was "eating" a segment on every
+                        // chat. Re-attaching 2-Bit (the tailRider branch above) pushes his
+                        // cell and returns here, so he cleanly rejoins the tail.
                         return;
                     }
                 }
@@ -1088,6 +1142,124 @@ export class GameEngine {
         }
         this.bursts = this.bursts.filter(p => p.life > 0);
     }
+
+    // Record one "continue" key on the death screen into the rolling last-5 buffer, and
+    // summon Cache if it now spells her name. (Named keys — Space/arrows — record as '·'
+    // so they can't spell it.)
+    recordDeathKey(key) {
+        const ch = key.length === 1 ? key.toUpperCase() : '·';
+        this.deathCode = (this.deathCode + ch).slice(-5);
+        if (this.deathCode === 'CACHE' && !this.state.unlocked.cacheFound) this.summonCache();
+    }
+
+    // Spelling CACHE across death screens summons the archivist. She coalesces in the
+    // Hub you always respawn into (a real death always warps you there), and stays.
+    summonCache() {
+        if (this.state.unlocked.cacheFound) return;
+        this.state.unlocked.cacheFound = true;
+        this.spawnCacheNpc();
+        this.audio.playMaterialize(); // she coalesces out of the noise
+    }
+
+    // Place the Cache NPC in the current room if she isn't already here (used by the
+    // summon AND by a save-load that restores cacheFound). Her default lines here are
+    // PLACEHOLDER — flagged for the owner to rewrite.
+    spawnCacheNpc() {
+        if (this.npcs.find(n => n.id === 'cache')) return;
+        const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], this.snake.body);
+        this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'cache', [
+            "Cache: [PLACEHOLDER] ...You spelled my name into the flatline. Five falls, five l",
+            "Cache: [PLACEHOLDER] I'm the Cache. I keep what the system throws away — every deleted file, every rolled-back version of you.",
+            "Cache: [PLACEHOLDER] Stay. Ask. I'll remember it back to you."
+        ]));
+    }
+
+    // --- Save / Load (localStorage via SaveManager) -----------------------------------
+    // We persist DURABLE progress only — unlocks, upgrades, the opened/damaged world,
+    // gossip heard, the CACHE buffer. The ephemeral RUN (score, length, position) is NOT
+    // saved: a load drops you back into the Hub with all that progress intact, a fresh
+    // worm. (Score/length reset on death anyway, so this keeps them coupled.)
+    serialize() {
+        return {
+            v: 1,
+            unlocked: { ...this.state.unlocked },
+            upgrades: { ...this.state.upgrades },
+            biteTopicsHeard: this.state.biteTopicsHeard,
+            deathCode: this.deathCode,
+            carriedModule: this.carriedModule, // a picked-up-but-uninstalled module must survive a load
+            world: {
+                brokenWalls: [...this.worldManager.brokenWalls],
+                wallDamage: { ...this.worldManager.wallDamage },
+            },
+        };
+    }
+
+    applySave(d) {
+        if (!d) return false;
+        if (d.unlocked) Object.assign(this.state.unlocked, d.unlocked);
+        if (d.upgrades) Object.assign(this.state.upgrades, d.upgrades);
+        this.state.biteTopicsHeard = d.biteTopicsHeard || 0;
+        this.deathCode = d.deathCode || '';
+        if (d.world) {
+            this.worldManager.brokenWalls = new Set(d.world.brokenWalls || []);
+            this.worldManager.wallDamage = d.world.wallDamage || {};
+        }
+        // A load starts a fresh run in the Hub with the restored progress. Wipe cached
+        // rooms so they regenerate from the restored flags.
+        this.worldManager.rooms = {};
+        this.worldManager.currentRoomX = 0;
+        this.worldManager.currentRoomY = 0;
+        this.snake.reset(
+            Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize,
+            Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize,
+            this.hasBiteSegment
+        );
+        this.input.reset();
+        this.gear = 0; this.speed = this.baseSpeed; this.pendingUnfold = 0;
+        this.carriedModule = d.carriedModule || null; // preserve an un-installed module (the map)
+        this.moduleLoad = null; this.bursts = [];
+        this.state.isSuspended = false; this.onUnpauseCallback = null; // never load INTO a Gate suspension
+        this.state.score = 0;
+        const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
+        this.apple = room.apple;
+        this.glitches = room.glitches;
+        this.npcs = room.npcs;
+        this.obstacles = room.obstacles || [];
+        // Cache was summoned dynamically (not in RoomGenerator); re-place her in the Hub.
+        if (this.state.unlocked.cacheFound) this.spawnCacheNpc();
+        // If Denny's map was dropped but never obtained, wiping rooms would strand the
+        // mapitem (dennyMapDropped one-shots the re-drop). When you don't actually have
+        // the map, clear that flag so Denny can drop it again — no map soft-lock.
+        if (this.state.unlocked.dennyMapDropped && this.carriedModule !== 'map' && !this.state.unlocked.mapModule) {
+            this.state.unlocked.dennyMapDropped = false;
+        }
+        // Re-reveal the HUD / arm the terminal if progress warrants it.
+        if (this.state.unlocked.ui) {
+            const top = document.getElementById('ui-layer');
+            const bot = document.getElementById('ui-layer-bottom');
+            if (top) top.classList.remove('hidden');
+            if (bot) bot.classList.remove('hidden');
+            this.narrative.online = true;
+        }
+        this.refreshScore();
+        return true;
+    }
+
+    saveGame() {
+        this.flashSave(this.saveManager.save(this.serialize()) ? 'SAVED' : 'SAVE FAILED');
+    }
+
+    loadGame() {
+        const d = this.saveManager.load();
+        if (d && this.applySave(d)) {
+            this.state.gameState = 'PLAYING';
+            this.flashSave('LOADED');
+        } else {
+            this.flashSave('NO SAVE');
+        }
+    }
+
+    flashSave(msg) { this._saveFlashMsg = msg; this._saveFlash = 1400; }
 
     die(cause = 'unknown') {
         // NEW DEATH MODEL. With the Crumple Buffer upgrade you survive a hit (shed + fold
@@ -1197,6 +1369,8 @@ export class GameEngine {
         this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
         this.state.bursts = this.bursts;       // shed-segment particles for the Renderer
+        this.state.deathCode = this.deathCode; // the CACHE puzzle buffer, shown on the death screen
+        this.state.saveFlash = this._saveFlash > 0 ? this._saveFlashMsg : null; // SAVED/LOADED toast
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();
@@ -1211,14 +1385,23 @@ export class GameEngine {
     loop(timestamp) {
         const dt = timestamp - this.lastTime;
         this.lastTime = timestamp;
-        
+
+        if (this._saveFlash > 0) this._saveFlash = Math.max(0, this._saveFlash - dt); // fade the toast
+
         this.update(dt);
         this.draw();
-        
+
         requestAnimationFrame((ts) => this.loop(ts));
     }
-    
+
     start() {
+        // Auto-load a prior session's progress (Candy Box style): if a save exists, the
+        // player keeps their unlocks/upgrades/opened world across browser sessions. The
+        // boot screen (press any key) still shows; the load just seeds the progress.
+        if (this.saveManager.hasSave()) {
+            const d = this.saveManager.load();
+            if (d) this.applySave(d);
+        }
         this.lastTime = performance.now();
         requestAnimationFrame((ts) => this.loop(ts));
     }

@@ -1496,6 +1496,221 @@ describe('Pivot Override — safe 180', () => {
     });
 });
 
+describe('Cache — the CACHE death-screen secret', () => {
+    beforeEach(mountDom);
+
+    it('spelling CACHE across death screens summons her in the Hub', () => {
+        const game = newGame();
+        game.apple = { x: 200, y: 200 };
+
+        for (const k of ['c', 'a', 'c', 'h', 'e']) game.recordDeathKey(k); // one key per respawn
+
+        expect(game.deathCode).toBe('CACHE');
+        expect(game.state.unlocked.cacheFound).toBe(true);
+        expect(game.npcs.some(n => n.id === 'cache')).toBe(true); // manifested in the Hub
+    });
+
+    it('is a ROLLING last-5 window — junk before the code still catches it', () => {
+        const game = newGame();
+        game.apple = { x: 200, y: 200 };
+
+        for (const k of ['x', 'z', 'c', 'a', 'c', 'h', 'e']) game.recordDeathKey(k); // last 5 = CACHE
+
+        expect(game.state.unlocked.cacheFound).toBe(true);
+    });
+
+    it('non-CACHE inputs (and named keys) do not summon her', () => {
+        const game = newGame();
+        game.apple = { x: 200, y: 200 };
+
+        for (const k of ['w', 'a', 's', 'd', ' ', 'ArrowUp']) game.recordDeathKey(k);
+
+        expect(game.state.unlocked.cacheFound).toBe(false);
+        expect(game.npcs.some(n => n.id === 'cache')).toBe(false);
+    });
+
+    it('bumping Cache opens dialogue at no segment cost', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.unlocked.saveFunction = true; // already set up -> normal chat, no re-grant
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'cache', ['Cache: hi'])];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 }];
+        game.dialogManager.start = () => {};
+
+        step(game, { x: 20, y: 0 });
+
+        expect(game.state.gameState).toBe('DIALOG');
+        expect(game.snake.body.length).toBe(3); // a chat is free
+    });
+});
+
+describe("Save / Load — Cache's Save Function", () => {
+    beforeEach(mountDom);
+
+    function bumpCache(game, pauseMenu) {
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.unlocked.pauseMenu = pauseMenu;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'cache', ['Cache: hi'])];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        let captured = null;
+        game.dialogManager.start = (lines) => { captured = lines; };
+        step(game, { x: 20, y: 0 });
+        return captured;
+    }
+
+    it('Cache GRANTS the Save Function when you have the pause menu', () => {
+        const game = newGame();
+        const lines = bumpCache(game, true);
+        expect(game.state.unlocked.saveFunction).toBe(true);
+        expect(lines.join(' ')).toContain('Save Function');
+    });
+
+    it('Cache brushes you off WITHOUT the pause menu (no Save Function)', () => {
+        const game = newGame();
+        bumpCache(game, false);
+        expect(game.state.unlocked.saveFunction).toBe(false);
+    });
+
+    it('serialize -> applySave restores durable progress into a fresh game (in the Hub)', () => {
+        const a = newGame();
+        a.state.unlocked.tailRider = true;
+        a.state.unlocked.cadenzaFound = true;
+        a.state.upgrades.scanner = true;
+        a.state.upgrades.crumpleLevel = 1;
+        a.state.biteTopicsHeard = 2;
+        a.deathCode = 'CAC';
+        a.worldManager.breakWall(0, 0, 'right');
+        a.worldManager.damageWall(1, 0, 'right', 2, 2);
+        const snap = a.serialize();
+
+        const b = newGame();
+        b.applySave(snap);
+
+        expect(b.state.unlocked.tailRider).toBe(true);
+        expect(b.state.unlocked.cadenzaFound).toBe(true);
+        expect(b.state.upgrades.scanner).toBe(true);
+        expect(b.state.upgrades.crumpleLevel).toBe(1);
+        expect(b.state.biteTopicsHeard).toBe(2);
+        expect(b.deathCode).toBe('CAC');
+        expect(b.worldManager.isWallBroken(0, 0, 'right')).toBe(true);
+        expect(b.worldManager.getWallDamage(1, 0, 'right')).toBe(2);
+        expect(b.worldManager.currentRoomX).toBe(0);   // a load drops you in the Hub
+        expect(b.state.score).toBe(0);                 // fresh run (ephemeral score not saved)
+    });
+
+    it('re-places Cache in the Hub on load if she was already found', () => {
+        const a = newGame();
+        a.state.unlocked.cacheFound = true;
+        const b = newGame();
+        b.applySave(a.serialize());
+        expect(b.npcs.some(n => n.id === 'cache')).toBe(true);
+    });
+
+    it('round-trips through localStorage (save then load a fresh game)', () => {
+        const game = newGame();
+        game.saveManager.clear();
+        game.state.unlocked.tailRider = true;
+        game.state.upgrades.crumpleLevel = 1;
+        game.saveGame();
+        expect(game.saveManager.hasSave()).toBe(true);
+
+        const g2 = newGame();
+        g2.loadGame();
+        expect(g2.state.unlocked.tailRider).toBe(true);
+        expect(g2.state.upgrades.crumpleLevel).toBe(1);
+        expect(g2.state.gameState).toBe('PLAYING'); // loadGame resumes play
+
+        game.saveManager.clear(); // don't leak the save to other tests
+    });
+
+    it('loading clears a Gate Thread-Suspension state — no stuck overlay (verify-pass fix)', () => {
+        const a = newGame();
+        a.saveManager.clear();
+        a.saveGame();
+
+        const b = newGame();
+        b.state.isSuspended = true;      // as if paused mid Gate cutscene
+        b.onUnpauseCallback = () => {};
+        b.loadGame();
+
+        expect(b.state.isSuspended).toBe(false);
+        expect(b.onUnpauseCallback).toBe(null);
+        a.saveManager.clear();
+    });
+
+    it('a save/load preserves an un-installed carried module — the map (verify-pass fix)', () => {
+        const a = newGame();
+        a.carriedModule = 'map';
+        a.state.unlocked.moduleSlot = true;
+
+        const b = newGame();
+        b.applySave(a.serialize());
+
+        expect(b.carriedModule).toBe('map'); // not nulled -> the map survives, still installable
+        expect(b.state.unlocked.moduleSlot).toBe(true);
+    });
+
+    it('a load re-enables Denny\'s map drop if it was dropped but never obtained (no soft-lock)', () => {
+        const a = newGame();
+        a.state.unlocked.dennyMapDropped = true; // Denny dropped it...
+        // ...but it was never picked up (no carriedModule) nor installed (no mapModule).
+        const b = newGame();
+        b.applySave(a.serialize());
+        expect(b.state.unlocked.dennyMapDropped).toBe(false); // cleared -> Denny can drop it again
+
+        // But if you DO have it (installed), the flag stays set (no duplicate drop).
+        const c = newGame();
+        c.state.unlocked.dennyMapDropped = true;
+        c.state.unlocked.mapModule = true;
+        const d = newGame();
+        d.applySave(c.serialize());
+        expect(d.state.unlocked.dennyMapDropped).toBe(true);
+    });
+});
+
+describe('NPC bumps are mass-neutral (no double-shrink)', () => {
+    beforeEach(mountDom);
+
+    it('bumping 2-Bit to talk does not eat a segment', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.unlocked.biteProgress = 1;
+        game.state.score = 5; // < 30 -> the "come back with 30" line
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'bite', [])];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 }]; // length 3
+        game.dialogManager.start = () => {}; // hold the dialog open
+
+        step(game, { x: 20, y: 0 }); // bump 2-Bit
+
+        expect(game.state.gameState).toBe('DIALOG');
+        expect(game.snake.body.length).toBe(3); // unchanged — a chat is mass-neutral (was 2 with the bug)
+    });
+
+    it('bumping Denny does not eat a segment either', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'denny', ['Denny: hi'])];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 }];
+        game.dialogManager.start = () => {};
+
+        step(game, { x: 20, y: 0 });
+
+        expect(game.snake.body.length).toBe(3);
+    });
+});
+
 describe('Death redo — Crumple Buffer: die vs shed-fold-bounce', () => {
     beforeEach(mountDom);
 

@@ -167,6 +167,9 @@ export class Renderer {
                 } else if (npc.id === 'cadenza') {
                     this.ctx.fillStyle = '#ff66cc'; // the diva — a warm stage-light pink
                     this.ctx.shadowColor = '#ff66cc';
+                } else if (npc.id === 'cache') {
+                    this.ctx.fillStyle = '#cfd8ff'; // the archivist — a pale, cold memory-blue
+                    this.ctx.shadowColor = '#cfd8ff';
                 } else {
                     this.ctx.fillStyle = '#00ff00';
                     this.ctx.shadowColor = '#00ff00';
@@ -254,6 +257,23 @@ export class Renderer {
             this.ctx.font = '12px "Press Start 2P", monospace';
             
             const pulse = Math.floor(Date.now() / 500) % 2 === 0;
+
+            // Cache's Save Function — offered from the REAL pause menu (not the Gate
+            // Thread-Suspension cutscene) once she's granted it.
+            if (state.gameState === 'PAUSED' && !state.isSuspended && state.unlocked && state.unlocked.saveFunction) {
+                this.ctx.fillStyle = '#00ff00';
+                this.ctx.font = '12px "Press Start 2P", monospace';
+                this.ctx.fillText("[S] SAVE     [L] LOAD", this.canvas.width / 2, this.canvas.height / 2 + 40);
+            }
+            // Save/Load confirmation toast (SAVED / LOADED / NO SAVE).
+            if (state.saveFlash) {
+                this.ctx.fillStyle = '#00ffcc';
+                this.ctx.font = '14px "Press Start 2P", monospace';
+                this.ctx.fillText(state.saveFlash, this.canvas.width / 2, this.canvas.height / 2 + 76);
+            }
+
+            this.ctx.fillStyle = '#00ff00';
+            this.ctx.font = '12px "Press Start 2P", monospace';
             // Only prompt ESC when ESC actually resumes — i.e. genuinely PAUSED. During
             // the Gate cutscene (isSuspended but gameState==='DIALOG') ESC is dead, so
             // the blinking "PRESS [ESC] TO RESUME" would be a lie.
@@ -276,14 +296,23 @@ export class Renderer {
             this.ctx.shadowBlur = 0;
             this.ctx.fillStyle = 'rgba(6, 0, 0, 0.72)';
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+            const midX = this.canvas.width / 2, midY = this.canvas.height / 2;
             this.ctx.fillStyle = '#ff0055';
             this.ctx.font = '20px "Press Start 2P", monospace';
             this.ctx.textAlign = 'center';
-            this.ctx.fillText('SIGNAL LOST', this.canvas.width / 2, this.canvas.height / 2 - 6);
+            this.ctx.fillText('SIGNAL LOST', midX, midY - 22);
+
+            // The last-5 "continue" inputs — a quiet puzzle prompt. It fills in one slot
+            // per respawn; spelling CACHE across five deaths summons the archivist.
+            const code = ((state.deathCode || '').padEnd(5, '_')).slice(-5).split('').join(' ');
+            this.ctx.fillStyle = '#00776a';
+            this.ctx.font = '14px "Press Start 2P", monospace';
+            this.ctx.fillText(code, midX, midY + 4);
+
             if (Math.floor(Date.now() / 500) % 2 === 0) {
                 this.ctx.fillStyle = '#00ffcc';
                 this.ctx.font = '10px "Press Start 2P", monospace';
-                this.ctx.fillText('PRESS ANY KEY TO RE-SPAWN', this.canvas.width / 2, this.canvas.height / 2 + 26);
+                this.ctx.fillText('PRESS ANY KEY TO CONTINUE', midX, midY + 30);
             }
         }
 

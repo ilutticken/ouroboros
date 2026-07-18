@@ -58,8 +58,17 @@ export class RoomGenerator {
                 { c: 6, r: 6, lines: ["Citizen: A new face! We don't get new faces. Mostly we get... fewer faces."] },
                 { c: this.cols - 7, r: 5, lines: ["Citizen: You hear the singing? Southeast, behind the sealed wall. That's Cadenza. Been at it for epochs — won't stop, can't leave."] },
                 { c: 7, r: this.rows - 6, lines: ["Citizen: Need supplies? 2-Bit's sister keeps a stall way out in the Wilds. Nibble. Everything's cursed, everything's a bargain. Somehow both."] },
-                { c: this.cols - 8, r: this.rows - 7, lines: ["Citizen: This place remembers more folks than it holds. The Cache would've known every one by name — Reclamation got her sector too."] },
-                { c: Math.floor(this.cols / 2) + 4, r: 6, lines: ["Citizen: You're the one the Architect keeps NOT talking about, aren't you? Relax — we read his logs too, friend."] },
+                // Two of these are the Cache CLUE-GIVERS (with 2-Bit's gossip).
+                // They stay available even after
+                // you've found her, so finding Cache first can't strand the questline.
+                { c: this.cols - 8, r: this.rows - 7, lines: [
+                    "Citizen: Not near as many folks here as there used to be. The Cache would've known every one by name — Reclamation got her sector too.",
+                    "Citizen: Funny thing about her, though. She was never really IN a sector. She lived in the pause — the little death between one copy of you and the next."
+                ] },
+                { c: Math.floor(this.cols / 2) + 4, r: 6, lines: [
+                    "Citizen: Every time I crash, that 'CONTINUE' prompt feels like it's... listening. Waiting for me to say something back.",
+                    "Citizen: The Cache used to be in charge of that sorta stuff. I bet she'd know what to say..."
+                ] },
             ];
             for (const t of town) {
                 npcs.push(new NPC(t.c * this.gridSize, t.r * this.gridSize, this.gridSize, 'citizen', t.lines));
