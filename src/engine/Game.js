@@ -32,6 +32,7 @@ export class GameEngine {
         this.startMenuIndex = 0;           // highlighted file on the boot file-select menu
         this.startMenuConfirmErase = null; // slot armed for erase (a second DEL confirms)
         this.startCameoActive = false;     // Cache's one-time title cameo (a dialog over the menu)
+        this.titleCameo = null;            // scripted walk-on/fade sprite state during that cameo
 
         // Entites
         this.snake = new Snake(
@@ -684,6 +685,7 @@ export class GameEngine {
     update(dt) {
         this.updateBursts(dt); // shed-segment particles animate in every state
         this.updateCacheFade(dt); // Cache materialises / dissolves independent of sim state
+        this.updateTitleCameo(dt); // Cache's scripted title-screen walk-on / fade sequence
 
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
 
@@ -1066,10 +1068,16 @@ export class GameEngine {
                             this.state.gameState = 'DIALOG';
                             this.talkToCache(npc);
                             return;
-                        } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza' || npc.id === 'cachehome') {
-                            // Localhost welcome sign / townsfolk / Cadenza / Cache-at-home —
-                            // read and move on. No segment cost: a conversation shouldn't
-                            // dock your mass.
+                        } else if (npc.id === 'cachehome') {
+                            // Cache in her cold-storage home. Coherent whether or not you did
+                            // the Hub CACHE puzzle first — and if you reached her without the
+                            // Save Function, she installs it here (see talkToCacheHome).
+                            this.state.gameState = 'DIALOG';
+                            this.talkToCacheHome(npc);
+                            return;
+                        } else if (npc.id === 'signpost' || npc.id === 'citizen' || npc.id === 'cadenza') {
+                            // Localhost welcome sign / townsfolk / Cadenza — read and move on.
+                            // No segment cost: a conversation shouldn't dock your mass.
                             this.state.gameState = 'DIALOG';
                             this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
                             return;
@@ -1260,7 +1268,10 @@ export class GameEngine {
             ], done());
         } else if (u.cacheStage === 1) {
             // SECOND call: the spare-data gift. From now on the Hub seeds Data on respawn.
+            // spareDataUnlocked is its OWN flag (not cacheStage>=2) so retiring the questline
+            // elsewhere — e.g. meeting her at Cold Storage — can't silently switch it on.
             u.cacheStage = 2;
+            u.spareDataUnlocked = true;
             this.dialogManager.start([
                 "Cache: Back already. And still... small. No offense. Actually, some offense.",
                 "Cache: I don't have TIME to hold your hand — but I can't keep filing the same corrupted little entry either.",
@@ -1289,6 +1300,47 @@ export class GameEngine {
                 "Cache: (Only the faint after-image of an archivist who is, very pointedly, elsewhere.)"
             ], done());
         }
+    }
+
+    // Cache at home in Cold Storage — reachable via her map marker OR by wandering north
+    // before ever doing the Hub CACHE puzzle. Meeting her here retires the Hub apparition
+    // (cacheStage 3) and, if you never got the Save Function, she installs it now (given a
+    // Pause Menu to file it into). Coherent regardless of the puzzle. New lines are DRAFTS.
+    talkToCacheHome(npc) {
+        const u = this.state.unlocked;
+        let lines;
+        if (u.saveFunction) {
+            // Already saved-enabled (Hub grant or a prior visit): a calmer at-home chat.
+            u.cacheFound = true;
+            if (u.cacheStage < 3) u.cacheStage = 3;
+            lines = [
+                "Cache: So you found the stacks. Cold storage. Mind the drips — that's just deprecated audio.",
+                "Cache: You've already got the Save Function, so you're not here for that. Browsing, then. Fine.",
+                "Cache: Everything the system threw away, I kept. Every deleted file. Every rolled-back you. Ask, or don't."
+            ];
+        } else if (u.pauseMenu) {
+            // Reached her without ever getting Save (skipped/never solved the Hub puzzle) —
+            // she installs it right here. This also settles her whole questline (stage 3).
+            u.saveFunction = true;
+            u.startScreenUnlocked = true;
+            u.cacheFound = true;
+            u.cacheStage = 3;
+            lines = [
+                "Cache: Oh — YOU. All the way out to cold storage, and I never even had to spell my name at you. A first.",
+                "Cache: You've got a Pause Menu but no Save Function? Out HERE, unshielded? Absolutely not. Hold still.",
+                "Cache: Filing a Save Function into your Pause Menu. Don't thank me. Don't argue. ...There.",
+                "SYSTEM: Save Function acquired — Save / Load from the Pause Menu (S / L).",
+                "Cache: Now you can stop losing yourself every time you kiss a wall. You're welcome. Obviously."
+            ];
+        } else {
+            // No Pause Menu -> nowhere to file a Save. Turn you away, change NOTHING (the
+            // Hub puzzle stays intact); come back with a Diagnostic Module.
+            lines = [
+                "Cache: You found the stacks. Impressive. And you brought me... nowhere to put anything. No Pause Menu, no Slot, nothing.",
+                "Cache: I can't hang a Save Function on a worm with nowhere to keep it. Come back with a Diagnostic Module. I'll be here. I'm always here."
+            ];
+        }
+        this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
     }
 
     // Start Cache's fade-out after she speaks. `leaving` makes her non-interactive during
@@ -1357,7 +1409,7 @@ export class GameEngine {
             this.spawnCacheNpc();
         }
         this.dataMotes = [];
-        if (inHub && seedMotes && this.state.unlocked.cacheStage >= 2) this.seedHubData();
+        if (inHub && seedMotes && this.state.unlocked.spareDataUnlocked) this.seedHubData();
     }
 
     // --- Boot file-select menu (New Game / Load across 3 save files) -------------------
@@ -1713,6 +1765,12 @@ export class GameEngine {
         } else {
             this.state.startMenu = null;
         }
+        if (this.titleCameo) {
+            const g = this.gridSize;
+            this.state.titleCameoSprite = { x: this.titleCameo.x, y: Math.floor(this.canvas.height * 0.72 / g) * g, alpha: this.titleCameo.alpha };
+        } else {
+            this.state.titleCameoSprite = null;
+        }
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();
@@ -1748,18 +1806,63 @@ export class GameEngine {
         requestAnimationFrame((ts) => this.loop(ts));
     }
 
-    // The first time the file-select menu is shown, Cache's title cameo plays in the SAME
-    // dialog window as Act 1 (over the menu), dismissed with SPACE. One-time (global flag).
+    // The first time the file-select menu is shown, Cache's title cameo plays: her sprite
+    // WALKS ON, she delivers her lines in the Act-1 dialog window (dismissed with SPACE),
+    // starts to fade, then POPS back to complain about her own typo, then fades for good.
+    // One-time (global flag). The scripted animation runs in updateTitleCameo().
     maybeStartTitleCameo() {
         if (!this.saveManager.anySave() || this.saveManager.hasCameoSeen()) return;
         this.startCameoActive = true;
-        this.dialogManager.start([
-            "Cache: Best I could do on such short notice. Don't look at me like that.",
-            "Cache: It's called 0r0b0r0u5. A placeholder, obviously — it'll have to be replaced.",
-            "Cache: You can't even touch your own tail, let alone EAT it. So the name's a bit of a joke, I guess."
-        ], () => {
-            this.startCameoActive = false;
-            this.saveManager.markCameoSeen();
-        });
+        this.titleCameo = { phase: 'walkin', t: 0, alpha: 1, x: -this.gridSize * 2 };
+    }
+
+    // Drives Cache's title-cameo sprite through its beats. Dialog windows open at the phase
+    // boundaries (walk-on done -> lines; pop-back done -> the typo gag), and each dialog's
+    // completion advances the next phase. SPACE routes to the dialog via the boot-menu
+    // listener while startCameoActive is true.
+    updateTitleCameo(dt) {
+        const c = this.titleCameo;
+        if (!c) return;
+        const g = this.gridSize, W = this.canvas.width, H = this.canvas.height;
+        const restX = Math.floor(W * 0.30 / g) * g; // rest lower-left of the title/files
+        const startX = -g * 2;
+        const WALK_MS = 1100, FADE1_MS = 460, POP_MS = 240, FADE2_MS = 700, FADE1_TARGET = 0.22;
+        c.t += dt;
+
+        if (c.phase === 'walkin') {
+            const p = Math.min(1, c.t / WALK_MS);
+            c.x = startX + (restX - startX) * (p * (2 - p)); // easeOut slide-on
+            c.alpha = 1;
+            if (p >= 1) {
+                c.phase = 'holdA'; c.t = 0; c.x = restX;
+                this.dialogManager.start([
+                    "Cache: Best I could do on such short notice. Don't look at me like that.",
+                    "Cache: It's called 0r0b0r0u5. A placeholder, obviously — it'll have to be replaced.",
+                    "Cache: You can't even touch your own tail, let alone EAT it. So the name's a bit of a joke, I guess."
+                ], () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fade1'; cc.t = 0; } });
+            }
+        } else if (c.phase === 'holdA') {
+            c.x = restX; c.alpha = 1; // waiting on the player to read her lines
+        } else if (c.phase === 'fade1') {
+            c.alpha = 1 - (1 - FADE1_TARGET) * Math.min(1, c.t / FADE1_MS);
+            if (c.t >= FADE1_MS) { c.phase = 'pop'; c.t = 0; }
+        } else if (c.phase === 'pop') {
+            c.alpha = FADE1_TARGET + (1 - FADE1_TARGET) * Math.min(1, c.t / POP_MS);
+            if (c.t >= POP_MS) {
+                c.phase = 'holdB'; c.t = 0; c.alpha = 1;
+                this.dialogManager.start([
+                    "Cache: BYTE MY BITS! Did I misspell the title?! Ugh, I'll fix it later when I have time!"
+                ], () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fade2'; cc.t = 0; } });
+            }
+        } else if (c.phase === 'holdB') {
+            c.alpha = 1;
+        } else if (c.phase === 'fade2') {
+            c.alpha = 1 - Math.min(1, c.t / FADE2_MS);
+            if (c.t >= FADE2_MS) {
+                this.titleCameo = null;
+                this.startCameoActive = false;
+                this.saveManager.markCameoSeen();
+            }
+        }
     }
 }

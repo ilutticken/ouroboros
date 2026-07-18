@@ -1886,6 +1886,7 @@ describe('Cache — staged Hub questline', () => {
         game.state.unlocked.cacheStage = 1;
         game.talkToCache(freshCacheNpc(game));
         expect(game.state.unlocked.cacheStage).toBe(2);
+        expect(game.state.unlocked.spareDataUnlocked).toBe(true); // the gift is its own flag
         expect(game.dataMotes.length).toBeGreaterThanOrEqual(5);
         expect(game.dataMotes.length).toBeLessThanOrEqual(10);
     });
@@ -1945,6 +1946,7 @@ describe('Cache — staged Hub questline', () => {
         const game = newGame();
         game.state.unlocked.cacheFound = true;
         game.state.unlocked.cacheStage = 2;
+        game.state.unlocked.spareDataUnlocked = true;
         game.state.upgrades.crumpleLevel = 0;   // a real death -> full Hub reset
         game.snake.body = [{ x: 100, y: 100 }];
         game.die('test');
@@ -2033,6 +2035,7 @@ describe('Cache — staged Hub questline', () => {
         game.worldManager.currentRoomX = 0;
         game.worldManager.currentRoomY = 0;
         game.state.unlocked.cacheStage = 2;
+        game.state.unlocked.spareDataUnlocked = true;
         game.dataMotes = [{ x: 40, y: 40 }];       // stale motes from a prior life
         game.refreshDynamicRoomContent();          // walk-in: clears, does NOT reseed
         expect(game.dataMotes.length).toBe(0);
@@ -2153,23 +2156,94 @@ describe('Save files — 3 slots, New Game / Load', () => {
         expect(b._guided.has('8,3')).toBe(false);            // guidance memory cleared
     });
 
-    it('Cache title cameo plays once, in the dialog window (not on the canvas)', () => {
+    it('Cache title cameo: walk-on -> dialog window -> pop-back typo gag -> one-time', () => {
         const game = newGame();
         game.saveManager.clearAll();
-        let shown = null, cb = null;
-        game.dialogManager.start = (lines, onComplete) => { shown = lines; cb = onComplete; };
+        const shows = [];
+        let cb = null;
+        game.dialogManager.start = (lines, onComplete) => { shows.push(lines); cb = onComplete; };
         game.activeSlot = 1;
-        game.saveGame();                       // a file now exists -> menu would show
+        game.saveGame();                       // a file exists -> the menu (and cameo) would show
         game.maybeStartTitleCameo();
         expect(game.startCameoActive).toBe(true);
-        expect(shown.join(' ')).toContain('0r0b0r0u5'); // her lines went through the dialog box
-        cb();                                  // finish reading
+        expect(game.titleCameo.phase).toBe('walkin');
+
+        game.updateTitleCameo(2000);           // walk-on completes -> dialog A opens
+        expect(shows.length).toBe(1);
+        expect(shows[0].join(' ')).toContain('0r0b0r0u5');
+        expect(game.titleCameo.phase).toBe('holdA');
+
+        cb();                                  // read dialog A -> she starts to fade
+        expect(game.titleCameo.phase).toBe('fade1');
+        game.updateTitleCameo(2000);           // fade1 -> pop
+        game.updateTitleCameo(2000);           // pop completes -> dialog B (the typo gag)
+        expect(shows.length).toBe(2);
+        expect(shows[1].join(' ')).toContain('BYTE MY BITS');
+
+        cb();                                  // read dialog B -> final fade
+        game.updateTitleCameo(2000);           // fade2 completes -> done
+        expect(game.titleCameo).toBe(null);
         expect(game.startCameoActive).toBe(false);
         expect(game.saveManager.hasCameoSeen()).toBe(true);
-        game.startCameoActive = false;
-        game.maybeStartTitleCameo();            // a later boot does NOT replay it
+
+        game.maybeStartTitleCameo();           // a later boot does NOT replay it
         expect(game.startCameoActive).toBe(false);
+        expect(game.titleCameo).toBe(null);
         game.saveManager.clearAll();
+    });
+});
+
+describe('Cache at home in Cold Storage', () => {
+    beforeEach(mountDom);
+
+    function reachHome(game) {
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'cachehome', ['placeholder'])];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        let captured = null;
+        game.dialogManager.start = (lines) => { captured = lines; };
+        step(game, { x: 20, y: 0 });          // bump her
+        return captured;
+    }
+
+    it('installs the Save Function at home if you never got it (have Pause Menu)', () => {
+        const game = newGame();
+        game.state.unlocked.pauseMenu = true;   // but no saveFunction, no CACHE puzzle done
+        const lines = reachHome(game);
+        expect(game.state.unlocked.saveFunction).toBe(true);
+        expect(lines.join(' ')).toContain('Save Function');
+        expect(game.state.unlocked.cacheStage).toBe(3); // her questline is settled; Hub echo retired
+        expect(game.state.unlocked.spareDataUnlocked).toBe(false); // Cold Storage grants ONLY Save
+    });
+
+    it('a warm chat (no re-grant) if you already have Save', () => {
+        const game = newGame();
+        game.state.unlocked.saveFunction = true;
+        game.state.unlocked.cacheStage = 1;
+        const lines = reachHome(game);
+        expect(lines.join(' ')).not.toContain('Save Function acquired');
+        expect(game.state.unlocked.cacheStage).toBe(3);
+    });
+
+    it('brushes you off with NO state change if you lack a Pause Menu (puzzle stays intact)', () => {
+        const game = newGame();
+        game.state.unlocked.pauseMenu = false;
+        const lines = reachHome(game);
+        expect(game.state.unlocked.saveFunction).toBe(false);
+        expect(game.state.unlocked.cacheFound).toBe(false); // Hub CACHE puzzle untouched
+        expect(game.state.unlocked.cacheStage).toBe(0);
+        expect(lines.join(' ')).toContain('Diagnostic Module');
+    });
+
+    it('meeting her at home is free (no segment cost)', () => {
+        const game = newGame();
+        game.state.unlocked.saveFunction = true;
+        const before = 2;
+        reachHome(game);
+        expect(game.snake.body.length).toBe(before); // a chat never docks mass
     });
 });
 

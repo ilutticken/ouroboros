@@ -30,6 +30,7 @@ export class StateManager {
             // 2 = spare-data gift given (Hub seeds data on respawn), 3 = directions given
             // (her sector is on your map and she stops manifesting in the Hub).
             cacheStage: 0,
+            spareDataUnlocked: false,  // Cache's stage-2 gift: the Hub seeds spare Data on respawn
             startScreenUnlocked: false // Cache builds the title screen when she grants Save (stage 1)
         };
         this.upgrades = {

@@ -339,6 +339,7 @@ export class Renderer {
         // After, it's her placeholder title treatment, with a one-time walk-on cameo.
         if (state.gameState === 'START' && state.startMenu) {
             this.drawStartScreen(state); // green title + 3-file select menu
+            if (state.titleCameoSprite) this.drawTitleCameoSprite(state.titleCameoSprite);
         } else {
             // Bare A-Dark-Room cold open (no save files yet): a faint blinking prompt only.
             if (state.gameState === 'START' && Math.floor(Date.now() / 600) % 2 === 0) {
@@ -643,5 +644,19 @@ export class Renderer {
         this.ctx.fillText(sel && sel.exists ? 'ENTER load   N new   DEL erase' : 'ENTER  new game', midX, H - body * 2.2);
         this.ctx.fillStyle = '#00885f';
         this.ctx.fillText('up / down  -  select file', midX, H - body * 0.9);
+    }
+
+    // Cache's title-cameo sprite (her archival-blue block + eyes) — walks on and fades under
+    // the control of GameEngine.updateTitleCameo; here we just paint it at the given alpha.
+    drawTitleCameoSprite(s) {
+        const g = this.gridSize;
+        this.ctx.save();
+        this.ctx.globalAlpha = Math.max(0, Math.min(1, s.alpha));
+        this.ctx.shadowColor = '#cfd8ff';
+        this.ctx.shadowBlur = 10;
+        this.ctx.fillStyle = '#cfd8ff';
+        this.ctx.fillRect(s.x, s.y, g, g);
+        this.drawEyes(s.x, s.y, '#1a2233');
+        this.ctx.restore();
     }
 }
