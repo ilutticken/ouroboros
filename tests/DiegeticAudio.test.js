@@ -2152,6 +2152,25 @@ describe('Save files — 3 slots, New Game / Load', () => {
         expect(b.state.unlocked.tailRider).toBe(true);       // the saved value IS applied
         expect(b._guided.has('8,3')).toBe(false);            // guidance memory cleared
     });
+
+    it('Cache title cameo plays once, in the dialog window (not on the canvas)', () => {
+        const game = newGame();
+        game.saveManager.clearAll();
+        let shown = null, cb = null;
+        game.dialogManager.start = (lines, onComplete) => { shown = lines; cb = onComplete; };
+        game.activeSlot = 1;
+        game.saveGame();                       // a file now exists -> menu would show
+        game.maybeStartTitleCameo();
+        expect(game.startCameoActive).toBe(true);
+        expect(shown.join(' ')).toContain('0r0b0r0u5'); // her lines went through the dialog box
+        cb();                                  // finish reading
+        expect(game.startCameoActive).toBe(false);
+        expect(game.saveManager.hasCameoSeen()).toBe(true);
+        game.startCameoActive = false;
+        game.maybeStartTitleCameo();            // a later boot does NOT replay it
+        expect(game.startCameoActive).toBe(false);
+        game.saveManager.clearAll();
+    });
 });
 
 describe('NarrativeManager.reset() — clean run boundary', () => {

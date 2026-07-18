@@ -31,6 +31,7 @@ export class GameEngine {
         this.activeSlot = 1;               // which of the 3 save FILES the current run reads/writes
         this.startMenuIndex = 0;           // highlighted file on the boot file-select menu
         this.startMenuConfirmErase = null; // slot armed for erase (a second DEL confirms)
+        this.startCameoActive = false;     // Cache's one-time title cameo (a dialog over the menu)
 
         // Entites
         this.snake = new Snake(
@@ -116,6 +117,13 @@ export class GameEngine {
         window.addEventListener('keydown', (e) => {
             if (!this.startMenuActive()) return;
             this.audio.init(); // idempotent — so the FIRST menu key isn't silent
+            if (this.startCameoActive) {
+                // Cache's title cameo is up (in the dialog window, over the menu): SPACE/
+                // Enter advances it, everything else is swallowed so nav can't leak through.
+                if (e.key === ' ' || e.key === 'Enter') this.dialogManager.advance();
+                e.stopImmediatePropagation();
+                return;
+            }
             this.startMenuHandleKey(e.key);
             e.stopImmediatePropagation();
         });
@@ -1467,7 +1475,7 @@ export class GameEngine {
         const u = this.state.unlocked, up = this.state.upgrades;
         let place = 'The Void';
         if (u.borders) place = 'The Wilds';
-        if (u.pauseMenu) place = 'Past the Firewall';
+        if (u.pauseMenu) place = 'The Firewall';
         if (u.biteDroppedOff) place = 'Localhost';
         if (u.cadenzaFound) place = 'Cadenza';
         if (u.cacheStage >= 3) place = 'Cold Storage';
@@ -1702,7 +1710,6 @@ export class GameEngine {
         // START screen is the bare cold-open void).
         if (this.state.gameState === 'START' && this.saveManager.anySave()) {
             this.state.startMenu = { slots: this.saveManager.slots(), index: this.startMenuIndex, confirmErase: this.startMenuConfirmErase };
-            this.state.startCameoSeen = this.saveManager.hasCameoSeen();
         } else {
             this.state.startMenu = null;
         }
@@ -1736,7 +1743,23 @@ export class GameEngine {
         const slots = this.saveManager.slots();
         const firstFilled = slots.findIndex(s => s.exists);
         this.startMenuIndex = firstFilled >= 0 ? firstFilled : 0;
+        this.maybeStartTitleCameo();
         this.lastTime = performance.now();
         requestAnimationFrame((ts) => this.loop(ts));
+    }
+
+    // The first time the file-select menu is shown, Cache's title cameo plays in the SAME
+    // dialog window as Act 1 (over the menu), dismissed with SPACE. One-time (global flag).
+    maybeStartTitleCameo() {
+        if (!this.saveManager.anySave() || this.saveManager.hasCameoSeen()) return;
+        this.startCameoActive = true;
+        this.dialogManager.start([
+            "Cache: Best I could do on such short notice. Don't look at me like that.",
+            "Cache: It's called 0r0b0r0u5. A placeholder, obviously — it'll have to be replaced.",
+            "Cache: You can't even touch your own tail, let alone EAT it. So the name's a bit of a joke, I guess."
+        ], () => {
+            this.startCameoActive = false;
+            this.saveManager.markCameoSeen();
+        });
     }
 }
