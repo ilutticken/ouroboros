@@ -9,6 +9,8 @@ import { GameEngine } from '../src/engine/Game.js';
 import { AudioEngine } from '../src/engine/Audio.js';
 import { Glitch } from '../src/entities/Glitch.js';
 import { NPC } from '../src/entities/NPC.js';
+import { SaveManager } from '../src/systems/SaveManager.js';
+import { NarrativeManager } from '../src/systems/NarrativeManager.js';
 
 function mountDom() {
     document.body.innerHTML = `
@@ -1614,11 +1616,11 @@ describe("Save / Load — Cache's Save Function", () => {
 
     it('round-trips through localStorage (save then load a fresh game)', () => {
         const game = newGame();
-        game.saveManager.clear();
+        game.saveManager.clearAll();
         game.state.unlocked.tailRider = true;
         game.state.upgrades.crumpleLevel = 1;
         game.saveGame();
-        expect(game.saveManager.hasSave()).toBe(true);
+        expect(game.saveManager.anySave()).toBe(true);
 
         const g2 = newGame();
         g2.loadGame();
@@ -1626,12 +1628,12 @@ describe("Save / Load — Cache's Save Function", () => {
         expect(g2.state.upgrades.crumpleLevel).toBe(1);
         expect(g2.state.gameState).toBe('PLAYING'); // loadGame resumes play
 
-        game.saveManager.clear(); // don't leak the save to other tests
+        game.saveManager.clearAll(); // don't leak the save to other tests
     });
 
     it('loading clears a Gate Thread-Suspension state — no stuck overlay (verify-pass fix)', () => {
         const a = newGame();
-        a.saveManager.clear();
+        a.saveManager.clearAll();
         a.saveGame();
 
         const b = newGame();
@@ -1641,7 +1643,7 @@ describe("Save / Load — Cache's Save Function", () => {
 
         expect(b.state.isSuspended).toBe(false);
         expect(b.onUnpauseCallback).toBe(null);
-        a.saveManager.clear();
+        a.saveManager.clearAll();
     });
 
     it('a save/load preserves an un-installed carried module — the map (verify-pass fix)', () => {
@@ -1978,16 +1980,14 @@ describe('Cache — staged Hub questline', () => {
         expect(b.state.unlocked.startScreenUnlocked).toBe(true);
     });
 
-    it('serialize/applySave round-trips cacheStage + Start-Screen flags', () => {
+    it('serialize/applySave round-trips cacheStage + startScreenUnlocked', () => {
         const a = newGame();
         a.state.unlocked.cacheStage = 2;
         a.state.unlocked.startScreenUnlocked = true;
-        a.state.unlocked.startScreenSeen = true;
         const b = newGame();
         b.applySave(a.serialize());
         expect(b.state.unlocked.cacheStage).toBe(2);
         expect(b.state.unlocked.startScreenUnlocked).toBe(true);
-        expect(b.state.unlocked.startScreenSeen).toBe(true);
     });
 
     it('the Cache sector generates a distinct at-home NPC (a real destination)', () => {
@@ -2040,14 +2040,141 @@ describe('Cache — staged Hub questline', () => {
         expect(game.dataMotes.length).toBeGreaterThanOrEqual(5);
     });
 
-    it('consuming the title cameo persists startScreenSeen (one-time across boots)', () => {
+    it('the title cameo is a global one-time flag, set when you pick a file', () => {
         const game = newGame();
-        game.saveManager.clear();
-        game.state.unlocked.startScreenUnlocked = true;
-        game.state.unlocked.startScreenSeen = false;
-        game.saveGame();                            // existing save written with seen=false
-        game.consumeStartCameo();
-        expect(game.state.unlocked.startScreenSeen).toBe(true);
-        expect(game.saveManager.load().unlocked.startScreenSeen).toBe(true);
+        game.saveManager.clearAll();
+        expect(game.saveManager.hasCameoSeen()).toBe(false);
+        game.newGame(2);                             // choosing a file counts as seeing it
+        expect(game.saveManager.hasCameoSeen()).toBe(true);
+        game.saveManager.clearAll();
+    });
+});
+
+describe('Save files — 3 slots, New Game / Load', () => {
+    beforeEach(mountDom);
+
+    it('saves/loads are bound to the active file (slot)', () => {
+        const a = newGame();
+        a.saveManager.clearAll();
+        a.activeSlot = 2;
+        a.state.unlocked.tailRider = true;
+        a.saveGame();
+        expect(a.saveManager.hasSave(2)).toBe(true);
+        expect(a.saveManager.hasSave(1)).toBe(false); // only file 2 written
+
+        const b = newGame();
+        b.loadSlot(2);
+        expect(b.activeSlot).toBe(2);
+        expect(b.state.unlocked.tailRider).toBe(true);
+        expect(b.state.gameState).toBe('PLAYING');
+        a.saveManager.clearAll();
+    });
+
+    it('New Game starts a fresh run bound to a slot without erasing its stored file', () => {
+        const a = newGame();
+        a.saveManager.clearAll();
+        a.activeSlot = 1;
+        a.state.unlocked.tailRider = true;
+        a.state.unlocked.borders = true;
+        a.saveGame();                                // file 1 now holds real progress
+
+        a.newGame(1);                                // start over in file 1
+        expect(a.state.unlocked.tailRider).toBe(false); // run is pristine...
+        expect(a.state.score).toBe(0);
+        expect(a.saveManager.hasSave(1)).toBe(true);    // ...but the stored file is untouched
+        expect(a.saveManager.load(1).unlocked.tailRider).toBe(true);
+        a.saveManager.clearAll();
+    });
+
+    it('the file-select menu is only active on START when a save exists', () => {
+        const game = newGame();
+        game.saveManager.clearAll();
+        game.state.gameState = 'START';
+        expect(game.startMenuActive()).toBe(false);  // brand-new player -> bare cold open
+        game.activeSlot = 3;
+        game.saveGame();
+        expect(game.startMenuActive()).toBe(true);   // a file exists -> menu
+        game.saveManager.clearAll();
+    });
+
+    it('menu keys navigate files and ENTER acts on the highlighted one', () => {
+        const game = newGame();
+        game.saveManager.clearAll();
+        game.activeSlot = 1;
+        game.saveGame();                             // file 1 filled; 2 & 3 empty
+        game.state.gameState = 'START';
+        game.startMenuIndex = 0;
+
+        game.startMenuHandleKey('ArrowDown');        // -> file 2 (empty)
+        expect(game.startMenuIndex).toBe(1);
+        game.startMenuHandleKey('Enter');            // empty slot -> new game there
+        expect(game.activeSlot).toBe(2);
+        expect(game.state.gameState).toBe('PLAYING');
+        game.saveManager.clearAll();
+    });
+
+    it('DEL erases a file only after a confirming second DEL', () => {
+        const game = newGame();
+        game.saveManager.clearAll();
+        game.activeSlot = 1;
+        game.saveGame();
+        game.state.gameState = 'START';
+        game.startMenuIndex = 0;
+
+        game.startMenuHandleKey('Delete');           // arms, does not erase
+        expect(game.saveManager.hasSave(1)).toBe(true);
+        expect(game.startMenuConfirmErase).toBe(1);
+        game.startMenuHandleKey('Delete');           // confirms
+        expect(game.saveManager.hasSave(1)).toBe(false);
+        game.saveManager.clearAll();
+    });
+
+    it('migrates a legacy single-key save into file 1', () => {
+        window.localStorage.setItem('ouroboros-save-v1', JSON.stringify({ v: 1, unlocked: { tailRider: true } }));
+        const sm = new SaveManager();
+        expect(sm.hasSave(1)).toBe(true);
+        expect(window.localStorage.getItem('ouroboros-save-v1')).toBe(null); // moved, not copied
+        expect(sm.load(1).unlocked.tailRider).toBe(true);
+        sm.clearAll();
+    });
+
+    // --- verify-pass fixes for the slot system ---
+
+    it('a Load resets progression flags absent from the save (no post-save leak)', () => {
+        const b = newGame();
+        b.state.unlocked.mapModule = true;        // live in-session progress...
+        b.state.unlocked.biteDroppedOff = true;
+        b._guided.add('8,3');                     // ...and a fired guidance one-shot
+        // An older save blob that predates those flags (they aren't present).
+        b.applySave({ v: 1, unlocked: { tailRider: true } });
+        expect(b.state.unlocked.mapModule).toBe(false);      // reset to default
+        expect(b.state.unlocked.biteDroppedOff).toBe(false);
+        expect(b.state.unlocked.tailRider).toBe(true);       // the saved value IS applied
+        expect(b._guided.has('8,3')).toBe(false);            // guidance memory cleared
+    });
+});
+
+describe('NarrativeManager.reset() — clean run boundary', () => {
+    beforeEach(mountDom);
+
+    it('clears logs/counters and bumps the generation (orphans an in-flight typewriter)', () => {
+        const n = new NarrativeManager({ playDoot: () => {} });
+        n.terminal = document.getElementById('narrative-terminal');
+        n.deathCount = 4;
+        n.unknownDeathCount = 2;
+        n.messageQueue = ['queued'];
+        n.isPrinting = true;
+        n.terminal.innerHTML = '<div>old log</div>';
+        const g0 = n._generation;
+
+        n.reset();
+
+        expect(n._generation).not.toBe(g0);       // stale loops will bail
+        expect(n.isPrinting).toBe(false);
+        expect(n.deathCount).toBe(0);
+        expect(n.unknownDeathCount).toBe(0);
+        expect(n.messageQueue.length).toBe(0);
+        expect(n.online).toBe(false);
+        expect(n.terminal.innerHTML).toBe('');
     });
 });

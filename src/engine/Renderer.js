@@ -280,7 +280,8 @@ export class Renderer {
             if (state.gameState === 'PAUSED' && !state.isSuspended && state.unlocked && state.unlocked.saveFunction) {
                 this.ctx.fillStyle = '#00ff00';
                 this.ctx.font = '12px "Press Start 2P", monospace';
-                this.ctx.fillText("[S] SAVE     [L] LOAD", this.canvas.width / 2, this.canvas.height / 2 + 40);
+                const fileTag = state.activeSlot ? `  (FILE ${state.activeSlot})` : '';
+                this.ctx.fillText(`[S] SAVE   [L] LOAD${fileTag}`, this.canvas.width / 2, this.canvas.height / 2 + 40);
             }
             // Save/Load confirmation toast (SAVED / LOADED / NO SAVE).
             if (state.saveFlash) {
@@ -336,21 +337,18 @@ export class Renderer {
         // Boot / title. Before Cache "builds" it (startScreenUnlocked) the boot screen is
         // the bare A-Dark-Room void with a faint prompt — preserving the stark cold open.
         // After, it's her placeholder title treatment, with a one-time walk-on cameo.
-        if (state.gameState === 'START') {
-            if (state.unlocked && state.unlocked.startScreenUnlocked) {
-                this.drawStartScreen(state);
-            } else {
-                this._startCameoT0 = null;
-                if (Math.floor(Date.now() / 600) % 2 === 0) {
-                    this.ctx.shadowBlur = 0;
-                    this.ctx.fillStyle = 'rgba(0, 255, 204, 0.5)';
-                    this.ctx.font = '9px "Press Start 2P", monospace';
-                    this.ctx.textAlign = 'center';
-                    this.ctx.fillText('press any key', this.canvas.width / 2, this.canvas.height - 28);
-                }
-            }
+        if (state.gameState === 'START' && state.startMenu) {
+            this.drawStartScreen(state); // green title + 3-file select menu
         } else {
-            this._startCameoT0 = null; // reset the walk-on latch once we leave the title
+            this._startCameoT0 = null; // reset the walk-on latch once we leave the menu
+            // Bare A-Dark-Room cold open (no save files yet): a faint blinking prompt only.
+            if (state.gameState === 'START' && Math.floor(Date.now() / 600) % 2 === 0) {
+                this.ctx.shadowBlur = 0;
+                this.ctx.fillStyle = 'rgba(0, 255, 204, 0.5)';
+                this.ctx.font = '9px "Press Start 2P", monospace';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('press any key', this.canvas.width / 2, this.canvas.height - 28);
+            }
         }
     }
 
@@ -567,46 +565,103 @@ export class Renderer {
         }
     }
 
-    // Cache's hastily-assembled placeholder title screen (shown on START once she's
-    // granted the Save Function and "thrown one together").
+    // Cache's placeholder title screen + the 3-file select menu, in the game's green-on-
+    // black terminal palette. state.startMenu = { slots:[{slot,exists,meta,savedAt}], index,
+    // confirmErase }.
     drawStartScreen(state) {
         const W = this.canvas.width, H = this.canvas.height, midX = W / 2;
+        const menu = state.startMenu || { slots: [], index: 0, confirmErase: null };
+
         this.ctx.shadowBlur = 0;
-        this.ctx.fillStyle = 'rgba(3, 6, 10, 0.88)';
+        this.ctx.fillStyle = 'rgba(5, 5, 5, 0.93)';
         this.ctx.fillRect(0, 0, W, H);
 
-        // Wordmark — sized down to fit narrow canvases.
-        const fs = Math.max(14, Math.min(34, Math.floor(W / 11)));
+        // Title wordmark — green neon, sized down for narrow canvases.
+        const fs = Math.max(14, Math.min(32, Math.floor(W / 11)));
         this.ctx.textAlign = 'center';
-        this.ctx.fillStyle = '#cfd8ff';
-        this.ctx.shadowColor = '#8f9dff';
+        this.ctx.fillStyle = '#00ff66';
+        this.ctx.shadowColor = '#00ff88';
         this.ctx.shadowBlur = 16;
         this.ctx.font = `${fs}px "Press Start 2P", monospace`;
-        this.ctx.fillText('0r0b0r0u5', midX, H * 0.34);
+        this.ctx.fillText('0r0b0r0u5', midX, H * 0.19);
         this.ctx.shadowBlur = 0;
-        this.ctx.fillStyle = '#5a6b8c';
+        this.ctx.fillStyle = '#00885f';
         this.ctx.font = '8px "Press Start 2P", monospace';
-        this.ctx.fillText('[ placeholder title // pending replacement ]', midX, H * 0.34 + fs * 0.8);
+        const titleBottom = H * 0.19 + fs * 0.9;
+        this.ctx.fillText('[ placeholder title // pending replacement ]', midX, titleBottom);
 
-        // First boot after she builds it: Cache walks on and disclaims her handiwork.
-        if (state.unlocked && !state.unlocked.startScreenSeen) this.drawStartCacheCameo(H, midX);
+        // First time the menu is ever seen: Cache walks on and disclaims the name. Anchored
+        // below the title band, and skipped on very short canvases (landscape phones) where
+        // it would collide with the subtitle / file list.
+        if (!state.startCameoSeen && H >= 320) this.drawStartCacheCameo(H, midX, titleBottom + 14);
 
-        if (Math.floor(Date.now() / 500) % 2 === 0) {
-            this.ctx.fillStyle = '#00ffcc';
-            this.ctx.font = '10px "Press Start 2P", monospace';
-            this.ctx.textAlign = 'center';
-            this.ctx.fillText('press any key to start', midX, H - 40);
+        // The three save FILES.
+        const slots = menu.slots;
+        const rowH = Math.max(22, Math.min(30, Math.floor(H * 0.06)));
+        const top = H * 0.45;
+        const lx = midX - Math.min(150, W * 0.34);
+        const ago = (t) => {
+            if (!t) return '';
+            const s = Math.max(0, (Date.now() - t) / 1000);
+            if (s < 60) return 'just now';
+            if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+            if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+            return `${Math.floor(s / 86400)}d ago`;
+        };
+
+        for (let i = 0; i < slots.length; i++) {
+            const s = slots[i];
+            const selected = i === menu.index;
+            const y = top + i * rowH;
+            this.ctx.textAlign = 'left';
+            this.ctx.font = '11px "Press Start 2P", monospace';
+
+            if (selected) {
+                this.ctx.fillStyle = '#00ff88';
+                this.ctx.shadowColor = '#00ff88';
+                this.ctx.shadowBlur = 8;
+                this.ctx.fillText('>', lx - 18, y);
+                this.ctx.shadowBlur = 0;
+            }
+            this.ctx.fillStyle = selected ? '#7dffb0' : (s.exists ? '#00b36b' : '#5a6b60');
+            this.ctx.fillText(`FILE ${s.slot}`, lx, y);
+
+            this.ctx.font = '8px "Press Start 2P", monospace';
+            if (menu.confirmErase === s.slot) {
+                this.ctx.fillStyle = '#ff5555';
+                this.ctx.fillText('ERASE? press DEL again', lx + 90, y);
+            } else if (s.exists) {
+                const m = s.meta || {};
+                const summary = `${m.place || 'In progress'} - ${m.mods || 0} mod${m.mods === 1 ? '' : 's'}`;
+                this.ctx.fillStyle = selected ? '#00cc88' : '#008f5c';
+                this.ctx.fillText(summary, lx + 90, y);
+                const t = ago(s.savedAt);
+                if (t) { this.ctx.fillStyle = '#4c6b57'; this.ctx.fillText(t, lx + 90, y + 10); }
+            } else {
+                this.ctx.fillStyle = selected ? '#8fbfa0' : '#5a6b60';
+                this.ctx.fillText('-- new game --', lx + 90, y);
+            }
         }
+
+        // Contextual controls prompt.
+        const sel = slots[menu.index];
+        this.ctx.textAlign = 'center';
+        this.ctx.font = '8px "Press Start 2P", monospace';
+        this.ctx.fillStyle = '#00ffcc';
+        this.ctx.fillText(sel && sel.exists ? 'ENTER load    N new game    DEL erase' : 'ENTER new game', midX, H - 52);
+        this.ctx.fillStyle = '#00885f';
+        this.ctx.fillText('up / down  select file', midX, H - 38);
     }
 
-    // Cache slides in from the left and leaves a self-deprecating note about the name.
-    drawStartCacheCameo(H, midX) {
+    // Cache slides in from the left and leaves a self-deprecating note about the name. She
+    // keeps her archival-blue sprite (identity cue); speech is the green terminal palette.
+    drawStartCacheCameo(H, midX, minY = 0) {
         const g = this.gridSize;
         if (this._startCameoT0 == null) this._startCameoT0 = Date.now();
         const p = Math.max(0, Math.min(1, (Date.now() - this._startCameoT0) / 1200));
-        const restX = Math.max(g, midX - 160);
+        const restX = Math.max(g, midX - Math.min(200, this.canvas.width * 0.42));
         const x = -g + (restX + g) * (p * (2 - p)); // easeOut slide-in
-        const y = H * 0.52 + Math.sin(Date.now() / 200) * 2; // tiny idle bob
+        const y = Math.max(H * 0.30, minY) + Math.sin(Date.now() / 220) * 2; // below the title band
 
         this.ctx.shadowColor = '#cfd8ff';
         this.ctx.shadowBlur = 10;
@@ -617,18 +672,15 @@ export class Renderer {
 
         if (p > 0.85) {
             this.ctx.textAlign = 'left';
-            this.ctx.fillStyle = '#aeb9dd';
+            this.ctx.fillStyle = '#00cc7a';
             this.ctx.font = '7px "Press Start 2P", monospace';
             const lines = [
-                "Cache: Best I could do on short notice.",
-                "It's called 0r0b0r0u5. Placeholder,",
-                "obviously — it'll get replaced.",
-                "You can't even touch your own tail, let",
-                "alone EAT it. So the name's a joke, I guess.",
+                "Cache: Best I could do on short",
+                "notice. It's a placeholder — you",
+                "can't even eat your own tail. Joke.",
             ];
-            let ly = y - 10 - (lines.length - 1) * 11;
-            if (ly < 12) ly = 12;
-            for (const line of lines) { this.ctx.fillText(line, x + g + 8, ly); ly += 11; }
+            let ly = y - 2;
+            for (const line of lines) { this.ctx.fillText(line, x + g + 8, ly); ly += 9; }
             this.ctx.textAlign = 'center';
         }
     }

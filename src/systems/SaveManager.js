@@ -2,9 +2,14 @@
 // bigger, client-only, a simple key->string store). Every method is defensively
 // wrapped so a browser with storage disabled (private mode, quota) degrades to
 // "no save" instead of throwing and taking the game down.
+//
+// Three independent SAVE FILES (slots 1..3). A legacy single-key save from before this
+// system is migrated into slot 1 on first construction so nobody loses progress.
 export class SaveManager {
-    constructor(key = 'ouroboros-save-v1') {
-        this.key = key;
+    constructor(prefix = 'ouroboros-save-v1') {
+        this.prefix = prefix;
+        this.slotCount = 3;
+        this.cameoKey = 'ouroboros-cameo-seen'; // global (not per-slot) one-time title cameo
         // Feature-detect once: some environments expose localStorage but throw on use.
         this.available = (() => {
             try {
@@ -16,37 +21,89 @@ export class SaveManager {
                 return false;
             }
         })();
+        this._migrateLegacy();
     }
 
-    hasSave() {
+    _slotKey(slot) { return `${this.prefix}-s${slot}`; }
+
+    // Move a pre-slots single-key save into slot 1 (once), so an existing player keeps
+    // their progress when this update lands.
+    _migrateLegacy() {
+        if (!this.available) return;
+        try {
+            const legacy = window.localStorage.getItem(this.prefix);
+            if (legacy !== null && window.localStorage.getItem(this._slotKey(1)) === null) {
+                window.localStorage.setItem(this._slotKey(1), legacy);
+                window.localStorage.removeItem(this.prefix);
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    hasSave(slot) {
         if (!this.available) return false;
-        try { return window.localStorage.getItem(this.key) !== null; } catch (e) { return false; }
+        try { return window.localStorage.getItem(this._slotKey(slot)) !== null; } catch (e) { return false; }
     }
 
-    // Store a JSON-serializable object. Returns true on success.
-    save(data) {
+    anySave() {
+        for (let s = 1; s <= this.slotCount; s++) if (this.hasSave(s)) return true;
+        return false;
+    }
+
+    // Store a JSON-serializable object into a slot. Stamps savedAt for the file summary.
+    // Returns true on success.
+    save(slot, data) {
         if (!this.available) return false;
         try {
-            window.localStorage.setItem(this.key, JSON.stringify(data));
+            const blob = { ...data, savedAt: Date.now() };
+            window.localStorage.setItem(this._slotKey(slot), JSON.stringify(blob));
             return true;
         } catch (e) {
             return false;
         }
     }
 
-    // Return the parsed object, or null if there's nothing (or it's corrupt).
-    load() {
+    // Return the parsed object for a slot, or null if empty / corrupt.
+    load(slot) {
         if (!this.available) return null;
         try {
-            const raw = window.localStorage.getItem(this.key);
+            const raw = window.localStorage.getItem(this._slotKey(slot));
             return raw ? JSON.parse(raw) : null;
         } catch (e) {
             return null;
         }
     }
 
-    clear() {
+    clear(slot) {
         if (!this.available) return;
-        try { window.localStorage.removeItem(this.key); } catch (e) { /* ignore */ }
+        try { window.localStorage.removeItem(this._slotKey(slot)); } catch (e) { /* ignore */ }
+    }
+
+    // Wipe every slot (and the cameo flag) — used to reset from a truly clean slate.
+    clearAll() {
+        for (let s = 1; s <= this.slotCount; s++) this.clear(s);
+        if (!this.available) return;
+        try { window.localStorage.removeItem(this.cameoKey); } catch (e) { /* ignore */ }
+    }
+
+    // File-select metadata for every slot: { slot, exists, meta, savedAt }. `meta` is the
+    // display summary the save wrote (place reached, mods owned); null when empty.
+    slots() {
+        const out = [];
+        for (let s = 1; s <= this.slotCount; s++) {
+            const d = this.load(s);
+            out.push({ slot: s, exists: !!d, meta: d ? (d.meta || null) : null, savedAt: d ? (d.savedAt || null) : null });
+        }
+        return out;
+    }
+
+    // Global one-time flag for Cache's title-screen walk-on cameo (independent of slots,
+    // so it plays exactly once across all files).
+    hasCameoSeen() {
+        if (!this.available) return false;
+        try { return window.localStorage.getItem(this.cameoKey) === '1'; } catch (e) { return false; }
+    }
+    markCameoSeen() {
+        if (!this.available) return;
+        try { window.localStorage.setItem(this.cameoKey, '1'); } catch (e) { /* ignore */ }
     }
 }

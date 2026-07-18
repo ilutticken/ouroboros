@@ -11,6 +11,21 @@ export class NarrativeManager {
         this.online = false;
         this.skipRequested = false;
         this.unknownDeathCount = 0; // deaths with no specific cause (glitch drain) — for the escalating lines
+        this._generation = 0;       // bumped by reset() to abandon an in-flight typewriter loop
+    }
+
+    // Wipe all per-run state (queued/printing logs, death counters, the on-screen terminal)
+    // so a New Game / Load doesn't inherit the previous run's logs or escalation counts.
+    // Leaves the monitor OFFLINE; the caller re-arms it if progress warrants.
+    reset() {
+        this.messageQueue = [];
+        this.isPrinting = false;
+        this.skipRequested = false;
+        this.deathCount = 0;
+        this.unknownDeathCount = 0;
+        this.online = false;
+        this._generation++; // any in-flight processQueue loop is now stale and will bail
+        if (this.terminal) this.terminal.innerHTML = '';
     }
 
     printMessage(msg) {
@@ -30,6 +45,7 @@ export class NarrativeManager {
 
         this.isPrinting = true;
         this.skipRequested = false;
+        const gen = this._generation; // if reset() runs mid-print, this loop is orphaned
         const msg = this.messageQueue.shift();
 
         const line = document.createElement('div');
@@ -38,6 +54,7 @@ export class NarrativeManager {
 
         // Typewriter effect
         for (let i = 0; i < msg.length; i++) {
+            if (gen !== this._generation) return; // reset() ran: abandon this stale loop (no phantom doots, no double-writer)
             if (this.skipRequested) { line.innerHTML = msg; break; } // fast-complete
 
             line.innerHTML += msg.charAt(i);
@@ -54,8 +71,10 @@ export class NarrativeManager {
             await new Promise(r => setTimeout(r, 30));
         }
 
+        if (gen !== this._generation) return;
         this.terminal.scrollTop = this.terminal.scrollHeight;
         await new Promise(r => setTimeout(r, this.skipRequested ? 120 : 1000)); // dwell
+        if (gen !== this._generation) return;
         this.isPrinting = false;
         this.skipRequested = false;
         this.processQueue();

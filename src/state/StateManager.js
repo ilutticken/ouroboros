@@ -13,6 +13,16 @@ export class StateManager {
             pauseMenu: false,
             wallBroken: false,
             tailRider: false,
+            // Progression flags set ad-hoc during play. Declared here (default false) so
+            // serialize() captures them AND a reset/load baseline can clear them — otherwise
+            // a load that merges a save lacking a key can't turn a live-true flag back off.
+            biteDroppedOff: false,   // 2-Bit has hopped off the tail in Localhost
+            mapModule: false,        // Denny's Topology Map is installed (minimap online)
+            moduleSlot: false,       // the 3x3 module socket is unlocked
+            dennyMet: false,         // bumped Denny
+            dennySlipped: false,     // walked past Denny without meeting him
+            dennyMapDropped: false,  // Denny has dropped his map item
+            subSmashRevealed: false, // the Architect's sub-smash gloat has fired
             cadenzaFound: false, // set once Cadenza's sector is reached — silences her homing beacon
             cacheFound: false,  // set once you've spelled CACHE across death screens — she manifests in the Hub
             saveFunction: false, // Cache grants this (if you have the pause menu) — unlocks Save/Load
@@ -20,8 +30,7 @@ export class StateManager {
             // 2 = spare-data gift given (Hub seeds data on respawn), 3 = directions given
             // (her sector is on your map and she stops manifesting in the Hub).
             cacheStage: 0,
-            startScreenUnlocked: false, // Cache builds the title screen when she grants Save (stage 1)
-            startScreenSeen: false      // her one-time title-screen walk-on cameo has played
+            startScreenUnlocked: false // Cache builds the title screen when she grants Save (stage 1)
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data

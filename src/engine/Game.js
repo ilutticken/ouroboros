@@ -28,6 +28,9 @@ export class GameEngine {
         this.saveManager = new SaveManager();
         this._saveFlash = 0; // ms remaining on a "SAVED"/"LOADED" pause-menu toast
         this._saveFlashMsg = '';
+        this.activeSlot = 1;               // which of the 3 save FILES the current run reads/writes
+        this.startMenuIndex = 0;           // highlighted file on the boot file-select menu
+        this.startMenuConfirmErase = null; // slot armed for erase (a second DEL confirms)
 
         // Entites
         this.snake = new Snake(
@@ -104,6 +107,19 @@ export class GameEngine {
             else if (e.key === 'l' || e.key === 'L') this.loadGame();
         });
 
+        // Boot file-select menu (New Game / Load across 3 files). Only live when the START
+        // screen is showing the menu (i.e. at least one save file exists). Registered
+        // BEFORE input.init; stopImmediatePropagation keeps the wake-press (input.init's
+        // onFirstInput) from ALSO firing on a menu key — critically, erasing the LAST file
+        // makes startMenuActive() flip false mid-event, which would otherwise let the same
+        // keypress fall through and auto-start a run.
+        window.addEventListener('keydown', (e) => {
+            if (!this.startMenuActive()) return;
+            this.audio.init(); // idempotent — so the FIRST menu key isn't silent
+            this.startMenuHandleKey(e.key);
+            e.stopImmediatePropagation();
+        });
+
         // Game State Variables
         this.lastTime = performance.now();
         this.baseSpeed = 100; // ms per move
@@ -153,9 +169,11 @@ export class GameEngine {
         this.input.init(this.gridSize, () => {
             this.audio.init();
             if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
-            if (this.state.gameState === 'START' || this.state.gameState === 'DEAD') {
-                // Booting from Cache's title screen consumes her one-time walk-on cameo.
-                if (this.state.gameState === 'START') this.consumeStartCameo();
+            if (this.state.gameState === 'DEAD') {
+                this.state.gameState = 'PLAYING'; // respawn wake-press
+            } else if (this.state.gameState === 'START' && !this.startMenuActive()) {
+                // Bare-void cold open (no save files yet): any key starts the first run.
+                // When the file-select menu IS up, its own listener handles selection.
                 this.state.gameState = 'PLAYING';
             }
         }, () => {
@@ -1334,13 +1352,128 @@ export class GameEngine {
         if (inHub && seedMotes && this.state.unlocked.cacheStage >= 2) this.seedHubData();
     }
 
-    // Consume Cache's one-time title-screen cameo when you boot from an unlocked START
-    // screen. Persist the flag right away (if a save already exists) so a tab close before
-    // the next manual save can't replay the "one-time" cameo on the next boot.
-    consumeStartCameo() {
-        if (!this.state.unlocked.startScreenUnlocked || this.state.unlocked.startScreenSeen) return;
-        this.state.unlocked.startScreenSeen = true;
-        if (this.saveManager.hasSave()) this.saveManager.save(this.serialize());
+    // --- Boot file-select menu (New Game / Load across 3 save files) -------------------
+
+    // The menu is live only on the START screen and only once at least one file exists;
+    // a brand-new player gets the bare "press any key" cold open instead.
+    startMenuActive() {
+        return this.state.gameState === 'START' && this.saveManager.anySave();
+    }
+
+    // Handle one key on the file-select menu: navigate files, or act on the highlighted one.
+    // ENTER = load a saved file / start a new game in an empty one; N = new game here even if
+    // occupied (the old save survives until you save over it); DEL = erase, twice to confirm.
+    startMenuHandleKey(key) {
+        const slots = this.saveManager.slots();
+        const n = slots.length;
+        if (key === 'ArrowUp' || key === 'w' || key === 'W') {
+            this.startMenuIndex = (this.startMenuIndex - 1 + n) % n;
+            this.startMenuConfirmErase = null;
+            this.audio.playBeep();
+        } else if (key === 'ArrowDown' || key === 's' || key === 'S') {
+            this.startMenuIndex = (this.startMenuIndex + 1) % n;
+            this.startMenuConfirmErase = null;
+            this.audio.playBeep();
+        } else if (key === 'Enter' || key === ' ') {
+            const sel = slots[this.startMenuIndex];
+            this.startMenuConfirmErase = null;
+            if (sel.exists) this.loadSlot(sel.slot);
+            else this.newGame(sel.slot);
+        } else if (key === 'n' || key === 'N') {
+            this.startMenuConfirmErase = null;
+            this.newGame(slots[this.startMenuIndex].slot);
+        } else if (key === 'Delete' || key === 'Backspace' || key === 'x' || key === 'X') {
+            const sel = slots[this.startMenuIndex];
+            if (!sel.exists) return;
+            if (this.startMenuConfirmErase === sel.slot) {
+                this.saveManager.clear(sel.slot);
+                this.startMenuConfirmErase = null;
+                this.audio.playCrack();
+            } else {
+                this.startMenuConfirmErase = sel.slot; // arm; a second DEL confirms
+            }
+        }
+    }
+
+    // Start a fresh run bound to a save file. Does NOT erase the file's stored data — it
+    // only starts a new game; the slot is overwritten when you next save into it.
+    newGame(slot) {
+        this.activeSlot = slot;
+        this.saveManager.markCameoSeen(); // reaching the menu counts as seeing the cameo
+        this.resetToNewGame();
+        this.state.gameState = 'PLAYING';
+    }
+
+    // Load a save file into a fresh run (Hub), binding it as the active file.
+    loadSlot(slot) {
+        const d = this.saveManager.load(slot);
+        if (d && this.applySave(d)) {
+            this.activeSlot = slot;
+            this.saveManager.markCameoSeen();
+            this.state.gameState = 'PLAYING';
+            return true;
+        }
+        return false;
+    }
+
+    // Reset every run/world/progress field to a pristine "new worm in the Void" state,
+    // WITHOUT touching localStorage (the file is only written when you save). Subsystems
+    // (shopManager, narrative) hold this.state, so we reset its fields in place rather than
+    // replacing the object.
+    resetToNewGame() {
+        const fresh = new StateManager();
+        Object.assign(this.state.unlocked, fresh.unlocked);
+        Object.assign(this.state.upgrades, fresh.upgrades);
+        this.state.score = 0;
+        this.state.biteTopicsHeard = 0;
+        this.state.isSuspended = false;
+        this.deathCode = '';
+
+        // Fresh, unopened world.
+        this.worldManager.rooms = {};
+        this.worldManager.brokenWalls = new Set();
+        this.worldManager.wallDamage = {};
+        this.worldManager.scannerReveals = {};
+        this.worldManager.currentRoomX = 0;
+        this.worldManager.currentRoomY = 0;
+
+        const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
+        const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
+        this.snake.reset(cx, cy, false);
+        this.input.reset();
+        this.gear = 0; this.speed = this.baseSpeed; this.moveTimer = 0; this.pendingUnfold = 0;
+        this.carriedModule = null; this.moduleLoad = null; this.bursts = []; this.dataMotes = [];
+        this.onUnpauseCallback = null; this._guided = new Set(); this._tick = 0;
+        this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
+
+        // Back to the cold open: HUD hidden, terminal wiped (re-revealed at 5 Data).
+        const top = document.getElementById('ui-layer');
+        const bot = document.getElementById('ui-layer-bottom');
+        if (top) top.classList.add('hidden');
+        if (bot) bot.classList.add('hidden');
+        this.narrative.reset();
+
+        const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
+        this.apple = room.apple;
+        this.glitches = room.glitches;
+        this.npcs = room.npcs;
+        this.obstacles = room.obstacles || [];
+        this.refreshScore();
+    }
+
+    // Short display summary written into a save file for the file-select screen: how far
+    // you got + how many mods you own. (Score/length aren't restored, so we don't show them.)
+    saveMeta() {
+        const u = this.state.unlocked, up = this.state.upgrades;
+        let place = 'The Void';
+        if (u.borders) place = 'The Wilds';
+        if (u.pauseMenu) place = 'Past the Firewall';
+        if (u.biteDroppedOff) place = 'Localhost';
+        if (u.cadenzaFound) place = 'Cadenza';
+        if (u.cacheStage >= 3) place = 'Cold Storage';
+        const mods = ['dataCompression', 'reinforcedSegments', 'pivot', 'scanner'].filter(k => up[k]).length
+            + (up.crumpleLevel > 0 ? 1 : 0);
+        return { place, mods };
     }
 
     // --- Save / Load (localStorage via SaveManager) -----------------------------------
@@ -1360,13 +1493,18 @@ export class GameEngine {
                 brokenWalls: [...this.worldManager.brokenWalls],
                 wallDamage: { ...this.worldManager.wallDamage },
             },
+            meta: this.saveMeta(), // display summary for the file-select screen
         };
     }
 
     applySave(d) {
         if (!d) return false;
-        if (d.unlocked) Object.assign(this.state.unlocked, d.unlocked);
-        if (d.upgrades) Object.assign(this.state.upgrades, d.upgrades);
+        // Reset to fresh defaults BEFORE merging the save: a load is a fresh run, and a save
+        // written before a progression flag existed omits that key — a bare merge would then
+        // leave the live-true flag set, leaking post-save progress into the loaded run.
+        const fresh = new StateManager();
+        Object.assign(this.state.unlocked, fresh.unlocked, d.unlocked || {});
+        Object.assign(this.state.upgrades, fresh.upgrades, d.upgrades || {});
         this.state.biteTopicsHeard = d.biteTopicsHeard || 0;
         this.deathCode = d.deathCode || '';
         if (d.world) {
@@ -1374,8 +1512,11 @@ export class GameEngine {
             this.worldManager.wallDamage = d.world.wallDamage || {};
         }
         // A load starts a fresh run in the Hub with the restored progress. Wipe cached
-        // rooms so they regenerate from the restored flags.
+        // rooms so they regenerate from the restored flags, and clear the previous run's
+        // Scanner reveals and Architect-guidance memory so their one-shots can replay.
         this.worldManager.rooms = {};
+        this.worldManager.scannerReveals = {};
+        this._guided = new Set();
         this.worldManager.currentRoomX = 0;
         this.worldManager.currentRoomY = 0;
         this.snake.reset(
@@ -1410,6 +1551,8 @@ export class GameEngine {
         if (this.state.unlocked.dennyMapDropped && this.carriedModule !== 'map' && !this.state.unlocked.mapModule) {
             this.state.unlocked.dennyMapDropped = false;
         }
+        // A load is a fresh run: wipe the previous run's terminal logs / death counters.
+        this.narrative.reset();
         // Re-reveal the HUD / arm the terminal if progress warrants it.
         if (this.state.unlocked.ui) {
             const top = document.getElementById('ui-layer');
@@ -1423,14 +1566,15 @@ export class GameEngine {
     }
 
     saveGame() {
-        this.flashSave(this.saveManager.save(this.serialize()) ? 'SAVED' : 'SAVE FAILED');
+        const ok = this.saveManager.save(this.activeSlot, this.serialize());
+        this.flashSave(ok ? `SAVED - FILE ${this.activeSlot}` : 'SAVE FAILED');
     }
 
     loadGame() {
-        const d = this.saveManager.load();
+        const d = this.saveManager.load(this.activeSlot);
         if (d && this.applySave(d)) {
             this.state.gameState = 'PLAYING';
-            this.flashSave('LOADED');
+            this.flashSave(`LOADED - FILE ${this.activeSlot}`);
         } else {
             this.flashSave('NO SAVE');
         }
@@ -1553,6 +1697,15 @@ export class GameEngine {
         this.state.dataMotes = this.dataMotes; // Cache's spare-data pile in the Hub
         this.state.deathCode = this.deathCode; // the CACHE puzzle buffer, shown on the death screen
         this.state.saveFlash = this._saveFlash > 0 ? this._saveFlashMsg : null; // SAVED/LOADED toast
+        this.state.activeSlot = this.activeSlot;
+        // File-select menu payload for the Renderer — only when a save file exists (else the
+        // START screen is the bare cold-open void).
+        if (this.state.gameState === 'START' && this.saveManager.anySave()) {
+            this.state.startMenu = { slots: this.saveManager.slots(), index: this.startMenuIndex, confirmErase: this.startMenuConfirmErase };
+            this.state.startCameoSeen = this.saveManager.hasCameoSeen();
+        } else {
+            this.state.startMenu = null;
+        }
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();
@@ -1577,13 +1730,12 @@ export class GameEngine {
     }
 
     start() {
-        // Auto-load a prior session's progress (Candy Box style): if a save exists, the
-        // player keeps their unlocks/upgrades/opened world across browser sessions. The
-        // boot screen (press any key) still shows; the load just seeds the progress.
-        if (this.saveManager.hasSave()) {
-            const d = this.saveManager.load();
-            if (d) this.applySave(d);
-        }
+        // No auto-load: the boot screen presents a file-select menu (New Game / Load) when
+        // any save file exists; a brand-new player gets the bare "press any key" cold open.
+        // Default the cursor to the first occupied file so ENTER continues your progress.
+        const slots = this.saveManager.slots();
+        const firstFilled = slots.findIndex(s => s.exists);
+        this.startMenuIndex = firstFilled >= 0 ? firstFilled : 0;
         this.lastTime = performance.now();
         requestAnimationFrame((ts) => this.loop(ts));
     }
