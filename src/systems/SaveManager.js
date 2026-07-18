@@ -10,6 +10,7 @@ export class SaveManager {
         this.prefix = prefix;
         this.slotCount = 3;
         this.cameoKey = 'ouroboros-cameo-seen'; // global (not per-slot) one-time title cameo
+        this.settingsKey = 'ouroboros-settings'; // global a11y/player settings (volume, motion)
         // Feature-detect once: some environments expose localStorage but throw on use.
         this.available = (() => {
             try {
@@ -105,5 +106,16 @@ export class SaveManager {
     markCameoSeen() {
         if (!this.available) return;
         try { window.localStorage.setItem(this.cameoKey, '1'); } catch (e) { /* ignore */ }
+    }
+
+    // Global player settings (volume / mute / reduce-motion) — independent of the save
+    // slots, so preferences persist across New Game / Load and are NOT wiped by clearAll.
+    loadSettings() {
+        if (!this.available) return null;
+        try { const raw = window.localStorage.getItem(this.settingsKey); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+    }
+    saveSettings(obj) {
+        if (!this.available) return;
+        try { window.localStorage.setItem(this.settingsKey, JSON.stringify(obj)); } catch (e) { /* ignore */ }
     }
 }

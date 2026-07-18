@@ -2271,3 +2271,73 @@ describe('NarrativeManager.reset() — clean run boundary', () => {
         expect(n.terminal.innerHTML).toBe('');
     });
 });
+
+describe('Accessibility — Options overlay & settings', () => {
+    beforeEach(() => { mountDom(); try { window.localStorage.removeItem('ouroboros-settings'); } catch (e) {} });
+
+    it('O toggles the overlay, which freezes the sim while open', () => {
+        const game = newGame();
+        game.audio.init = () => {}; // avoid AudioContext in happy-dom
+        expect(game.optionsOpen).toBe(false);
+        game.toggleOptions();
+        expect(game.optionsOpen).toBe(true);
+        game.state.gameState = 'PLAYING';
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        step(game, { x: 20, y: 0 });
+        expect(game.snake.head.x).toBe(100); // frozen: no move
+        game.toggleOptions();
+        expect(game.optionsOpen).toBe(false);
+    });
+
+    it('adjusts volume / mute / reduce-motion and persists each change', () => {
+        const game = newGame();
+        game.audio.setVolume = vi.fn();
+        game.saveManager.saveSettings = vi.fn();
+        game.settings.volume = 0.4; game.settings.muted = false; game.settings.reduceMotion = false;
+        game.optionsOpen = true;
+
+        game.optionsIndex = 0; // Volume
+        game.optionsHandleKey('ArrowRight');
+        expect(game.settings.volume).toBeCloseTo(0.5);
+        expect(game.audio.setVolume).toHaveBeenCalled();
+        expect(game.saveManager.saveSettings).toHaveBeenCalled();
+
+        game.optionsIndex = 1; // Mute
+        game.optionsHandleKey('Enter');
+        expect(game.settings.muted).toBe(true);
+
+        game.optionsIndex = 2; // Reduce Motion
+        game.optionsHandleKey(' ');
+        expect(game.settings.reduceMotion).toBe(true);
+    });
+
+    it('mute sends volume 0 to the audio engine; unmute restores it', () => {
+        const game = newGame();
+        game.audio.setVolume = vi.fn();
+        game.settings.volume = 0.5; game.settings.muted = true;
+        game.applySettings();
+        expect(game.audio.setVolume).toHaveBeenLastCalledWith(0);
+        game.settings.muted = false;
+        game.applySettings();
+        expect(game.audio.setVolume).toHaveBeenLastCalledWith(0.5);
+    });
+
+    it('settings persist independently of save slots and survive clearAll', () => {
+        const game = newGame();
+        game.saveManager.saveSettings({ volume: 0.7, muted: true, reduceMotion: true });
+        const g2 = newGame();
+        expect(g2.saveManager.loadSettings()).toEqual({ volume: 0.7, muted: true, reduceMotion: true });
+        g2.saveManager.clearAll();                       // wipes save files...
+        expect(g2.saveManager.loadSettings()).not.toBe(null); // ...but NOT preferences
+        window.localStorage.removeItem('ouroboros-settings');
+    });
+
+    it('a new game loads persisted settings and applies them (mute honored)', () => {
+        const g0 = newGame();
+        g0.saveManager.saveSettings({ volume: 0.3, muted: true, reduceMotion: false });
+        const game = newGame(); // constructor loads + applies settings
+        expect(game.settings.volume).toBe(0.3);
+        expect(game.settings.muted).toBe(true);
+        window.localStorage.removeItem('ouroboros-settings');
+    });
+});

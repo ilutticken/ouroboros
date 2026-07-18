@@ -6,6 +6,9 @@ export class Renderer {
     }
     
     draw(state, snake, apple, npcs, glitches, worldManager, obstacles) {
+        // Reduce-motion (a11y): when on, oscillating pulses hold at a steady value and
+        // blinking prompts stay lit — nothing strobes. Threaded through the whole frame.
+        const rm = !!state.reduceMotion;
         // Clear screen (The Void)
         this.ctx.fillStyle = '#050505';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
@@ -64,7 +67,7 @@ export class Renderer {
                 const rx = worldManager.currentRoomX;
                 const ry = worldManager.currentRoomY;
                 const threshold = worldManager.wallBreakThreshold || 3;
-                const pulse = 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 200));
+                const pulse = rm ? 0.8 : 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 200));
 
                 for (const dir of ['up', 'down', 'left', 'right']) {
                     const wp = worldManager.getWeakPoint(rx, ry, dir);
@@ -115,7 +118,7 @@ export class Renderer {
             // Cadenza's DIRECTIONAL cue (a11y: her beacon must not be sound-only). In
             // rooms near her sealed sector the wall(s) facing her breathe with her tone,
             // stronger the closer you are — so which way to go is also VISIBLE.
-            if (state.cadenzaBeacon) this.drawCadenzaPulse(state.cadenzaBeacon, W, H);
+            if (state.cadenzaBeacon) this.drawCadenzaPulse(state.cadenzaBeacon, W, H, rm);
         }
         
         // Draw Obstacles (Solid Green)
@@ -127,15 +130,30 @@ export class Renderer {
             }
         }
         
-        // Draw Glitches (Magenta)
+        // Draw Glitches (Magenta) — with a dark X so corruption reads as a HAZARD by SHAPE,
+        // not colour alone (a11y §2.6 redundant coding): distinct from the apple's plain data
+        // square even in grayscale / for red-magenta colour-blindness.
         if (glitches) {
-            this.ctx.fillStyle = '#ff00ff';
-            this.ctx.shadowColor = '#ff00ff';
+            const gg = this.gridSize;
             for (const g of glitches) {
-                this.ctx.fillRect(g.x + 2, g.y + 2, this.gridSize - 4, this.gridSize - 4);
+                this.ctx.fillStyle = '#ff00ff';
+                this.ctx.shadowColor = '#ff00ff';
+                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+                this.ctx.fillRect(g.x + 2, g.y + 2, gg - 4, gg - 4);
+                this.ctx.shadowBlur = 0;
+                this.ctx.strokeStyle = '#2a002a';
+                this.ctx.lineWidth = 2;
+                this.ctx.beginPath();
+                this.ctx.moveTo(g.x + 5, g.y + 5);
+                this.ctx.lineTo(g.x + gg - 5, g.y + gg - 5);
+                this.ctx.moveTo(g.x + gg - 5, g.y + 5);
+                this.ctx.lineTo(g.x + 5, g.y + gg - 5);
+                this.ctx.stroke();
             }
+            // Restore the frame glow the X-stroke zeroed, so the apple (drawn next) still glows.
+            this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
         }
-        
+
         // Module Slot (socket you install carried modules into)
         this.drawModuleSlot(state);
 
@@ -148,7 +166,7 @@ export class Renderer {
         // so they read as HERS and as smaller than the main apple.
         if (state.dataMotes && state.dataMotes.length) {
             const g = this.gridSize;
-            const pulse = 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 300));
+            const pulse = rm ? 0.8 : 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 300));
             for (const m of state.dataMotes) {
                 this.ctx.fillStyle = '#ff2f6b';
                 this.ctx.shadowColor = '#cfd8ff';
@@ -273,30 +291,35 @@ export class Renderer {
             this.ctx.fillStyle = '#00ff00';
             this.ctx.font = '12px "Press Start 2P", monospace';
             
-            const pulse = Math.floor(Date.now() / 500) % 2 === 0;
+            const pulse = rm ? true : Math.floor(Date.now() / 500) % 2 === 0;
 
             // Cache's Save Function — offered from the REAL pause menu (not the Gate
             // Thread-Suspension cutscene) once she's granted it.
             if (state.gameState === 'PAUSED' && !state.isSuspended && state.unlocked && state.unlocked.saveFunction) {
                 this.ctx.fillStyle = '#00ff00';
-                this.ctx.font = '12px "Press Start 2P", monospace';
+                this.ctx.font = '16px "Press Start 2P", monospace';
                 const fileTag = state.activeSlot ? `  (FILE ${state.activeSlot})` : '';
                 this.ctx.fillText(`[S] SAVE   [L] LOAD${fileTag}`, this.canvas.width / 2, this.canvas.height / 2 + 40);
             }
             // Save/Load confirmation toast (SAVED / LOADED / NO SAVE).
             if (state.saveFlash) {
                 this.ctx.fillStyle = '#00ffcc';
-                this.ctx.font = '14px "Press Start 2P", monospace';
+                this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.fillText(state.saveFlash, this.canvas.width / 2, this.canvas.height / 2 + 76);
             }
 
             this.ctx.fillStyle = '#00ff00';
-            this.ctx.font = '12px "Press Start 2P", monospace';
+            this.ctx.font = '16px "Press Start 2P", monospace';
             // Only prompt ESC when ESC actually resumes — i.e. genuinely PAUSED. During
             // the Gate cutscene (isSuspended but gameState==='DIALOG') ESC is dead, so
-            // the blinking "PRESS [ESC] TO RESUME" would be a lie.
+            // the "PRESS [ESC] TO RESUME" prompt would be a lie. (Steady under reduce-motion.)
             if (pulse && state.gameState === 'PAUSED') {
                 this.ctx.fillText("PRESS [ESC] TO RESUME", this.canvas.width / 2, this.canvas.height - 60);
+            }
+            if (state.gameState === 'PAUSED') {
+                this.ctx.fillStyle = '#00885f';
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.fillText("[O] ACCESSIBILITY", this.canvas.width / 2, this.canvas.height - 34);
             }
         }
 
@@ -324,13 +347,13 @@ export class Renderer {
             // per respawn; spelling CACHE across five deaths summons the archivist.
             const code = ((state.deathCode || '').padEnd(5, '_')).slice(-5).split('').join(' ');
             this.ctx.fillStyle = '#00776a';
-            this.ctx.font = '14px "Press Start 2P", monospace';
-            this.ctx.fillText(code, midX, midY + 4);
+            this.ctx.font = '16px "Press Start 2P", monospace';
+            this.ctx.fillText(code, midX, midY + 6);
 
-            if (Math.floor(Date.now() / 500) % 2 === 0) {
+            if (rm || Math.floor(Date.now() / 500) % 2 === 0) { // steady under reduce-motion
                 this.ctx.fillStyle = '#00ffcc';
-                this.ctx.font = '10px "Press Start 2P", monospace';
-                this.ctx.fillText('PRESS ANY KEY TO CONTINUE', midX, midY + 30);
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.fillText('PRESS ANY KEY TO CONTINUE', midX, midY + 36);
             }
         }
 
@@ -341,15 +364,71 @@ export class Renderer {
             this.drawStartScreen(state); // green title + 3-file select menu
             if (state.titleCameoSprite) this.drawTitleCameoSprite(state.titleCameoSprite);
         } else {
-            // Bare A-Dark-Room cold open (no save files yet): a faint blinking prompt only.
-            if (state.gameState === 'START' && Math.floor(Date.now() / 600) % 2 === 0) {
+            // Bare A-Dark-Room cold open (no save files yet): a faint prompt (kept dim to
+            // preserve the stark opening, but legible-sized and steady under reduce-motion).
+            if (state.gameState === 'START' && (rm || Math.floor(Date.now() / 600) % 2 === 0)) {
                 this.ctx.shadowBlur = 0;
-                this.ctx.fillStyle = 'rgba(0, 255, 204, 0.5)';
-                this.ctx.font = '9px "Press Start 2P", monospace';
+                this.ctx.fillStyle = 'rgba(0, 255, 204, 0.55)';
+                this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.textAlign = 'center';
-                this.ctx.fillText('press any key', this.canvas.width / 2, this.canvas.height - 28);
+                this.ctx.fillText('press any key', this.canvas.width / 2, this.canvas.height - 34);
+                this.ctx.fillStyle = 'rgba(0, 255, 204, 0.4)';
+                this.ctx.fillText('[O] accessibility', this.canvas.width / 2, this.canvas.height - 14);
             }
         }
+
+        // Accessibility / Options overlay — drawn last, on top of everything.
+        if (state.options) this.drawOptions(state);
+    }
+
+    // Accessibility / Options overlay: Volume / Mute / Reduce Motion. Green-on-black, all text
+    // at the 16px a11y minimum, reachable in ANY state. state.options = { index, settings }.
+    drawOptions(state) {
+        const W = this.canvas.width, H = this.canvas.height, midX = W / 2;
+        const o = state.options, s = o.settings;
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+        this.ctx.globalAlpha = 1;
+        this.ctx.fillStyle = 'rgba(3, 8, 6, 0.93)';
+        this.ctx.fillRect(0, 0, W, H);
+        this.ctx.strokeStyle = '#00ff88';
+        this.ctx.lineWidth = 4;
+        this.ctx.strokeRect(12, 12, W - 24, H - 24);
+
+        this.ctx.textAlign = 'center';
+        this.ctx.fillStyle = '#00ff88';
+        this.ctx.shadowColor = '#00ff88';
+        this.ctx.shadowBlur = 10;
+        this.ctx.font = '24px "Press Start 2P", monospace';
+        this.ctx.fillText('ACCESSIBILITY', midX, H * 0.24);
+        this.ctx.shadowBlur = 0;
+
+        const rows = [
+            { label: 'VOLUME', value: s.muted ? 'MUTED' : Math.round(s.volume * 100) + '%' },
+            { label: 'MUTE', value: s.muted ? 'ON' : 'OFF' },
+            { label: 'REDUCE MOTION', value: s.reduceMotion ? 'ON' : 'OFF' },
+        ];
+        const top = H * 0.40, rowH = Math.max(34, Math.floor(H * 0.09));
+        const lx = midX - Math.min(220, W * 0.42), rx = midX + Math.min(220, W * 0.42);
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        for (let i = 0; i < rows.length; i++) {
+            const y = top + i * rowH;
+            const sel = i === o.index;
+            this.ctx.textAlign = 'left';
+            this.ctx.fillStyle = sel ? '#7dffb0' : '#00b36b';
+            this.ctx.fillText((sel ? '> ' : '  ') + rows[i].label, lx, y);
+            this.ctx.textAlign = 'right';
+            this.ctx.fillStyle = sel ? '#00ffcc' : '#008f5c';
+            this.ctx.fillText(rows[i].value, rx, y);
+        }
+
+        this.ctx.textAlign = 'center';
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.fillStyle = '#00ffcc';
+        this.ctx.fillText('up/down select    left/right adjust', midX, H - H * 0.17);
+        this.ctx.fillStyle = '#00885f';
+        this.ctx.fillText('[O] or [ESC] close', midX, H - H * 0.10);
+        this.ctx.restore();
     }
 
     // Two little eyes on a cell (packets have faces; the worm's head doesn't).
@@ -392,10 +471,12 @@ export class Renderer {
     // VISIBLE half of her homing beacon (the audible half is the sonar ping). Amplitude
     // scales with proximity; the rhythm is slow and breath-like, echoing her sustained
     // tone. beacon = { proximity: 0..1, dx: sign toward her X, dy: sign toward her Y }.
-    drawCadenzaPulse(beacon, W, H) {
+    drawCadenzaPulse(beacon, W, H, rm) {
         const p = Math.max(0, Math.min(1, beacon.proximity));
         if (p <= 0) return;
-        const breath = 0.5 + 0.5 * Math.sin(Date.now() / 600); // ~breathing rhythm (a touch quicker)
+        // Reduce-motion: hold the "breath" steady so the directional wall cue stays visible
+        // (redundant coding) without pulsing.
+        const breath = rm ? 0.85 : 0.5 + 0.5 * Math.sin(Date.now() / 600);
         const alpha = 0.22 + 0.72 * p * breath;                // a little more intense per playtest
         this.ctx.save();
         this.ctx.strokeStyle = `rgba(255, 102, 204, ${alpha})`;
@@ -423,7 +504,7 @@ export class Renderer {
         const g = this.gridSize;
         const x = state.moduleSlotX, y = state.moduleSlotY, size = g * 3;
         const carrying = !!state.carriedModule;
-        const pulse = 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 250));
+        const pulse = state.reduceMotion ? 0.8 : 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 250));
         this.ctx.shadowColor = carrying ? '#00ff88' : '#00ffcc';
         this.ctx.shadowBlur = carrying ? 12 : 4;
         this.ctx.strokeStyle = carrying ? `rgba(0,255,136,${0.6 + pulse * 0.4})` : `rgba(0,255,204,${0.3 + pulse * 0.3})`;
@@ -551,7 +632,7 @@ export class Renderer {
         // if you haven't been there yet. "You have a place for her in your notes."
         if (showCache) {
             const mx = gx(cacheLm.x), my = gy(cacheLm.y);
-            const blink = 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 400));
+            const blink = state.reduceMotion ? 0.85 : 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 400));
             const d = dot + 2;
             this.ctx.fillStyle = `rgba(207, 216, 255, ${0.45 + 0.55 * blink})`;
             this.ctx.shadowColor = '#cfd8ff';
@@ -643,7 +724,7 @@ export class Renderer {
         this.ctx.fillStyle = '#00ffcc';
         this.ctx.fillText(sel && sel.exists ? 'ENTER load   N new   DEL erase' : 'ENTER  new game', midX, H - body * 2.2);
         this.ctx.fillStyle = '#00885f';
-        this.ctx.fillText('up / down  -  select file', midX, H - body * 0.9);
+        this.ctx.fillText('up/down select file     [O] accessibility', midX, H - body * 0.9);
     }
 
     // Cache's title-cameo sprite (her archival-blue block + eyes) — walks on and fades under

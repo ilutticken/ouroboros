@@ -24,6 +24,17 @@ export class GameEngine {
         this.input = new InputHandler();
         this.narrative = new NarrativeManager(this.audio);
         this.dialogManager = new DialogManager();
+        // The Options overlay (accessibility) key handler is registered FIRST — before
+        // ShopManager and every other window keydown listener — so, while open, it is truly
+        // modal (stopImmediatePropagation blocks the rest) and 'O' reaches it in ANY state,
+        // INCLUDING the SHOP overlay (whose own listener otherwise swallows every key).
+        // optionsOpen/index/settings are initialised further down, before any key can fire.
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'o' || e.key === 'O') { this.toggleOptions(); e.stopImmediatePropagation(); return; }
+            if (!this.optionsOpen) return;
+            this.optionsHandleKey(e.key);
+            e.stopImmediatePropagation();
+        });
         this.shopManager = new ShopManager(this.state, this.audio);
         this.worldManager = new WorldManager(canvas, this.gridSize);
         this.saveManager = new SaveManager();
@@ -34,6 +45,18 @@ export class GameEngine {
         this.startMenuConfirmErase = null; // slot armed for erase (a second DEL confirms)
         this.startCameoActive = false;     // Cache's one-time title cameo (a dialog over the menu)
         this.titleCameo = null;            // scripted walk-on/fade sprite state during that cameo
+
+        // Accessibility / player settings (volume, mute, reduce-motion) + the Options overlay.
+        // reduceMotion defaults to the OS 'prefers-reduced-motion'; a saved value overrides it.
+        this.optionsOpen = false;
+        this.optionsIndex = 0;
+        const prefersReduce = (typeof window !== 'undefined' && window.matchMedia
+            && window.matchMedia('(prefers-reduced-motion: reduce)').matches) || false;
+        this.settings = Object.assign(
+            { volume: 0.4, muted: false, reduceMotion: prefersReduce },
+            this.saveManager.loadSettings() || {}
+        );
+        this.applySettings();
 
         // Entites
         this.snake = new Snake(
@@ -825,6 +848,8 @@ export class GameEngine {
         this.updateCacheFade(dt); // Cache materialises / dissolves independent of sim state
         this.updateTitleCameo(dt); // Cache's scripted title-screen walk-on / fade sequence
 
+        if (this.optionsOpen) return; // the Options overlay freezes the sim while open
+
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
 
         if (this.state.gameState === 'DEAD') {
@@ -1327,6 +1352,50 @@ export class GameEngine {
 
     // --- Boot file-select menu (New Game / Load across 3 save files) -------------------
 
+    // --- Accessibility / Options overlay ------------------------------------------------
+
+    // Apply the audio settings (mute wins over volume). Reduce-motion is read by the Renderer.
+    applySettings() {
+        this.audio.setVolume(this.settings.muted ? 0 : this.settings.volume);
+    }
+
+    // Toggle the Options overlay (freezes the sim while open; persists settings on close).
+    toggleOptions() {
+        this.optionsOpen = !this.optionsOpen;
+        if (this.optionsOpen) { this.audio.init(); this.optionsIndex = 0; }
+        else { this.saveManager.saveSettings(this.settings); }
+    }
+
+    // One key while the Options overlay is open: up/down pick a row (Volume / Mute / Reduce
+    // Motion), left/right (or Enter/Space) adjust it, Escape closes.
+    optionsHandleKey(key) {
+        const ROWS = 3;
+        if (key === 'ArrowUp' || key === 'w' || key === 'W') { this.optionsIndex = (this.optionsIndex - 1 + ROWS) % ROWS; this.audio.playBeep(); return; }
+        if (key === 'ArrowDown' || key === 's' || key === 'S') { this.optionsIndex = (this.optionsIndex + 1) % ROWS; this.audio.playBeep(); return; }
+        if (key === 'Escape') { this.toggleOptions(); return; }
+        const left = (key === 'ArrowLeft' || key === 'a' || key === 'A');
+        const right = (key === 'ArrowRight' || key === 'd' || key === 'D');
+        const toggle = (key === 'Enter' || key === ' ');
+        if (this.optionsIndex === 0) {          // Volume
+            if (left) this.settings.volume = Math.max(0, Math.round((this.settings.volume - 0.1) * 10) / 10);
+            else if (right) this.settings.volume = Math.min(1, Math.round((this.settings.volume + 0.1) * 10) / 10);
+            else return;
+            if (this.settings.volume > 0) this.settings.muted = false;
+            this.applySettings();
+            this.audio.playBeep();
+        } else if (this.optionsIndex === 1) {   // Mute
+            if (!(left || right || toggle)) return;
+            this.settings.muted = !this.settings.muted;
+            this.applySettings();
+            if (!this.settings.muted) this.audio.playBeep();
+        } else {                                 // Reduce Motion
+            if (!(left || right || toggle)) return;
+            this.settings.reduceMotion = !this.settings.reduceMotion;
+            this.audio.playBeep();
+        }
+        this.saveManager.saveSettings(this.settings);
+    }
+
     // The menu is live only on the START screen and only once at least one file exists;
     // a brand-new player gets the bare "press any key" cold open instead.
     startMenuActive() {
@@ -1684,6 +1753,8 @@ export class GameEngine {
         } else {
             this.state.titleCameoSprite = null;
         }
+        this.state.reduceMotion = this.settings.reduceMotion; // Renderer dampens pulses/blinks
+        this.state.options = this.optionsOpen ? { index: this.optionsIndex, settings: this.settings } : null;
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();
