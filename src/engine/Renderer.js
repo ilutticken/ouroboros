@@ -204,6 +204,9 @@ export class Renderer {
                 } else if (npc.id === 'cache' || npc.id === 'cachehome') {
                     this.ctx.fillStyle = '#cfd8ff'; // the archivist — a pale, cold memory-blue
                     this.ctx.shadowColor = '#cfd8ff';
+                } else if (npc.id === 'lostverse') {
+                    this.ctx.fillStyle = '#ffe08a'; // a shard of Cadenza's fanfare — a warm gold note
+                    this.ctx.shadowColor = '#ffe08a';
                 } else {
                     this.ctx.fillStyle = '#00ff00';
                     this.ctx.shadowColor = '#00ff00';
@@ -377,6 +380,9 @@ export class Renderer {
             }
         }
 
+        // Cadenza's DA CAPO Encore — the ring + call/progress banner, over the live room.
+        if (state.gameState === 'ENCORE' && state.encore) this.drawEncore(state);
+
         // Accessibility / Options overlay — drawn last, on top of everything.
         if (state.options) this.drawOptions(state);
     }
@@ -428,6 +434,80 @@ export class Renderer {
         this.ctx.fillText('up/down select    left/right adjust', midX, H - H * 0.17);
         this.ctx.fillStyle = '#00885f';
         this.ctx.fillText('[O] or [ESC] close', midX, H - H * 0.10);
+        this.ctx.restore();
+    }
+
+    // Cadenza's DA CAPO Encore overlay: the 8-node ring + a call/progress banner, drawn on
+    // top of the live room so you can see your body draping the ring. Deaf-legible — every
+    // node carries its NUMBER + a SHAPE state (outline / filled-ringing / cracked-X) + its
+    // POSITION, never colour alone; the banner spells the progress and any broken take.
+    // Reduce-motion holds all glows steady (nothing strobes).
+    drawEncore(state) {
+        const g = this.gridSize, W = this.canvas.width;
+        const e = state.encore;
+        const rm = !!state.reduceMotion;
+        const numFont = 'bold ' + Math.max(12, Math.floor(g * 0.6)) + 'px "Press Start 2P", monospace';
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+
+        for (const n of e.nodes) {
+            const cx = n.x + g / 2, cy = n.y + g / 2;
+            const isNext = n.index === e.nextIndex;
+            const deadLocked = n.dead && !e.verse;
+            this.ctx.lineWidth = isNext ? 3 : 2;
+            if (deadLocked) {
+                // the hole in the song — a cracked, silent node
+                this.ctx.strokeStyle = '#ff3b3b';
+                this.ctx.strokeRect(n.x + 1, n.y + 1, g - 2, g - 2);
+                this.ctx.beginPath();
+                this.ctx.moveTo(n.x + 4, n.y + 4); this.ctx.lineTo(n.x + g - 4, n.y + g - 4);
+                this.ctx.moveTo(n.x + g - 4, n.y + 4); this.ctx.lineTo(n.x + 4, n.y + g - 4);
+                this.ctx.stroke();
+            } else if (n.sounding) {
+                // ringing — filled, with a steady glow (no strobe under reduce-motion)
+                this.ctx.fillStyle = '#00ffcc';
+                this.ctx.shadowColor = '#00ffcc';
+                this.ctx.shadowBlur = rm ? 0 : 12;
+                this.ctx.fillRect(n.x + 2, n.y + 2, g - 4, g - 4);
+                this.ctx.shadowBlur = 0;
+            } else if (n.eaten) {
+                // struck but no longer sustained — a dim marker (the chord is slipping)
+                this.ctx.strokeStyle = '#0c8f66';
+                this.ctx.strokeRect(n.x + 2, n.y + 2, g - 4, g - 4);
+            } else {
+                // waiting to be sung
+                this.ctx.strokeStyle = isNext ? '#ffcc00' : '#00885f';
+                this.ctx.strokeRect(n.x + 2, n.y + 2, g - 4, g - 4);
+            }
+            // the NEXT note gets an outer ring so it reads without colour
+            if (isNext && !deadLocked) {
+                this.ctx.strokeStyle = '#ffcc00';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(n.x - 2, n.y - 2, g + 4, g + 4);
+            }
+            // the note number (1-based) — legible on every state
+            this.ctx.fillStyle = n.sounding ? '#04302a' : (deadLocked ? '#ff8a8a' : '#bff5e6');
+            this.ctx.font = numFont;
+            this.ctx.fillText(String(n.index + 1), cx, cy);
+        }
+
+        // Banner: who's singing + how much of the chord is held + any broken-take message.
+        const bh = Math.max(44, Math.floor(g * 2.4));
+        this.ctx.fillStyle = 'rgba(3, 8, 6, 0.82)';
+        this.ctx.fillRect(0, 0, W, bh);
+        this.ctx.fillStyle = '#ff66cc';
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.fillText('CADENZA — DA CAPO', W / 2, 16);
+        if (e.crackFlash > 0 && e.msg) {
+            this.ctx.fillStyle = '#ff6b6b';
+            this.ctx.fillText(e.msg, W / 2, 34);
+        } else {
+            this.ctx.fillStyle = '#00ffcc';
+            const held = e.nodes.filter(n => n.sounding).length;
+            this.ctx.fillText('HOLD THE CHORD   ' + e.nextIndex + ' / ' + e.total + '   [' + held + ' ringing]', W / 2, 34);
+        }
         this.ctx.restore();
     }
 

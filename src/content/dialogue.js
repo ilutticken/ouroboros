@@ -50,6 +50,38 @@ export const CADENZA_SCENE = [
     "Cadenza: (She hums a few bars, and for the first time the sector is quiet enough to hear it.)"
 ];
 
+// The DA CAPO Encore — Cadenza's music puzzle. All DRAFT copy for the owner to punch up.
+// `intro` plays when you have her lost verse; `introHole` when you don't (you can still play
+// the first bars and will hit the silence where the sixth note should be). `needVerse` fires
+// when you reach that hole without the verse; `success` when the whole chord finally holds.
+export const CADENZA_ENCORE = {
+    intro: [
+        "Cadenza: You came BACK. And you brought... LENGTH. Tesoro, you brought your whole self.",
+        "Cadenza: The encore, then. My fanfare, one last time — and I need your body to hold it. Your HEAD strikes each note; your BODY sustains it.",
+        "Cadenza: Trace the ring. Eat each light in turn, and do not DARE let one fall silent before the whole chord rings at once. Da capo, tesoro. From the top."
+    ],
+    introHole: [
+        "Cadenza: You came back! But listen — there is a HOLE in me. One note, garbage-flagged, gone to the void.",
+        "Cadenza: Sing what you can. You'll hold five bars and then hit the silence where the sixth should be. Someone scattered that verse out in the Wilds. Bring it home and we finish this."
+    ],
+    needVerse: [
+        "Cadenza: (Her voice catches on nothing — a hole in the air where a note should live.)",
+        "Cadenza: THAT. That is the missing verse, tesoro. It's out there in the Wilds somewhere. Find my lost bar and come back to me."
+    ],
+    success: [
+        "Cadenza: (The chord holds. All of it — ringing under your body at once — and for one bar the sealed sector is not a tomb. It is a STAGE.)",
+        "Cadenza: There. Recorded to ROM, where nothing can garbage-collect it. Do you hear that? That loop, settling into the floor? That's mine. That's ME.",
+        "Cadenza: The first music this machine has made in an age. And you made it WITH me. Now go — let them hear that the diva is not, whatever the filing says, deprecated.",
+        "(A pulse settles into the floor and stays. Music Layer 1 is live.)"
+    ]
+};
+
+// Picked up out in the Wilds — a shard of Cadenza's shattered fanfare (her "dead note").
+export const LOST_VERSE = [
+    "A single corrupted packet, humming faintly — a bar of melody that belongs to no system sound.",
+    "It's a shard of a boot fanfare with a diva's fingerprints all over it: Cadenza's missing note. You pocket it. Somewhere to the southeast, a hole in a song just felt a draft."
+];
+
 // The RoomGenerator 'cachehome' NPC's default lines. NOTE: the live interaction is driven by
 // GameEngine.talkToCacheHome (which branches on your Save state); these are a fallback.
 export const CACHE_HOME_SCENE = [

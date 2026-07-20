@@ -90,6 +90,14 @@ export class RoomGenerator {
             // resolves in a real scene rather than an empty room. Uses a distinct id
             // ('cachehome') so it is NOT the transient Hub apparition and reads plainly.
             npcs.push(new NPC(cx, cy, this.gridSize, 'cachehome', CACHE_HOME_SCENE));
+        } else if (worldManager && worldManager.landmarks && worldManager.landmarks.lostverse
+                   && roomX === worldManager.landmarks.lostverse.x && roomY === worldManager.landmarks.lostverse.y) {
+            // Cadenza's Lost Verse — a shard of her fanfare scattered out in the Wilds. It
+            // heals the "dead note" that otherwise halts the DA CAPO Encore's finale. Placed
+            // only until you pick it up (gated on the flag, so it never re-spawns).
+            if (!(stateUnlocked && stateUnlocked.lostVerseFound)) {
+                npcs.push(new NPC(cx, cy, this.gridSize, 'lostverse', []));
+            }
         } else {
             // Random Templates
             const templateType = Math.floor(Math.random() * 3);

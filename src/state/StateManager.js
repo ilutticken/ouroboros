@@ -1,7 +1,7 @@
 export class StateManager {
     constructor() {
         this.score = 0;
-        this.gameState = 'START'; // 'START', 'PLAYING', 'DIALOG', 'SHOP', 'DEAD', 'PAUSED'
+        this.gameState = 'START'; // 'START', 'PLAYING', 'DIALOG', 'SHOP', 'DEAD', 'PAUSED', 'TRANSITION', 'ENCORE'
         this.isSuspended = false;
         this.biteTopicsHeard = 0; // how many of 2-Bit's gossip topics you've heard (persists across deaths)
         this.unlocked = {
@@ -31,7 +31,11 @@ export class StateManager {
             // (her sector is on your map and she stops manifesting in the Hub).
             cacheStage: 0,
             spareDataUnlocked: false,  // Cache's stage-2 gift: the Hub seeds spare Data on respawn
-            startScreenUnlocked: false // Cache builds the title screen when she grants Save (stage 1)
+            startScreenUnlocked: false, // Cache builds the title screen when she grants Save (stage 1)
+            // The DA CAPO Encore (Cadenza's music puzzle) and its Wilds gate.
+            lostVerseFound: false,     // the Wilds shard that heals Cadenza's "dead note" — gates the Encore finale
+            encoreComplete: false,     // the DA CAPO Encore is done (Music Layer 1 booted)
+            musicLayer: 0              // 0 = baseline silence; 1 = Cadenza's Locked Groove (booted at the Encore); 2,3 later
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data

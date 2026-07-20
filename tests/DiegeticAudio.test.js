@@ -1531,6 +1531,23 @@ describe('Cache — the CACHE death-screen secret', () => {
         expect(game.npcs.some(n => n.id === 'cache')).toBe(false);
     });
 
+    it('is CODE-gated, not latched — she leaves the Hub once the code shifts off CACHE', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 0;
+        game.worldManager.currentRoomY = 0;
+        game.state.unlocked.cacheStage = 0;
+        game.apple = { x: 200, y: 200 };
+
+        for (const k of ['c', 'a', 'c', 'h', 'e']) game.recordDeathKey(k);
+        expect(game.npcs.some(n => n.id === 'cache')).toBe(true); // present while code == CACHE
+
+        game.npcs = [];                    // she fades after a chat / you leave the room
+        game.recordDeathKey('x');          // the next death shifts the window -> 'ACHEX'
+        game.refreshDynamicRoomContent();  // walk back into the Hub
+        expect(game.deathCode).not.toBe('CACHE');
+        expect(game.npcs.some(n => n.id === 'cache')).toBe(false); // no longer camped in the Hub
+    });
+
     it('bumping Cache opens dialogue at no segment cost', () => {
         const game = newGame();
         game.state.gameState = 'PLAYING';
@@ -1606,12 +1623,21 @@ describe("Save / Load — Cache's Save Function", () => {
         expect(b.state.score).toBe(0);                 // fresh run (ephemeral score not saved)
     });
 
-    it('re-places Cache in the Hub on load if she was already found', () => {
+    it('re-manifests Cache on load only while the death-code still reads CACHE', () => {
         const a = newGame();
         a.state.unlocked.cacheFound = true;
+        a.deathCode = 'CACHE';
         const b = newGame();
         b.applySave(a.serialize());
         expect(b.npcs.some(n => n.id === 'cache')).toBe(true);
+
+        // found once, but the rolling code has since shifted -> she is NOT camped in the Hub
+        const c = newGame();
+        c.state.unlocked.cacheFound = true;
+        c.deathCode = 'XACHE';
+        const d = newGame();
+        d.applySave(c.serialize());
+        expect(d.npcs.some(n => n.id === 'cache')).toBe(false);
     });
 
     it('round-trips through localStorage (save then load a fresh game)', () => {
@@ -1942,9 +1968,10 @@ describe('Cache — staged Hub questline', () => {
         expect(cache.y).toBeLessThan(cy);
     });
 
-    it('respawning in the Hub re-manifests Cache and re-seeds her data (stage 2)', () => {
+    it('respawning in the Hub re-manifests Cache (code still CACHE) and re-seeds her data (stage 2)', () => {
         const game = newGame();
         game.state.unlocked.cacheFound = true;
+        game.deathCode = 'CACHE';               // she is present only while the code reads CACHE
         game.state.unlocked.cacheStage = 2;
         game.state.unlocked.spareDataUnlocked = true;
         game.state.upgrades.crumpleLevel = 0;   // a real death -> full Hub reset
@@ -2339,5 +2366,182 @@ describe('Accessibility — Options overlay & settings', () => {
         expect(game.settings.volume).toBe(0.3);
         expect(game.settings.muted).toBe(true);
         window.localStorage.removeItem('ouroboros-settings');
+    });
+});
+
+describe('Cadenza — the DA CAPO Encore (the music puzzle)', () => {
+    beforeEach(mountDom);
+
+    // Enter the performance: mock the dialog so the intro's onComplete (startEncore) fires now.
+    function enterEncore(game) {
+        game.dialogManager.start = (lines, onComplete) => { if (onComplete) onComplete(); };
+        game.npcCadenza(new NPC(200, 200, 20, 'cadenza', []));
+        return game.encore;
+    }
+    // Put the head on node[i] with the body draped back over nodes [i-1..0] so they sustain.
+    function drapeThrough(game, i) {
+        const e = game.encore;
+        const body = [];
+        for (let k = i; k >= 0; k--) body.push({ x: e.nodes[k].x, y: e.nodes[k].y });
+        game.snake.body = body;
+    }
+
+    it('AudioEngine exposes the tuned note + Locked Groove, and no-ops before init', () => {
+        const audio = new AudioEngine();
+        expect(typeof audio.playEncoreNote).toBe('function');
+        expect(typeof audio.startMusicLayer1).toBe('function');
+        expect(typeof audio.stopMusicLayer).toBe('function');
+        expect(() => audio.playEncoreNote(0)).not.toThrow();
+        expect(() => audio.startMusicLayer1()).not.toThrow();
+        expect(() => audio.stopMusicLayer()).not.toThrow();
+    });
+
+    it('bumping Cadenza starts the Encore: an 8-node ring with one dead note', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        expect(game.state.gameState).toBe('ENCORE');
+        expect(e.nodes.length).toBe(8);
+        expect(e.nodes.filter(n => n.dead).length).toBe(1);
+        expect(e.nodes[5].dead).toBe(true);
+        expect(e.nextIndex).toBe(0);
+    });
+
+    it('striking nodes IN ORDER (body draped) advances the phrase', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        drapeThrough(game, 0); game._encoreProcess();
+        expect(e.eaten[0]).toBe(true); expect(e.nextIndex).toBe(1);
+        drapeThrough(game, 1); game._encoreProcess();
+        expect(e.eaten[1]).toBe(true); expect(e.nextIndex).toBe(2);
+        drapeThrough(game, 2); game._encoreProcess();
+        expect(e.nextIndex).toBe(3); expect(e.phase).toBe(2); // phrase checkpoint at 3
+    });
+
+    it('update() drives the Encore move-tick and strikes a node', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        const n0 = e.nodes[0];
+        game.snake.body = [{ x: n0.x - 20, y: n0.y }]; // one cell left of node 0
+        game.input.nextDirection = { x: 20, y: 0 };    // step right, onto node 0
+        game.update(1000);
+        expect(e.eaten[0]).toBe(true);
+        expect(e.nextIndex).toBe(1);
+    });
+
+    it('striking a note OUT OF ORDER breaks the take (da capo — resets to 0)', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        drapeThrough(game, 0); game._encoreProcess();
+        expect(e.nextIndex).toBe(1);
+        // jump to node 2, skipping node 1 (node 0 still covered behind the head)
+        game.snake.body = [{ x: e.nodes[2].x, y: e.nodes[2].y }, { x: e.nodes[0].x, y: e.nodes[0].y }];
+        game._encoreProcess();
+        expect(e.nextIndex).toBe(0);
+        expect(e.eaten[2]).toBeFalsy();
+    });
+
+    it('DROPPING a sustained note (body slides off it) breaks the take', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        drapeThrough(game, 0); game._encoreProcess();
+        expect(e.nextIndex).toBe(1);
+        game.snake.body = [{ x: 20, y: 20 }]; // whole body off node 0
+        game._encoreProcess();
+        expect(e.nextIndex).toBe(0);
+    });
+
+    it('the DEAD NOTE stops the finale WITHOUT the Wilds verse — points you to the Wilds', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        game.state.unlocked.lostVerseFound = false;
+        e.nextIndex = 5;
+        e.eaten = { 0: true, 1: true, 2: true, 3: true, 4: true };
+        game.snake.body = [5, 4, 3, 2, 1, 0].map(k => ({ x: e.nodes[k].x, y: e.nodes[k].y }));
+        game._encoreProcess();
+        expect(game.encore).toBeNull();
+        expect(game.state.unlocked.encoreComplete).toBe(false);
+        expect(game.state.gameState).toBe('PLAYING'); // exited via 'needverse' (dialog mock completes)
+    });
+
+    it('WITH the Wilds verse the dead note sounds and the take continues', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        game.state.unlocked.lostVerseFound = true;
+        e.nextIndex = 5;
+        e.eaten = { 0: true, 1: true, 2: true, 3: true, 4: true };
+        game.snake.body = [5, 4, 3, 2, 1, 0].map(k => ({ x: e.nodes[k].x, y: e.nodes[k].y }));
+        game._encoreProcess();
+        expect(e.eaten[5]).toBe(true);
+        expect(e.nextIndex).toBe(6);
+        expect(game.state.gameState).toBe('ENCORE');
+    });
+
+    it('holding the WHOLE chord at once boots Music Layer 1 (the finale)', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        game.state.unlocked.lostVerseFound = true;
+        e.nextIndex = 7;
+        e.eaten = { 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true };
+        game.snake.body = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ x: e.nodes[k].x, y: e.nodes[k].y }));
+        game._encoreProcess();
+        expect(game.encore).toBeNull();
+        expect(game.state.unlocked.encoreComplete).toBe(true);
+        expect(game.state.unlocked.musicLayer).toBe(1);
+        expect(game.state.unlocked.cadenzaFound).toBe(true);
+        expect(game.state.gameState).toBe('PLAYING');
+    });
+
+    it('completing the lap but a note DROPS on the last beat still breaks it (length gate)', () => {
+        const game = newGame();
+        const e = enterEncore(game);
+        game.state.unlocked.lostVerseFound = true;
+        e.nextIndex = 7;
+        e.eaten = { 0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true };
+        // head on node 7, but the body is too short to still cover node 0 -> chord not whole
+        game.snake.body = [7, 6, 5, 4, 3, 2, 1].map(k => ({ x: e.nodes[k].x, y: e.nodes[k].y }));
+        game._encoreProcess();
+        expect(game.state.unlocked.encoreComplete).toBe(false);
+        expect(e.nextIndex).toBe(0);
+    });
+
+    it('ESC leaves the performance back to normal play', () => {
+        const game = newGame();
+        enterEncore(game);
+        expect(game.state.gameState).toBe('ENCORE');
+        game.exitEncore('left');
+        expect(game.state.gameState).toBe('PLAYING');
+        expect(game.encore).toBeNull();
+    });
+
+    it('picking up the Lost Verse out in the Wilds sets the flag and consumes the item', () => {
+        const game = newGame();
+        game.dialogManager.start = (lines, onComplete) => { if (onComplete) onComplete(); };
+        game.npcs = [new NPC(100, 100, 20, 'lostverse', [])];
+        game.npcLostVerse(game.npcs[0]);
+        expect(game.state.unlocked.lostVerseFound).toBe(true);
+        expect(game.npcs.some(n => n.id === 'lostverse')).toBe(false);
+    });
+
+    it('the Lost Verse spawns in its Wilds landmark room until collected', () => {
+        const game = newGame();
+        const lv = game.worldManager.landmarks.lostverse;
+        expect(lv).toBeTruthy();
+        const room = game.worldManager.roomGenerator.generateRoom(lv.x, lv.y, game.state.unlocked, game.worldManager);
+        expect(room.npcs.some(n => n.id === 'lostverse')).toBe(true);
+        game.state.unlocked.lostVerseFound = true;
+        const room2 = game.worldManager.roomGenerator.generateRoom(lv.x, lv.y, game.state.unlocked, game.worldManager);
+        expect(room2.npcs.some(n => n.id === 'lostverse')).toBe(false);
+    });
+
+    it('the Encore flags round-trip through save/load', () => {
+        const a = newGame();
+        a.state.unlocked.lostVerseFound = true;
+        a.state.unlocked.encoreComplete = true;
+        a.state.unlocked.musicLayer = 1;
+        const b = newGame();
+        b.applySave(a.serialize());
+        expect(b.state.unlocked.lostVerseFound).toBe(true);
+        expect(b.state.unlocked.encoreComplete).toBe(true);
+        expect(b.state.unlocked.musicLayer).toBe(1);
     });
 });

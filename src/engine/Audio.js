@@ -434,4 +434,56 @@ export class AudioEngine {
         noise.connect(bp); bp.connect(g); g.connect(this.master);
         noise.start(now); noise.stop(now + dur);
     }
+
+    // Diegetic: a single TUNED note struck during Cadenza's DA CAPO Encore — the game's
+    // first musical pitches (every prior SFX is atonal). A clean square-wave tone from a
+    // rising C-major-pentatonic scale, ringing out ~0.5s so a held chord accumulates.
+    // `index` selects the scale degree (0..7 around her 8-node ring).
+    playEncoreNote(index = 0) {
+        if (!this.initialized) return;
+        const scale = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.50, 1174.66, 1318.51]; // C5 D5 E5 G5 A5 C6 D6 E6
+        const f = scale[((index % scale.length) + scale.length) % scale.length];
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(f, now);
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.exponentialRampToValueAtTime(0.09, now + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.0001, now + 0.5); // rings out — the "sustain"
+        osc.connect(g); g.connect(this.master);
+        osc.start(now); osc.stop(now + 0.5);
+    }
+
+    // Diegetic: Cadenza's Locked Groove — the self-sustaining loop the finished Encore
+    // presses into the machine (Music Layer 1). A low square-wave pulse, gently throbbed
+    // by an LFO on its gain, that STAYS ON (persists across the run) until stopped. Boots
+    // once; idempotent. This is the first continuous music the machine has ever produced.
+    startMusicLayer1() {
+        if (!this.initialized || this._layer1) return;
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(130.81, now); // C3 pulse
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.0001, now);
+        g.gain.linearRampToValueAtTime(0.03, now + 1.5); // ease it in
+        // LFO throb on the gain -> a living pulse rather than a drone.
+        const lfo = this.ctx.createOscillator();
+        lfo.type = 'sine';
+        lfo.frequency.setValueAtTime(2, now); // 2 Hz groove
+        const lfoGain = this.ctx.createGain();
+        lfoGain.gain.setValueAtTime(0.018, now);
+        lfo.connect(lfoGain); lfoGain.connect(g.gain);
+        osc.connect(g); g.connect(this.master);
+        osc.start(now); lfo.start(now);
+        this._layer1 = { osc, lfo, g };
+    }
+
+    // Tear down the Locked Groove (e.g. on New Game). Safe to call when nothing is playing.
+    stopMusicLayer() {
+        if (!this._layer1) return;
+        try { this._layer1.osc.stop(); this._layer1.lfo.stop(); } catch (e) { /* already stopped */ }
+        this._layer1 = null;
+    }
 }

@@ -32,6 +32,7 @@ export class WorldManager {
         this.landmarks = {
             cadenza: { x: 8, y: 3 }, // the sealed singer, southeast of Localhost
             cache: { x: 5, y: -4 },  // the archivist's cold storage, due north of Localhost
+            lostverse: { x: 10, y: 1 }, // a shard of Cadenza's fanfare, out in the Wilds (heals her dead note)
             // nibble: { x: ?, y: ? }, // black-market stall, deep Wilds — add when built
         };
         for (const room of Object.values(this.landmarks)) {

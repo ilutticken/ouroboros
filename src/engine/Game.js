@@ -10,7 +10,7 @@ import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
-import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT } from '../content/dialogue.js';
+import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE } from '../content/dialogue.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -34,6 +34,14 @@ export class GameEngine {
             if (!this.optionsOpen) return;
             this.optionsHandleKey(e.key);
             e.stopImmediatePropagation();
+        });
+        this.encore = null; // Cadenza's DA CAPO Encore state object — non-null only while performing
+        // ENCORE (Cadenza's music puzzle) modal key: ESC leaves the performance back to normal
+        // play (go grow / find her lost verse, then return). Arrows fall through to InputHandler
+        // for steering; gear taps are already gated to PLAYING, so the tempo stays locked.
+        window.addEventListener('keydown', (e) => {
+            if (this.state.gameState !== 'ENCORE') return;
+            if (e.key === 'Escape') { this.exitEncore('left'); e.stopImmediatePropagation(); }
         });
         this.shopManager = new ShopManager(this.state, this.audio);
         this.worldManager = new WorldManager(canvas, this.gridSize);
@@ -193,13 +201,15 @@ export class GameEngine {
             cachehome: (npc) => { this.state.gameState = 'DIALOG'; this.talkToCacheHome(npc); },
             signpost: (npc) => this.npcSign(npc),
             citizen: (npc) => this.npcSign(npc),
-            cadenza: (npc) => this.npcSign(npc),
+            cadenza: (npc) => this.npcCadenza(npc),
+            lostverse: (npc) => this.npcLostVerse(npc),
             shop: () => this.openBiteShop(),
         };
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
             this.audio.init();
+            if (this.state.unlocked.musicLayer >= 1) this.audio.startMusicLayer1(); // resume the Locked Groove after a load
             if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
             if (this.state.gameState === 'DEAD') {
                 this.state.gameState = 'PLAYING'; // respawn wake-press
@@ -229,7 +239,7 @@ export class GameEngine {
                 && !(this.narrative && this.narrative.isPrinting) && !this.moduleLoad) {
                 this.changeGear(delta);
             }
-        }, () => this.state.gameState === 'PLAYING' && !this.moduleLoad);
+        }, () => (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE') && !this.moduleLoad);
         // ^ canSteer gates ONLY on PLAYING (+ no install). It deliberately does NOT
         // block during narrative.isPrinting: the wake-press after a death happens while
         // the death log is still typing, and it must be able to set your respawn
@@ -852,6 +862,10 @@ export class GameEngine {
 
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
 
+        // Cadenza's DA CAPO Encore runs its own constrained move-tick (no room-crossing, no
+        // hazards, no growth) — quantized to the same move clock as the rest of the world.
+        if (this.state.gameState === 'ENCORE') { this.updateEncore(dt); return; }
+
         if (this.state.gameState === 'DEAD') {
             return;
         }
@@ -1041,16 +1055,20 @@ export class GameEngine {
     recordDeathKey(key) {
         const ch = key.length === 1 ? key.toUpperCase() : '·';
         this.deathCode = (this.deathCode + ch).slice(-5);
-        if (this.deathCode === 'CACHE' && !this.state.unlocked.cacheFound) this.summonCache();
+        if (this.deathCode === 'CACHE') this.summonCache();
     }
 
     // Spelling CACHE across death screens summons the archivist. She coalesces in the
-    // Hub you always respawn into (a real death always warps you there), and stays.
+    // Hub you always respawn into (a real death always warps you there). She is tied to
+    // the CODE, not a permanent latch: she is present only while deathCode still reads
+    // CACHE (see refreshDynamicRoomContent) and vanishes once the next death shifts the
+    // window — re-spell CACHE (or visit Cold Storage {5,-4}) to see her again.
     summonCache() {
-        if (this.state.unlocked.cacheFound) return;
-        this.state.unlocked.cacheFound = true;
+        if (this.state.unlocked.cacheStage >= 3) return; // she's said her piece; never again
+        const already = this.npcs.some(n => n.id === 'cache');
+        this.state.unlocked.cacheFound = true; // mark discovered (clue-gating / records)
         this.spawnCacheNpc();
-        this.audio.playMaterialize(); // she coalesces out of the noise
+        if (!already) this.audio.playMaterialize(); // she coalesces out of the noise
     }
 
     // Place Cache's Hub apparition a few cells ABOVE the respawn point (not a random
@@ -1208,6 +1226,160 @@ export class GameEngine {
         this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
     }
 
+    // --- Cadenza's DA CAPO Encore (the music puzzle) -------------------------------------
+    // Bump Cadenza to begin. She sings; you trace a ring of 8 nodes, striking each light IN
+    // ORDER with your head (each a tuned square-wave note) while your BODY stays draped over
+    // the ones you've struck so the chord sustains. Hold all eight ringing at once and she
+    // seals it into Music Layer 1. One node is a "dead note" that can't sound until you bring
+    // her the Lost Verse from out in the Wilds — so the finale is gated on a real find.
+
+    npcCadenza(npc) {
+        if (this.state.unlocked.encoreComplete) { this.npcSign(npc); return; } // show's over; she holds court
+        const intro = this.state.unlocked.lostVerseFound ? CADENZA_ENCORE.intro : CADENZA_ENCORE.introHole;
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(intro, () => this.startEncore());
+    }
+
+    // Pick up the Lost Verse out in the Wilds — heals Cadenza's dead note (gates the finale).
+    npcLostVerse(npc) {
+        this.npcs = this.npcs.filter(n => n.id !== 'lostverse');
+        this.state.unlocked.lostVerseFound = true;
+        this.audio.playCadenzaSong(1); // a shard of her fanfare, close and clear
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(LOST_VERSE, () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // Lay out the 8-node ring (a rectangle centred in the room) and enter ENCORE. The ring
+    // size (hw x hh cells) sets the emergent length gate: your body must drape the whole
+    // perimeter to hold the full chord — a longer worm can, a short one can't (no length
+    // check anywhere). Node index 5 (bottom-centre) is the dead note.
+    startEncore() {
+        const g = this.gridSize;
+        const cols = Math.floor(this.canvas.width / g), rows = Math.floor(this.canvas.height / g);
+        const ccx = Math.floor(cols / 2), ccy = Math.floor(rows / 2);
+        const hw = Math.max(2, Math.min(6, ccx - 1));
+        const hh = Math.max(2, Math.min(4, ccy - 1));
+        const cells = [
+            [ccx - hw, ccy - hh], [ccx, ccy - hh], [ccx + hw, ccy - hh], // top edge:  0,1,2
+            [ccx + hw, ccy],                                             // right:      3
+            [ccx + hw, ccy + hh], [ccx, ccy + hh], [ccx - hw, ccy + hh], // bottom:     4,5(dead),6
+            [ccx - hw, ccy],                                             // left:       7
+        ];
+        const DEAD = 5;
+        const nodes = cells.map(([cx, cy], i) => ({ index: i, x: cx * g, y: cy * g, dead: i === DEAD, sounding: false }));
+        this._encorePrevSpeed = this.speed;
+        this.speed = 110;   // a steady tempo; gear is locked out during the performance
+        this.moveTimer = 0;
+        this.encore = { nodes, nextIndex: 0, eaten: {}, phase: 1, crackFlash: 0, msg: '' };
+        this.state.gameState = 'ENCORE';
+    }
+
+    // ENCORE move-tick: steer the head one cell per beat, clamped to the room (walls soft-
+    // block — never kill, never cross). Length-neutral (no growth). Then resolve the nodes.
+    updateEncore(dt) {
+        if (!this.encore) { this.state.gameState = 'PLAYING'; return; }
+        if (this.encore.crackFlash > 0) this.encore.crackFlash = Math.max(0, this.encore.crackFlash - dt);
+        this.moveTimer += dt;
+        if (this.moveTimer < this.speed) return;
+        this.moveTimer = 0;
+        this._tick++;
+        this.input.updateDirection();
+        const d = this.input.direction;
+        if (d.x === 0 && d.y === 0) return;
+        const nx = this.snake.head.x + d.x, ny = this.snake.head.y + d.y;
+        if (nx < 0 || nx >= this.canvas.width || ny < 0 || ny >= this.canvas.height) return; // wall: hold position
+        this.snake.move(d, this.canvas.width, this.canvas.height, false);
+        this.shrinkOrUnfold(); // pop the tail — a performance never grows you
+        this._encoreProcess();
+    }
+
+    // Resolve the ring after a step: which nodes are sounding (a body segment covers them),
+    // did the head strike the next note (or break the take), did the chord finally hold.
+    _encoreProcess() {
+        const e = this.encore;
+        if (!e) return;
+        const verse = !!this.state.unlocked.lostVerseFound;
+        const covers = (n) => this.snake.body.some(s => s.x === n.x && s.y === n.y);
+        for (const n of e.nodes) n.sounding = !!e.eaten[n.index] && covers(n);
+
+        const head = this.snake.head;
+        const hn = e.nodes.find(n => n.x === head.x && n.y === head.y);
+        if (hn) {
+            if (hn.index === e.nextIndex) {
+                if (hn.dead && !verse) { this.exitEncore('needverse'); return; } // the hole in the song
+                e.eaten[hn.index] = true;
+                hn.sounding = true; // the head is on it
+                this.audio.playEncoreNote(hn.index);
+                e.nextIndex++;
+                if (e.nextIndex === 3) e.phase = 2;
+                else if (e.nextIndex === 5) e.phase = 3;
+                if (e.nextIndex >= e.nodes.length) {
+                    // the take completes only if the WHOLE chord is still ringing at once
+                    if (e.nodes.every(n => n.sounding)) { this._encoreFinale(); return; }
+                    this._encoreCrack('sustain'); return;
+                }
+            } else if (hn.index > e.nextIndex) {
+                this._encoreCrack('order'); return; // struck a note out of turn
+            }
+            // hn.index < nextIndex: re-touching an already-sung note — harmless
+        }
+        // Dropped sustain: any note you've already sung has fallen silent (body slid off it).
+        for (const n of e.nodes) {
+            if (e.eaten[n.index] && !n.sounding) { this._encoreCrack('sustain'); return; }
+        }
+    }
+
+    // A broken take — non-lethal. Reset the sequence; she re-sings from the top (da capo).
+    _encoreCrack(reason) {
+        const e = this.encore;
+        e.nextIndex = 0;
+        e.eaten = {};
+        for (const n of e.nodes) n.sounding = false;
+        e.crackFlash = 500;
+        e.phase = 1;
+        e.msg = reason === 'sustain' ? 'THE CHORD DROPPED — DA CAPO' : 'OUT OF ORDER — DA CAPO';
+        this.audio.playCrack();
+    }
+
+    // The whole chord held at once: Cadenza seals the Locked Groove — Music Layer 1 is live.
+    _encoreFinale() {
+        this.encore = null;
+        this.speed = this._encorePrevSpeed || 100;
+        this.state.unlocked.encoreComplete = true;
+        this.state.unlocked.cadenzaFound = true;
+        if ((this.state.unlocked.musicLayer || 0) < 1) this.state.unlocked.musicLayer = 1;
+        this.audio.startMusicLayer1();
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(CADENZA_ENCORE.success, () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // Leave the performance without finishing: 'needverse' points you to the Wilds; 'left'
+    // (ESC) just drops back to play so you can grow a longer body and return.
+    exitEncore(reason) {
+        this.encore = null;
+        this.speed = this._encorePrevSpeed || 100;
+        if (reason === 'needverse') {
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(CADENZA_ENCORE.needVerse, () => { this.state.gameState = 'PLAYING'; });
+        } else {
+            this.state.gameState = 'PLAYING';
+        }
+    }
+
+    // Snapshot for the Renderer's encore overlay (nodes + progress + a broken-take flash).
+    getEncoreRenderState() {
+        const e = this.encore;
+        return {
+            nodes: e.nodes.map(n => ({ x: n.x, y: n.y, index: n.index, dead: n.dead, sounding: n.sounding, eaten: !!e.eaten[n.index] })),
+            nextIndex: e.nextIndex,
+            total: e.nodes.length,
+            phase: e.phase,
+            crackFlash: e.crackFlash,
+            msg: e.msg,
+            verse: !!this.state.unlocked.lostVerseFound,
+        };
+    }
+
     // Cache's staged Hub conversation. Like 2-Bit, she offers no real choice — finishing
     // the dialog IS the transaction. Each call advances her one stage and, when the dialog
     // closes, fades her out (dismissCache); she returns next Hub visit until she's given
@@ -1343,7 +1515,7 @@ export class GameEngine {
     // pacing in and out of the Hub can't farm a fresh pile. Any entry clears stale motes.
     refreshDynamicRoomContent(seedMotes = false) {
         const inHub = this.worldManager.currentRoomX === 0 && this.worldManager.currentRoomY === 0;
-        if (inHub && this.state.unlocked.cacheFound && this.state.unlocked.cacheStage < 3) {
+        if (inHub && this.deathCode === 'CACHE' && this.state.unlocked.cacheStage < 3) {
             this.spawnCacheNpc();
         }
         this.dataMotes = [];
@@ -1755,6 +1927,7 @@ export class GameEngine {
         }
         this.state.reduceMotion = this.settings.reduceMotion; // Renderer dampens pulses/blinks
         this.state.options = this.optionsOpen ? { index: this.optionsIndex, settings: this.settings } : null;
+        this.state.encore = (this.state.gameState === 'ENCORE' && this.encore) ? this.getEncoreRenderState() : null;
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();
