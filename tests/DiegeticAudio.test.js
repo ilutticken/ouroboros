@@ -4,7 +4,7 @@
 // Diegetic ambient audio: the system reacting to where your body is.
 // These tests pin the *trigger logic* (when playWub / playGlide fire) rather
 // than the Web Audio synthesis, which needs a real AudioContext + user gesture.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { GameEngine } from '../src/engine/Game.js';
 import { AudioEngine } from '../src/engine/Audio.js';
 import { Glitch } from '../src/entities/Glitch.js';
@@ -2406,6 +2406,14 @@ describe('Cadenza — the DA CAPO Encore (the music puzzle)', () => {
         expect(e.nextIndex).toBe(0);
     });
 
+    it('Cadenza starting to sing clears the Glitches from her room', () => {
+        const game = newGame();
+        game.glitches = [{ x: 60, y: 60 }, { x: 80, y: 80 }];
+        enterEncore(game); // the intro completes -> startEncore -> she sings
+        expect(game.glitches.length).toBe(0);
+        expect(game.state.gameState).toBe('ENCORE');
+    });
+
     it('striking nodes IN ORDER (body draped) advances the phrase', () => {
         const game = newGame();
         const e = enterEncore(game);
@@ -2513,13 +2521,21 @@ describe('Cadenza — the DA CAPO Encore (the music puzzle)', () => {
         expect(game.encore).toBeNull();
     });
 
-    it('picking up the Lost Verse out in the Wilds sets the flag and consumes the item', () => {
+    it('picking up the Lost Verse is collected like Data — it grows the tail + gives Data', () => {
         const game = newGame();
         game.dialogManager.start = (lines, onComplete) => { if (onComplete) onComplete(); };
-        game.npcs = [new NPC(100, 100, 20, 'lostverse', [])];
-        game.npcLostVerse(game.npcs[0]);
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [];
+        game.npcs = [new NPC(120, 100, 20, 'lostverse', [])];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        const len0 = game.snake.body.length, score0 = game.state.score;
+        step(game, { x: 20, y: 0 }); // step right, onto the Lost Verse at (120,100)
         expect(game.state.unlocked.lostVerseFound).toBe(true);
         expect(game.npcs.some(n => n.id === 'lostverse')).toBe(false);
+        expect(game.snake.body.length).toBe(len0 + 1); // it ADDED TO YOUR TAIL, like Data
+        expect(game.state.score).toBeGreaterThan(score0);
     });
 
     it('the Lost Verse spawns in its Wilds landmark room until collected', () => {
@@ -2543,5 +2559,135 @@ describe('Cadenza — the DA CAPO Encore (the music puzzle)', () => {
         expect(b.state.unlocked.lostVerseFound).toBe(true);
         expect(b.state.unlocked.encoreComplete).toBe(true);
         expect(b.state.unlocked.musicLayer).toBe(1);
+    });
+});
+
+describe('Data = segments (economy coupling)', () => {
+    beforeEach(mountDom);
+
+    it('eating an apple gives +1 Data AND +1 segment (the base coupling)', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        game.apple = { x: 120, y: 100 };
+        const len0 = game.snake.body.length, score0 = game.state.score;
+        step(game, { x: 20, y: 0 });
+        expect(game.state.score).toBe(score0 + 1);
+        expect(game.snake.body.length).toBe(len0 + 1);
+    });
+
+    it('eating with Data Compression gives +2 Data AND +2 segments', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.upgrades.dataCompression = true;
+        game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }];
+        game.apple = { x: 120, y: 100 };
+        const len0 = game.snake.body.length, score0 = game.state.score;
+        step(game, { x: 20, y: 0 });
+        expect(game.state.score).toBe(score0 + 2);
+        expect(game.snake.body.length).toBe(len0 + 2);
+    });
+
+    it('spending Data at the shop shrinks your body by the price', () => {
+        const game = newGame();
+        game.state.score = 100;
+        game.snake.body = [];
+        for (let i = 0; i < 40; i++) game.snake.body.push({ x: 20 + i * 10, y: 20 });
+        const pivot = game.shopManager.items[0]; // pivot, price 10
+        const len0 = game.snake.body.length, score0 = game.state.score;
+        game.shopManager.purchase(pivot);
+        expect(game.state.upgrades.pivot).toBe(true);
+        expect(game.state.score).toBe(score0 - pivot.price);
+        expect(game.snake.body.length).toBe(len0 - pivot.price); // spending shrank you
+    });
+
+    it('a Glitch bite drains segments AND Data together', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.borders = false;
+        game.state.score = 20;
+        game.snake.body = [];
+        for (let i = 0; i < 12; i++) game.snake.body.push({ x: 100 - i * 20, y: 100 });
+        game.apple = { x: 300, y: 300 };
+        game.glitches = [new Glitch(120, 100, 20)]; // one cell right of the head
+        const len0 = game.snake.body.length, score0 = game.state.score;
+        step(game, { x: 20, y: 0 }); // steer into the Glitch
+        expect(game.snake.body.length).toBeLessThan(len0); // lost segments
+        expect(game.state.score).toBeLessThan(score0);      // ...and Data, together
+    });
+});
+
+describe("Cadenza's title-screen cameo (after the Encore)", () => {
+    beforeEach(() => {
+        mountDom();
+        for (const k of ['ouroboros-cameo-seen', 'ouroboros-encore-unlocked', 'ouroboros-cadenza-cameo-seen']) window.localStorage.removeItem(k);
+    });
+    afterEach(() => {
+        new SaveManager().clearAll();
+        for (const k of ['ouroboros-cameo-seen', 'ouroboros-encore-unlocked', 'ouroboros-cadenza-cameo-seen']) window.localStorage.removeItem(k);
+    });
+
+    function titleGame({ cacheSeen = false, encore = false, cadenzaSeen = false } = {}) {
+        const game = newGame();
+        game.saveManager.clearAll();
+        game.saveManager.save(1, { v: 1, unlocked: {}, upgrades: {}, meta: { place: 'Test' } }); // a save exists
+        if (cacheSeen) game.saveManager.markCameoSeen();
+        if (encore) game.saveManager.markEncoreUnlocked();
+        if (cadenzaSeen) game.saveManager.markCadenzaCameoSeen();
+        game.titleCameo = null; game.startCameoActive = false;
+        return game;
+    }
+
+    it('AudioEngine exposes the Void Ambient and no-ops before init', () => {
+        const audio = new AudioEngine();
+        expect(typeof audio.startVoidAmbient).toBe('function');
+        expect(typeof audio.stopVoidAmbient).toBe('function');
+        expect(() => audio.startVoidAmbient()).not.toThrow();
+        expect(() => audio.stopVoidAmbient()).not.toThrow();
+    });
+
+    it('first boot with a save -> the CACHE cameo (enters from the left)', () => {
+        const game = titleGame({ cacheSeen: false });
+        game.maybeStartTitleCameo();
+        expect(game.titleCameo).toBeTruthy();
+        expect(game.titleCameo.who).toBe('cache');
+        expect(game.titleCameo.x).toBeLessThan(0);
+    });
+
+    it('after Cache but WITHOUT the Encore -> no Cadenza cameo', () => {
+        const game = titleGame({ cacheSeen: true, encore: false });
+        game.maybeStartTitleCameo();
+        expect(game.titleCameo).toBeNull();
+    });
+
+    it('after Cache AND the Encore -> the CADENZA cameo (enters from the opposite side)', () => {
+        const game = titleGame({ cacheSeen: true, encore: true });
+        game.maybeStartTitleCameo();
+        expect(game.titleCameo).toBeTruthy();
+        expect(game.titleCameo.who).toBe('cadenza');
+        expect(game.titleCameo.x).toBeGreaterThan(game.canvas.width);
+    });
+
+    it('the Cadenza cameo is one-time (already seen -> no cameo)', () => {
+        const game = titleGame({ cacheSeen: true, encore: true, cadenzaSeen: true });
+        game.maybeStartTitleCameo();
+        expect(game.titleCameo).toBeNull();
+    });
+
+    it('completing the Encore sets the global "encore unlocked" flag', () => {
+        const game = newGame();
+        game.dialogManager.start = (lines, onComplete) => { if (onComplete) onComplete(); };
+        game.state.unlocked.lostVerseFound = true;
+        game.npcCadenza(new NPC(200, 200, 20, 'cadenza', []));
+        const e = game.encore;
+        e.nextIndex = 7;
+        e.eaten = { 0: 1, 1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1 };
+        game.snake.body = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ x: e.nodes[k].x, y: e.nodes[k].y }));
+        game._encoreProcess();
+        expect(game.saveManager.hasEncoreUnlocked()).toBe(true);
     });
 });

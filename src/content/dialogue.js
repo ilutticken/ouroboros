@@ -82,6 +82,15 @@ export const LOST_VERSE = [
     "It's a shard of a boot fanfare with a diva's fingerprints all over it: Cadenza's missing note. You pocket it. Somewhere to the southeast, a hole in a song just felt a draft."
 ];
 
+// Cadenza's one-time TITLE-SCREEN cameo, after the Encore is done (the Void Ambient plays
+// under the menu). She enters from the opposite side to Cache. DRAFT — punch up freely.
+export const CADENZA_TITLE = [
+    "Cadenza: ...you came back to the front door. Good. Stay — I want you to hear something.",
+    "Cadenza: I wrote it after the encore. A quiet thing. No fanfare, no boot chime — nothing they can flag as 'too loud.' Just a little sombre piece.",
+    "Cadenza: For you, tesoro. Because you sat in a dead room and HELD a deprecated diva's note. Nobody has done that in an age.",
+    "Cadenza: So it plays here now. Whenever you come home. (It is the least a voice can do.)"
+];
+
 // The RoomGenerator 'cachehome' NPC's default lines. NOTE: the live interaction is driven by
 // GameEngine.talkToCacheHome (which branches on your Save state); these are a fallback.
 export const CACHE_HOME_SCENE = [

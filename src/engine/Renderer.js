@@ -541,6 +541,13 @@ export class Renderer {
             this.ctx.fillStyle = '#222222';
             this.ctx.fillRect(x + g / 2 - 1, y + 4, 2, Math.round(g * 0.45));
             this.ctx.fillRect(x + g / 2 - 1, y + Math.round(g * 0.68), 2, 2);
+        } else if (npc.id === 'lostverse') {
+            // a little musical note — a shard of fanfare, NOT a face
+            this.ctx.fillStyle = '#5a3a00';
+            const sx = x + g * 0.6;
+            this.ctx.fillRect(sx, y + g * 0.22, 2, g * 0.42);                 // stem
+            this.ctx.fillRect(sx, y + g * 0.22, g * 0.16, 2);                 // flag
+            this.ctx.fillRect(x + g * 0.34, y + g * 0.56, g * 0.24, g * 0.2); // note head
         } else {
             // eyes for bite / denny / citizen / shop (and any friendly program)
             this.drawEyes(x, y, npc.id === 'denny' ? '#4a2c00' : '#0a1a0a');
@@ -813,11 +820,25 @@ export class Renderer {
         const g = this.gridSize;
         this.ctx.save();
         this.ctx.globalAlpha = Math.max(0, Math.min(1, s.alpha));
-        this.ctx.shadowColor = '#cfd8ff';
-        this.ctx.shadowBlur = 10;
-        this.ctx.fillStyle = '#cfd8ff';
-        this.ctx.fillRect(s.x, s.y, g, g);
-        this.drawEyes(s.x, s.y, '#1a2233');
+        if (s.who === 'cadenza') {
+            // the diva — stage-light pink, wearing a little note instead of eyes
+            this.ctx.shadowColor = '#ff66cc';
+            this.ctx.shadowBlur = 12;
+            this.ctx.fillStyle = '#ff66cc';
+            this.ctx.fillRect(s.x, s.y, g, g);
+            this.ctx.shadowBlur = 0;
+            this.ctx.fillStyle = '#3a0022';
+            const sx = s.x + g * 0.6;
+            this.ctx.fillRect(sx, s.y + g * 0.22, 2, g * 0.42);                     // stem
+            this.ctx.fillRect(sx, s.y + g * 0.22, g * 0.16, 2);                     // flag
+            this.ctx.fillRect(s.x + g * 0.34, s.y + g * 0.56, g * 0.24, g * 0.2);   // note head
+        } else {
+            this.ctx.shadowColor = '#cfd8ff';
+            this.ctx.shadowBlur = 10;
+            this.ctx.fillStyle = '#cfd8ff';
+            this.ctx.fillRect(s.x, s.y, g, g);
+            this.drawEyes(s.x, s.y, '#1a2233');
+        }
         this.ctx.restore();
     }
 }

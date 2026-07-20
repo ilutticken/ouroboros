@@ -108,6 +108,26 @@ export class SaveManager {
         try { window.localStorage.setItem(this.cameoKey, '1'); } catch (e) { /* ignore */ }
     }
 
+    // Global one-time flag: the DA CAPO Encore has been completed at least once (across all
+    // files) — gates Cadenza's title-screen cameo + the Void Ambient on the menu.
+    hasEncoreUnlocked() {
+        if (!this.available) return false;
+        try { return window.localStorage.getItem('ouroboros-encore-unlocked') === '1'; } catch (e) { return false; }
+    }
+    markEncoreUnlocked() {
+        if (!this.available) return;
+        try { window.localStorage.setItem('ouroboros-encore-unlocked', '1'); } catch (e) { /* ignore */ }
+    }
+    // Global one-time flag for Cadenza's title-screen cameo (plays once, after Cache's).
+    hasCadenzaCameoSeen() {
+        if (!this.available) return false;
+        try { return window.localStorage.getItem('ouroboros-cadenza-cameo-seen') === '1'; } catch (e) { return false; }
+    }
+    markCadenzaCameoSeen() {
+        if (!this.available) return;
+        try { window.localStorage.setItem('ouroboros-cadenza-cameo-seen', '1'); } catch (e) { /* ignore */ }
+    }
+
     // Global player settings (volume / mute / reduce-motion) — independent of the save
     // slots, so preferences persist across New Game / Load and are NOT wiped by clearAll.
     loadSettings() {

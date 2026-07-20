@@ -10,7 +10,7 @@ import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
-import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE } from '../content/dialogue.js';
+import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE, CADENZA_TITLE } from '../content/dialogue.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -44,6 +44,7 @@ export class GameEngine {
             if (e.key === 'Escape') { this.exitEncore('left'); e.stopImmediatePropagation(); }
         });
         this.shopManager = new ShopManager(this.state, this.audio);
+        this.shopManager.onSpend = (price) => this.spendData(price); // Data = segments: buying shrinks you
         this.worldManager = new WorldManager(canvas, this.gridSize);
         this.saveManager = new SaveManager();
         this._saveFlash = 0; // ms remaining on a "SAVED"/"LOADED" pause-menu toast
@@ -87,6 +88,7 @@ export class GameEngine {
                 // used to jump score past one-shot beats and desync the sim.
                 if (this.state.gameState !== 'PLAYING' && this.state.gameState !== 'SHOP') return;
                 this.state.addScore(10);
+                this.growSnake(10); // Data = segments: the cheat grows you too
                 this.audio.playBeep();
                 this.checkUnlocks();
                 if (this.state.gameState === 'SHOP') this.shopManager.updateUI();
@@ -150,6 +152,7 @@ export class GameEngine {
         window.addEventListener('keydown', (e) => {
             if (!this.startMenuActive()) return;
             this.audio.init(); // idempotent — so the FIRST menu key isn't silent
+            this.maybeStartVoidAmbient(); // Cadenza's title piece loops once the Encore's done
             if (this.startCameoActive) {
                 // Cache's title cameo is up (in the dialog window, over the menu): SPACE/
                 // Enter advances it, everything else is swallowed so nav can't leak through.
@@ -202,7 +205,6 @@ export class GameEngine {
             signpost: (npc) => this.npcSign(npc),
             citizen: (npc) => this.npcSign(npc),
             cadenza: (npc) => this.npcCadenza(npc),
-            lostverse: (npc) => this.npcLostVerse(npc),
             shop: () => this.openBiteShop(),
         };
         
@@ -779,6 +781,25 @@ export class GameEngine {
     // opened a dialog (2-Bit's first-encounter apple) — the move-tick should stop this frame.
     collectData() {
         let grew = false;
+
+        // The Lost Verse — a Wilds pickup that heals Cadenza's dead note. Collected like Data:
+        // returning true here skips the tail-pop, so it ADDS TO YOUR TAIL (grows you), and it
+        // grants Data too, then opens its dialog. Handled before NPC bumps so it never blocks.
+        const lv = this.npcs && this.npcs.find(n => n.id === 'lostverse'
+            && this.snake.head.x === n.x && this.snake.head.y === n.y);
+        if (lv) {
+            this.npcs = this.npcs.filter(n => n !== lv);
+            const gain = this.state.upgrades.dataCompression ? 2 : 1;
+            this.state.addScore(gain);
+            if (gain > 1) this.growSnake(gain - 1); // Data = segments (the pickup already gave +1)
+            this.state.unlocked.lostVerseFound = true;
+            this.audio.playCadenzaSong(1); // a shard of her fanfare
+            this.checkUnlocks();
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(LOST_VERSE, () => { this.state.gameState = 'PLAYING'; });
+            return true; // grew (no tail-pop) + opened a dialog -> stop the tick
+        }
+
         if (this.apple instanceof NPC) {
             if (this.snake.checkAppleCollision(this.apple)) {
                 this.state.gameState = 'DIALOG';
@@ -797,6 +818,7 @@ export class GameEngine {
             this.snake.grow(); // growth = not shrinking this tick
             const gain = this.state.upgrades.dataCompression ? 2 : 1;
             this.state.addScore(gain);
+            if (gain > 1) this.growSnake(gain - 1); // Data = segments (the eat already gave +1)
             this.audio.playBeep();
             this.apple = this.spawnApple();
             this.checkUnlocks();
@@ -812,6 +834,7 @@ export class GameEngine {
                 this.snake.grow();
                 const gain = this.state.upgrades.dataCompression ? 2 : 1;
                 this.state.addScore(gain);
+                if (gain > 1) this.growSnake(gain - 1); // Data = segments (the eat already gave +1)
                 this.audio.playBeep();
                 this.checkUnlocks();
                 grew = true;
@@ -1049,6 +1072,29 @@ export class GameEngine {
         this.bursts = this.bursts.filter(p => p.life > 0);
     }
 
+    // Data = segments. Gaining Data grows your body; spending/losing it shrinks you. These
+    // couple the two counters so any change to one changes the other. (The head and 2-Bit's
+    // ridden segment are NOT Data — they're you and him — so they're never counted here.)
+    growSnake(n = 1) {
+        for (let i = 0; i < n; i++) {
+            const tail = this.snake.body[this.snake.body.length - 1] || this.snake.head;
+            this.snake.body.push({ ...tail });
+        }
+    }
+    // Spend n Data by shedding n segments off the tail (they burst off — the mass spent on
+    // the upgrade). Never sheds below the min length / 2-Bit's protected segment.
+    spendData(n) {
+        const shed = [];
+        const floor = this.hasBiteSegment ? 2 : 1;
+        for (let i = 0; i < n && this.snake.body.length > floor; i++) {
+            shed.push({ ...this.snake.body[this.snake.body.length - 1] });
+            this.snake.shrink(this.hasBiteSegment);
+        }
+        if (shed.length) this.spawnBurst(shed);
+        this.changeGear(0); // re-clamp gear to the lowered Data cap (no ghost max speed)
+        this.refreshScore();
+    }
+
     // Record one "continue" key on the death screen into the rolling last-5 buffer, and
     // summon Cache if it now spells her name. (Named keys — Space/arrows — record as '·'
     // so they can't spell it.)
@@ -1240,20 +1286,17 @@ export class GameEngine {
         this.dialogManager.start(intro, () => this.startEncore());
     }
 
-    // Pick up the Lost Verse out in the Wilds — heals Cadenza's dead note (gates the finale).
-    npcLostVerse(npc) {
-        this.npcs = this.npcs.filter(n => n.id !== 'lostverse');
-        this.state.unlocked.lostVerseFound = true;
-        this.audio.playCadenzaSong(1); // a shard of her fanfare, close and clear
-        this.state.gameState = 'DIALOG';
-        this.dialogManager.start(LOST_VERSE, () => { this.state.gameState = 'PLAYING'; });
-    }
-
     // Lay out the 8-node ring (a rectangle centred in the room) and enter ENCORE. The ring
     // size (hw x hh cells) sets the emergent length gate: your body must drape the whole
     // perimeter to hold the full chord — a longer worm can, a short one can't (no length
     // check anywhere). Node index 5 (bottom-centre) is the dead note.
     startEncore() {
+        // She begins to sing — the corruption can't hold a note in here. Any Glitches in her
+        // room dissolve (a little shimmer) so the stage is clean for the performance.
+        if (this.glitches && this.glitches.length) {
+            this.spawnBurst(this.glitches);
+            this.glitches = [];
+        }
         const g = this.gridSize;
         const cols = Math.floor(this.canvas.width / g), rows = Math.floor(this.canvas.height / g);
         const ccx = Math.floor(cols / 2), ccy = Math.floor(rows / 2);
@@ -1347,6 +1390,7 @@ export class GameEngine {
         this.speed = this._encorePrevSpeed || 100;
         this.state.unlocked.encoreComplete = true;
         this.state.unlocked.cadenzaFound = true;
+        this.saveManager.markEncoreUnlocked(); // global: unlocks her title-screen cameo + the Void Ambient
         if ((this.state.unlocked.musicLayer || 0) < 1) this.state.unlocked.musicLayer = 1;
         this.audio.startMusicLayer1();
         this.state.gameState = 'DIALOG';
@@ -1614,6 +1658,8 @@ export class GameEngine {
     newGame(slot) {
         this.activeSlot = slot;
         this.saveManager.markCameoSeen(); // reaching the menu counts as seeing the cameo
+        if (this.titleCameo && this.titleCameo.who === 'cadenza') this.saveManager.markCadenzaCameoSeen();
+        this.audio.stopVoidAmbient(); // the title piece ends when a run begins
         this.resetToNewGame();
         this.state.gameState = 'PLAYING';
     }
@@ -1624,6 +1670,8 @@ export class GameEngine {
         if (d && this.applySave(d)) {
             this.activeSlot = slot;
             this.saveManager.markCameoSeen();
+            if (this.titleCameo && this.titleCameo.who === 'cadenza') this.saveManager.markCadenzaCameoSeen();
+            this.audio.stopVoidAmbient(); // the title piece ends when a run begins
             this.state.gameState = 'PLAYING';
             return true;
         }
@@ -1921,7 +1969,7 @@ export class GameEngine {
         }
         if (this.titleCameo) {
             const g = this.gridSize;
-            this.state.titleCameoSprite = { x: this.titleCameo.x, y: Math.floor(this.canvas.height * 0.72 / g) * g, alpha: this.titleCameo.alpha };
+            this.state.titleCameoSprite = { x: this.titleCameo.x, y: Math.floor(this.canvas.height * 0.72 / g) * g, alpha: this.titleCameo.alpha, who: this.titleCameo.who };
         } else {
             this.state.titleCameoSprite = null;
         }
@@ -1968,9 +2016,25 @@ export class GameEngine {
     // starts to fade, then POPS back to complain about her own typo, then fades for good.
     // One-time (global flag). The scripted animation runs in updateTitleCameo().
     maybeStartTitleCameo() {
-        if (!this.saveManager.anySave() || this.saveManager.hasCameoSeen()) return;
-        this.startCameoActive = true;
-        this.titleCameo = { phase: 'walkin', t: 0, alpha: 1, x: -this.gridSize * 2 };
+        if (!this.saveManager.anySave()) return;
+        if (!this.saveManager.hasCameoSeen()) {
+            // Cache's first cameo (she "builds" the title screen), entering from the LEFT.
+            this.startCameoActive = true;
+            this.titleCameo = { who: 'cache', phase: 'walkin', t: 0, alpha: 1, x: -this.gridSize * 2 };
+            return;
+        }
+        // After Cache's cameo, once the DA CAPO Encore is done, Cadenza appears ONCE from the
+        // opposite side to give you her somber title piece (the Void Ambient plays from then on).
+        if (this.saveManager.hasEncoreUnlocked() && !this.saveManager.hasCadenzaCameoSeen()) {
+            this.startCameoActive = true;
+            this.titleCameo = { who: 'cadenza', phase: 'walkin', t: 0, alpha: 1, x: this.canvas.width + this.gridSize * 2 };
+        }
+    }
+
+    // Once the Encore is done, the Void Ambient (Cadenza's somber piece) loops under the title
+    // menu. Started on the first menu key (Web Audio needs the gesture); stopped when a run begins.
+    maybeStartVoidAmbient() {
+        if (this.startMenuActive() && this.saveManager.hasEncoreUnlocked()) this.audio.startVoidAmbient();
     }
 
     // Drives Cache's title-cameo sprite through its beats. Dialog windows open at the phase
@@ -1981,6 +2045,30 @@ export class GameEngine {
         const c = this.titleCameo;
         if (!c) return;
         const g = this.gridSize, W = this.canvas.width, H = this.canvas.height;
+
+        if (c.who === 'cadenza') {
+            // She enters from the RIGHT (Cache came from the left), says her piece, then fades.
+            const rX = Math.floor(W * 0.66 / g) * g;
+            const sX = W + g * 2;
+            const WALK = 1100, FADE = 900;
+            c.t += dt;
+            if (c.phase === 'walkin') {
+                const p = Math.min(1, c.t / WALK);
+                c.x = sX + (rX - sX) * (p * (2 - p)); // easeOut slide-on
+                c.alpha = 1;
+                if (p >= 1) {
+                    c.phase = 'holdA'; c.t = 0; c.x = rX;
+                    this.dialogManager.start(CADENZA_TITLE, () => { const cc = this.titleCameo; if (cc) { cc.phase = 'fadeout'; cc.t = 0; } });
+                }
+            } else if (c.phase === 'holdA') {
+                c.x = rX; c.alpha = 1;
+            } else if (c.phase === 'fadeout') {
+                c.alpha = 1 - Math.min(1, c.t / FADE);
+                if (c.t >= FADE) { this.titleCameo = null; this.startCameoActive = false; this.saveManager.markCadenzaCameoSeen(); }
+            }
+            return;
+        }
+
         const restX = Math.floor(W * 0.30 / g) * g; // rest lower-left of the title/files
         const startX = -g * 2;
         const WALK_MS = 1100, FADE1_MS = 460, POP_MS = 240, FADE2_MS = 700, FADE1_TARGET = 0.22;

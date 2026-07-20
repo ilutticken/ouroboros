@@ -486,4 +486,50 @@ export class AudioEngine {
         try { this._layer1.osc.stop(); this._layer1.lfo.stop(); } catch (e) { /* already stopped */ }
         this._layer1 = null;
     }
+
+    // The Void Ambient — a soft, looping Am-F-C-G pad + bass, scheduled one chord at a time
+    // via a lookahead timer. Cadenza's "somber piece": plays under the title screen once the
+    // Encore is done. Idempotent; no-ops before init (needs a user gesture). stopVoidAmbient() ends it.
+    startVoidAmbient() {
+        if (!this.initialized || this._ambient) return;
+        const CHORDS = [
+            { bass: 110.00, pad: [220.00, 329.63] }, // Am
+            { bass: 87.31,  pad: [174.61, 261.63] }, // F
+            { bass: 65.41,  pad: [130.81, 196.00] }, // C
+            { bass: 98.00,  pad: [196.00, 293.66] }, // G
+        ];
+        const DUR = 2.2; // seconds per chord
+        const amb = { i: 0, next: this.ctx.currentTime + 0.06, timer: null };
+        const schedule = () => {
+            if (!this.ctx) return;
+            while (amb.next < this.ctx.currentTime + 0.5) { // ~0.5s lookahead
+                this._ambientChord(CHORDS[amb.i % CHORDS.length], amb.next, DUR);
+                amb.next += DUR;
+                amb.i++;
+            }
+        };
+        schedule();
+        amb.timer = setInterval(schedule, 200);
+        this._ambient = amb;
+    }
+    _ambientChord(c, t0, dur) {
+        const voice = (freq, peak) => {
+            const osc = this.ctx.createOscillator();
+            osc.type = 'triangle'; // soft pad
+            osc.frequency.setValueAtTime(freq, t0);
+            const g = this.ctx.createGain();
+            g.gain.setValueAtTime(0.0001, t0);
+            g.gain.exponentialRampToValueAtTime(peak, t0 + 0.6);   // slow swell
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur); // release
+            osc.connect(g); g.connect(this.master);
+            osc.start(t0); osc.stop(t0 + dur + 0.05);
+        };
+        voice(c.bass, 0.06);
+        for (const f of c.pad) voice(f, 0.035);
+    }
+    stopVoidAmbient() {
+        if (!this._ambient) return;
+        clearInterval(this._ambient.timer);
+        this._ambient = null;
+    }
 }

@@ -22,6 +22,7 @@ export class ShopManager {
 
         this.btnClose = document.getElementById('btn-close-shop');
         this.onClose = null;
+        this.onSpend = null; // Data = segments: set by Game to shrink the body when you spend
 
         this.bindEvents();
     }
@@ -29,6 +30,7 @@ export class ShopManager {
     purchase(it) {
         if (!it || it.owned() || this.state.score < it.price) return;
         this.state.score -= it.price;
+        if (this.onSpend) this.onSpend(it.price); // Data = segments: spending Data shrinks your body
         it.buy();
         this.audio.playBeep();
         this.updateUI();

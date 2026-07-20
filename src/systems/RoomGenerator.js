@@ -96,7 +96,10 @@ export class RoomGenerator {
             // heals the "dead note" that otherwise halts the DA CAPO Encore's finale. Placed
             // only until you pick it up (gated on the flag, so it never re-spawns).
             if (!(stateUnlocked && stateUnlocked.lostVerseFound)) {
-                npcs.push(new NPC(cx, cy, this.gridSize, 'lostverse', []));
+                // Off-centre — you have to look for it, not walk straight onto it.
+                const lvx = Math.floor(this.cols * 0.3) * this.gridSize;
+                const lvy = Math.floor(this.rows * 0.3) * this.gridSize;
+                npcs.push(new NPC(lvx, lvy, this.gridSize, 'lostverse', []));
             }
         } else {
             // Random Templates

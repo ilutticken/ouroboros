@@ -440,6 +440,13 @@ The Sound Test minigame ships. Bumping the `cadenza` NPC at `{8,3}` now enters a
 - **Accessibility.** `Renderer.drawEncore` overlays the ring on the live room: every node reads by **number + shape state** (outline / filled-ringing / cracked-X) + **position**, never colour alone; a 16px banner spells `HOLD THE CHORD  n/8  [k ringing]` and any broken-take message; glows hold steady under reduce-motion.
 - **Divergences from the §6 design (deliberate v1 simplifications, flagged for tuning):** the groove is a node-rectangle you lap freely, not a 1-cell-wide perimeter you're locked to (so "leaving the groove" isn't a fail — walls just block); phrases are one continuous lap with checkpoints at 3/5/8 rather than three separately re-sung takes; the dead note lives at ring-index 5 (positioned so *only* the finale needs the verse); the "length reset / recorded to ROM" on success is **deferred** (you keep your body); the verse is its own findable item, not yet tied to 2-Bit's bootleg. Ring size, tempo, and the dead-note index are the tuning dials. Covered by 14 tests in `DiegeticAudio.test.js`.
 
+### Data = Segments — the coupled economy (IMPLEMENTED)
+Data (`state.score`) and body length now move **together**: any gain or loss of one changes the other, and **spending Data shrinks you**.
+- **Gaining** — a pickup adds to your tail AND your Data 1:1: an apple / spare-mote / the **Lost Verse** grows +1 and scores +1 (the eat's no-tail-pop is the +1). `dataCompression` is now "grow **+2**" — `growSnake(gain-1)` adds the extra segment so length and Data stay equal. The dev cheat grows +10 too.
+- **Losing** — already 1:1 and left as-is: a **Glitch bite** sheds `damage` segments and `damage` Data; the **Crumple** bounce sheds `shedAmount` of both.
+- **Spending shrinks you** (the owner's call) — `ShopManager.purchase` now calls `onSpend(price)` → `Game.spendData(price)`, which sheds `price` segments off the tail (they burst off — mass spent on the upgrade) and re-clamps gear. So buying literally costs body; your length **is** your wallet, and gear/encore-length are the same resource you spend down.
+- **Not Data:** the head and 2-Bit's ridden segment are you and him, never counted — so the absolute relation is ≈ `score = length − 1` (− another for 2-Bit aboard), but the *coupling of changes* is exact. Covered by tests in `DiegeticAudio.test.js` ("Data = segments").
+
 ### 2-Bit's shop inventory (RESOLVED) & the Topology Scanner
 The shop is now a **data-driven list** (`ShopManager.items`, still null-safe). Retired the dead/redundant items (Manual Override brake, Overclocked speed, Hitchhiker). The lineup:
 - **Data Compression (15)** — apples give +2 Data. (Kept; owner likes it.)
