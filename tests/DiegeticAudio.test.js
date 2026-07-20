@@ -11,6 +11,7 @@ import { Glitch } from '../src/entities/Glitch.js';
 import { NPC } from '../src/entities/NPC.js';
 import { SaveManager } from '../src/systems/SaveManager.js';
 import { NarrativeManager } from '../src/systems/NarrativeManager.js';
+import { THEME_CHANNELS, LOOP_BEATS, noteFreq } from '../src/content/music.js';
 
 function mountDom() {
     document.body.innerHTML = `
@@ -2389,11 +2390,12 @@ describe('Cadenza — the DA CAPO Encore (the music puzzle)', () => {
     it('AudioEngine exposes the tuned note + Locked Groove, and no-ops before init', () => {
         const audio = new AudioEngine();
         expect(typeof audio.playEncoreNote).toBe('function');
-        expect(typeof audio.startMusicLayer1).toBe('function');
-        expect(typeof audio.stopMusicLayer).toBe('function');
+        expect(typeof audio.setMusicLayer).toBe('function');
+        expect(typeof audio.stopMusic).toBe('function');
         expect(() => audio.playEncoreNote(0)).not.toThrow();
-        expect(() => audio.startMusicLayer1()).not.toThrow();
-        expect(() => audio.stopMusicLayer()).not.toThrow();
+        expect(() => audio.setMusicLayer(3)).not.toThrow(); // no-op before init
+        expect(() => audio.stopMusic()).not.toThrow();
+        expect(() => audio.startMusicLayer1()).not.toThrow(); // back-compat alias
     });
 
     it('bumping Cadenza starts the Encore: an 8-node ring with one dead note', () => {
@@ -2412,6 +2414,14 @@ describe('Cadenza — the DA CAPO Encore (the music puzzle)', () => {
         enterEncore(game); // the intro completes -> startEncore -> she sings
         expect(game.glitches.length).toBe(0);
         expect(game.state.gameState).toBe('ENCORE');
+    });
+
+    it('starting the Encore resets a pending Crumple unfold (no growth mid-lap)', () => {
+        const game = newGame();
+        game.dialogManager.start = (lines, onComplete) => { if (onComplete) onComplete(); };
+        game.pendingUnfold = 6;
+        game.npcCadenza(new NPC(200, 200, 20, 'cadenza', []));
+        expect(game.pendingUnfold).toBe(0);
     });
 
     it('striking nodes IN ORDER (body draped) advances the phrase', () => {
@@ -2605,6 +2615,19 @@ describe('Data = segments (economy coupling)', () => {
         expect(game.snake.body.length).toBe(len0 - pivot.price); // spending shrank you
     });
 
+    it('spending Data sheds folded (post-bounce) mass first, keeping length coupled', () => {
+        const game = newGame();
+        game.pendingUnfold = 8;
+        game.snake.body = [];
+        for (let i = 0; i < 10; i++) game.snake.body.push({ x: 20 + i * 20, y: 20 });
+        game.spendData(5);                 // 5 <= 8 folded -> all off the fold
+        expect(game.pendingUnfold).toBe(3);
+        expect(game.snake.body.length).toBe(10);
+        game.spendData(5);                 // 3 off the fold, then 2 real segments
+        expect(game.pendingUnfold).toBe(0);
+        expect(game.snake.body.length).toBe(8);
+    });
+
     it('a Glitch bite drains segments AND Data together', () => {
         const game = newGame();
         game.state.gameState = 'PLAYING';
@@ -2689,5 +2712,43 @@ describe("Cadenza's title-screen cameo (after the Encore)", () => {
         game.snake.body = [7, 6, 5, 4, 3, 2, 1, 0].map(k => ({ x: e.nodes[k].x, y: e.nodes[k].y }));
         game._encoreProcess();
         expect(game.saveManager.hasEncoreUnlocked()).toBe(true);
+    });
+});
+
+describe('the layered soundtrack (shared composition)', () => {
+    beforeEach(mountDom);
+
+    it('loading a save syncs the soundtrack to its layer (0 halts a playing theme)', () => {
+        const a = newGame();
+        a.state.unlocked.musicLayer = 0;
+        const b = newGame();
+        b.audio.setMusicLayer = vi.fn();
+        b.applySave(a.serialize());
+        expect(b.audio.setMusicLayer).toHaveBeenCalledWith(0); // stops a stale theme
+        a.state.unlocked.musicLayer = 2;
+        b.audio.setMusicLayer.mockClear();
+        b.applySave(a.serialize());
+        expect(b.audio.setMusicLayer).toHaveBeenCalledWith(2);
+    });
+
+    it('every theme channel is exactly one loop long (stays in sync)', () => {
+        for (const ch of THEME_CHANNELS) {
+            const beats = ch.seq.reduce((s, ev) => s + ev[1], 0);
+            expect(beats).toBe(LOOP_BEATS);
+        }
+    });
+
+    it('channels stack by layer (bass 1, arp 2, melody + perc 3)', () => {
+        const byId = Object.fromEntries(THEME_CHANNELS.map(c => [c.id, c.layer]));
+        expect(byId.bass).toBe(1);
+        expect(byId.arp).toBe(2);
+        expect(byId.melody).toBe(3);
+        expect(byId.perc).toBe(3);
+    });
+
+    it('noteFreq is standard equal temperament (A4 = 440)', () => {
+        expect(Math.round(noteFreq('A4'))).toBe(440);
+        expect(Math.round(noteFreq('A5'))).toBe(880);
+        expect(Math.round(noteFreq('C5'))).toBe(523);
     });
 });

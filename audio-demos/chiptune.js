@@ -18,17 +18,11 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+// Composition + note helpers come from the game's shared module — one source of truth, so the
+// WAV demos and the in-game player (src/engine/Audio.js) can never drift apart:
+import { BPM, cat, repeat, arp, noteFreq, MELODY, ARP, BASS, PERC } from '../src/content/music.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SR = 44100;
-
-const NAMES = { C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11 };
-function noteFreq(name) {
-    if (name == null) return 0;
-    const m = String(name).match(/^([A-G][#b]?)(-?\d)$/);
-    if (!m) throw new Error('bad note ' + name);
-    const midi = NAMES[m[1]] + (parseInt(m[2], 10) + 1) * 12;
-    return 440 * Math.pow(2, (midi - 69) / 12);
-}
 const frac = (x) => x - Math.floor(x);
 const pulse = (ph, duty) => (frac(ph) < duty ? 1 : -1);
 const tri = (ph) => { const p = frac(ph); return p < 0.5 ? 4 * p - 1 : 3 - 4 * p; };
@@ -108,37 +102,13 @@ function writeWav(file, buf) {
     fs.writeFileSync(file, b);
 }
 
-// ---- Composition -------------------------------------------------------------------
-const BPM = 88;
-const cat = (...xs) => [].concat(...xs);
-const repeat = (seq, n) => { let o = []; for (let i = 0; i < n; i++) o = o.concat(seq); return o; };
-const arp = ([a, b, c]) => [[a, .5], [b, .5], [c, .5], [b, .5], [a, .5], [b, .5], [c, .5], [b, .5]]; // root-3-5-3 x2
-const bassBar = (root) => [[root, 2], [root, 2]];
-const percBar = () => [['k', .5], ['h', .5], ['h', .5], ['h', .5], ['k', .5], ['h', .5], ['h', .5], ['h', .5]];
-
-const MELODY = [
-    ['A4', 1], ['C5', 1], ['E5', 2],                 // Am
-    ['F5', 1], ['E5', 1], ['C5', 2],                 // F
-    ['E5', 1], ['G5', 1], ['A5', 1], ['G5', 1],      // C
-    ['D5', 2], ['B4', 2],                            // G
-    ['A4', 1], ['C5', 1], ['F5', 2],                 // F
-    ['E5', 1], ['G5', 1], ['E5', 2],                 // C
-    ['D5', 1], ['B4', 1], ['G4', 2],                 // G
-    ['A4', 4],                                       // Am (resolve home)
-];
-const ARP = cat(
-    arp(['A3', 'C4', 'E4']), arp(['F3', 'A3', 'C4']), arp(['C4', 'E4', 'G4']), arp(['G3', 'B3', 'D4']),
-    arp(['F3', 'A3', 'C4']), arp(['C4', 'E4', 'G4']), arp(['G3', 'B3', 'D4']), arp(['A3', 'C4', 'E4']),
-);
-const BASS = cat(
-    bassBar('A2'), bassBar('F2'), bassBar('C2'), bassBar('G2'),
-    bassBar('F2'), bassBar('C2'), bassBar('G2'), bassBar('A2'),
-);
+// ---- Composition (imported from src/content/music.js) ------------------------------
+// PAD is the ambient demo's held-pad voice — used only by the WAV (the game's live Void
+// Ambient synthesises its own chords), so it stays local here.
 const PAD = cat(
     [['A3', 4]], [['F3', 4]], [['C4', 4]], [['G3', 4]],
     [['F3', 4]], [['C4', 4]], [['G3', 4]], [['A3', 4]],
 );
-const PERC = repeat(percBar(), 8);
 
 const LOOPS = 2;                       // render two passes so the loop point is audible
 const TOTAL_BEATS = 32 * LOOPS;

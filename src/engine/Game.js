@@ -43,6 +43,17 @@ export class GameEngine {
             if (this.state.gameState !== 'ENCORE') return;
             if (e.key === 'Escape') { this.exitEncore('left'); e.stopImmediatePropagation(); }
         });
+        // DEV audition: 'M' cycles the music layer 1->2->3->1 in play (the real boots are at
+        // the Encore = 1, Beat 8 = 2, Beat 16 = 3 via setMusicLayer). Lets us hear the mix now.
+        window.addEventListener('keydown', (e) => {
+            if ((e.key === 'm' || e.key === 'M') && (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE')) {
+                this.audio.init();
+                const n = ((this.state.unlocked.musicLayer || 0) % 3) + 1;
+                this.state.unlocked.musicLayer = n;
+                this.audio.setMusicLayer(n);
+                e.stopImmediatePropagation();
+            }
+        });
         this.shopManager = new ShopManager(this.state, this.audio);
         this.shopManager.onSpend = (price) => this.spendData(price); // Data = segments: buying shrinks you
         this.worldManager = new WorldManager(canvas, this.gridSize);
@@ -211,13 +222,14 @@ export class GameEngine {
         // Initialize Input
         this.input.init(this.gridSize, () => {
             this.audio.init();
-            if (this.state.unlocked.musicLayer >= 1) this.audio.startMusicLayer1(); // resume the Locked Groove after a load
+            this.audio.setMusicLayer(this.state.unlocked.musicLayer || 0); // sync the soundtrack to the current layer (0 halts it)
             if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
             if (this.state.gameState === 'DEAD') {
                 this.state.gameState = 'PLAYING'; // respawn wake-press
             } else if (this.state.gameState === 'START' && !this.startMenuActive()) {
                 // Bare-void cold open (no save files yet): any key starts the first run.
                 // When the file-select menu IS up, its own listener handles selection.
+                this.audio.stopVoidAmbient(); // don't let the title piece leak into the run
                 this.state.gameState = 'PLAYING';
             }
         }, () => {
@@ -1086,7 +1098,16 @@ export class GameEngine {
     spendData(n) {
         const shed = [];
         const floor = this.hasBiteSegment ? 2 : 1;
-        for (let i = 0; i < n && this.snake.body.length > floor; i++) {
+        let remaining = n;
+        // Spend any folded (post-bounce, not-yet-unfolded) mass FIRST — it's Data you own,
+        // just collapsed — so the paid amount always comes off the LOGICAL length and can't
+        // desync from Data if you buy mid-unfold.
+        if (this.pendingUnfold > 0) {
+            const fromFold = Math.min(remaining, this.pendingUnfold);
+            this.pendingUnfold -= fromFold;
+            remaining -= fromFold;
+        }
+        for (let i = 0; i < remaining && this.snake.body.length > floor; i++) {
             shed.push({ ...this.snake.body[this.snake.body.length - 1] });
             this.snake.shrink(this.hasBiteSegment);
         }
@@ -1313,6 +1334,7 @@ export class GameEngine {
         this._encorePrevSpeed = this.speed;
         this.speed = 110;   // a steady tempo; gear is locked out during the performance
         this.moveTimer = 0;
+        this.pendingUnfold = 0; // a mid-bounce Crumple unfold would otherwise grow you during the lap
         this.encore = { nodes, nextIndex: 0, eaten: {}, phase: 1, crackFlash: 0, msg: '' };
         this.state.gameState = 'ENCORE';
     }
@@ -1392,7 +1414,7 @@ export class GameEngine {
         this.state.unlocked.cadenzaFound = true;
         this.saveManager.markEncoreUnlocked(); // global: unlocks her title-screen cameo + the Void Ambient
         if ((this.state.unlocked.musicLayer || 0) < 1) this.state.unlocked.musicLayer = 1;
-        this.audio.startMusicLayer1();
+        this.audio.setMusicLayer(this.state.unlocked.musicLayer); // Cadenza's Locked Groove — Layer 1
         this.state.gameState = 'DIALOG';
         this.dialogManager.start(CADENZA_ENCORE.success, () => { this.state.gameState = 'PLAYING'; });
     }
@@ -1683,6 +1705,7 @@ export class GameEngine {
     // (shopManager, narrative) hold this.state, so we reset its fields in place rather than
     // replacing the object.
     resetToNewGame() {
+        this.audio.stopMusic(); // a fresh run starts from silence (Layer 0)
         const fresh = new StateManager();
         Object.assign(this.state.unlocked, fresh.unlocked);
         Object.assign(this.state.upgrades, fresh.upgrades);
@@ -1824,6 +1847,7 @@ export class GameEngine {
             this.narrative.online = true;
         }
         this.refreshScore();
+        this.audio.setMusicLayer(this.state.unlocked.musicLayer || 0); // sync the soundtrack to the loaded layer (0 = silence)
         return true;
     }
 

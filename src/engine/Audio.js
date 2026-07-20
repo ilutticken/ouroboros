@@ -1,3 +1,5 @@
+import { THEME_CHANNELS, BPM, LOOP_BEATS, noteFreq } from '../content/music.js';
+
 export class AudioEngine {
     constructor() {
         this.ctx = null;
@@ -455,36 +457,151 @@ export class AudioEngine {
         osc.start(now); osc.stop(now + 0.5);
     }
 
-    // Diegetic: Cadenza's Locked Groove — the self-sustaining loop the finished Encore
-    // presses into the machine (Music Layer 1). A low square-wave pulse, gently throbbed
-    // by an LFO on its gain, that STAYS ON (persists across the run) until stopped. Boots
-    // once; idempotent. This is the first continuous music the machine has ever produced.
-    startMusicLayer1() {
-        if (!this.initialized || this._layer1) return;
-        const now = this.ctx.currentTime;
-        const osc = this.ctx.createOscillator();
-        osc.type = 'square';
-        osc.frequency.setValueAtTime(130.81, now); // C3 pulse
-        const g = this.ctx.createGain();
-        g.gain.setValueAtTime(0.0001, now);
-        g.gain.linearRampToValueAtTime(0.03, now + 1.5); // ease it in
-        // LFO throb on the gain -> a living pulse rather than a drone.
-        const lfo = this.ctx.createOscillator();
-        lfo.type = 'sine';
-        lfo.frequency.setValueAtTime(2, now); // 2 Hz groove
-        const lfoGain = this.ctx.createGain();
-        lfoGain.gain.setValueAtTime(0.018, now);
-        lfo.connect(lfoGain); lfoGain.connect(g.gain);
-        osc.connect(g); g.connect(this.master);
-        osc.start(now); lfo.start(now);
-        this._layer1 = { osc, lfo, g };
+    // ---- The layered soundtrack (Cadenza's theme) --------------------------------------
+    // Plays THEME_CHANNELS (the shared note-data — same as the WAV demos) via a lookahead
+    // scheduler, gating channels by the current music layer: 1 = bass groove (the Locked
+    // Groove), 2 = + arpeggiated pulse, 3 = + melody + percussion (full symphony). Layer
+    // changes take effect within the ~0.5s lookahead. Idempotent; no-op before init.
+    setMusicLayer(layer) {
+        this._musicLayer = Math.max(0, Math.min(3, layer | 0));
+        if (this._musicLayer <= 0) { this.stopMusic(); return; }
+        if (this.initialized && !this._music) this._startMusic();
+    }
+    // Back-compat aliases (the design's "Layer 1" language / older callers).
+    startMusicLayer1() { this.setMusicLayer(Math.max(1, this._musicLayer || 0)); }
+    stopMusicLayer() { this.stopMusic(); }
+
+    _startMusic() {
+        if (!this.initialized || this._music) return;
+        const spb = 60 / BPM;
+        const loopLen = LOOP_BEATS * spb;
+        const channels = THEME_CHANNELS.map(ch => {
+            const events = []; let t = 0;
+            for (const [note, beats] of ch.seq) { if (note != null) events.push({ off: t, dur: beats * spb, note }); t += beats * spb; }
+            return { synth: ch, events, idx: 0, loop: 0 };
+        }).filter(c => c.events.length);
+        const m = { loopLen, channels, loopBase: this.ctx.currentTime + 0.15, timer: null, voices: [] };
+        const absOf = (c) => m.loopBase + c.loop * loopLen + c.events[c.idx].off;
+        const schedule = () => {
+            if (!this.ctx) return;
+            const now = this.ctx.currentTime;
+            m.voices = m.voices.filter(v => v.end > now); // prune finished voices
+            const ahead = now + 1.0; // > the ~1s background-tab setInterval throttle, so no gap forms
+            for (const c of m.channels) {
+                while (absOf(c) < ahead) {
+                    const t0 = absOf(c);
+                    // Skip events already in the past (e.g. after a backgrounded tab throttled the
+                    // timer) — resync to the next future beat instead of dumping the whole backlog.
+                    if (t0 >= now - 0.02 && c.synth.layer <= (this._musicLayer || 0)) {
+                        this._playThemeNote(c.synth, t0, c.events[c.idx].dur, c.events[c.idx].note, m);
+                    }
+                    c.idx++;
+                    if (c.idx >= c.events.length) { c.idx = 0; c.loop++; }
+                }
+            }
+        };
+        schedule();
+        m.timer = setInterval(schedule, 200);
+        this._music = m;
     }
 
-    // Tear down the Locked Groove (e.g. on New Game). Safe to call when nothing is playing.
-    stopMusicLayer() {
-        if (!this._layer1) return;
-        try { this._layer1.osc.stop(); this._layer1.lfo.stop(); } catch (e) { /* already stopped */ }
-        this._layer1 = null;
+    // Band-limited pulse wave of the given duty (native 'square' is a fixed 50%). Cached.
+    _pulseWave(duty) {
+        this._pw = this._pw || {};
+        const key = duty.toFixed(3);
+        if (this._pw[key]) return this._pw[key];
+        const M = 1024, N = 48;
+        const real = new Float32Array(N), imag = new Float32Array(N);
+        for (let n = 1; n < N; n++) {
+            let re = 0, im = 0;
+            for (let i = 0; i < M; i++) {
+                const s = (i / M < duty) ? 1 : -1;
+                const ph = 2 * Math.PI * n * i / M;
+                re += s * Math.cos(ph); im -= s * Math.sin(ph);
+            }
+            real[n] = (2 / M) * re; imag[n] = (2 / M) * im;
+        }
+        this._pw[key] = this.ctx.createPeriodicWave(real, imag);
+        return this._pw[key];
+    }
+
+    _playThemeNote(synth, t0, dur, note, m) {
+        if (synth.type === 'noise') { this._percNote(note, t0, m); return; }
+        const osc = this.ctx.createOscillator();
+        if (synth.type === 'pulse') osc.setPeriodicWave(this._pulseWave(synth.duty));
+        else osc.type = 'triangle';
+        const f = noteFreq(note);
+        osc.frequency.setValueAtTime(f, t0);
+        const e = synth.env || {};
+        let a = e.a || 0.01, d = e.d || 0.06, r = e.r || 0.06;
+        const s = (e.s == null ? 0.7 : e.s);
+        // Keep A+D+R within the note so the gain automation stays strictly in time order for
+        // ANY duration (a very short note just compresses the envelope) — no out-of-order jumps.
+        if (a + d + r > dur) { const k = dur / (a + d + r + 1e-6); a *= k; d *= k; r *= k; }
+        const peak = Math.max(0.0001, synth.vol), sus = Math.max(0.0001, peak * s);
+        const tD = t0 + a + d, tR = t0 + dur - r;
+        const g = this.ctx.createGain();
+        g.gain.setValueAtTime(0.0001, t0);
+        g.gain.exponentialRampToValueAtTime(peak, t0 + a);
+        g.gain.exponentialRampToValueAtTime(sus, tD);
+        if (tR > tD) g.gain.setValueAtTime(sus, tR); // hold sustain
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(g); g.connect(this.master);
+        osc.start(t0); osc.stop(t0 + dur + 0.05);
+        m.voices.push({ osc, g, end: t0 + dur + 0.05 });
+        if (synth.vib) {
+            const lfo = this.ctx.createOscillator();
+            lfo.type = 'sine'; lfo.frequency.setValueAtTime(synth.vib.rate, t0);
+            const lg = this.ctx.createGain(); lg.gain.setValueAtTime(f * synth.vib.depth, t0);
+            lfo.connect(lg); lg.connect(osc.frequency);
+            lfo.start(t0); lfo.stop(t0 + dur + 0.05);
+            m.voices.push({ osc: lfo, g: lg, end: t0 + dur + 0.05 });
+        }
+    }
+
+    _percNote(hit, t0, m) {
+        const isK = hit === 'k';
+        const len = isK ? 0.11 : 0.03;
+        if (isK) {
+            const osc = this.ctx.createOscillator();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(120, t0);
+            osc.frequency.exponentialRampToValueAtTime(45, t0 + len);
+            const g = this.ctx.createGain();
+            g.gain.setValueAtTime(0.12, t0);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
+            osc.connect(g); g.connect(this.master);
+            osc.start(t0); osc.stop(t0 + len + 0.02);
+            m.voices.push({ osc, g, end: t0 + len + 0.02 });
+        } else {
+            const src = this.ctx.createBufferSource();
+            src.buffer = this._noiseBuffer();
+            const hp = this.ctx.createBiquadFilter();
+            hp.type = 'highpass'; hp.frequency.setValueAtTime(6000, t0);
+            const g = this.ctx.createGain();
+            g.gain.setValueAtTime(0.05, t0);
+            g.gain.exponentialRampToValueAtTime(0.0001, t0 + len);
+            src.connect(hp); hp.connect(g); g.connect(this.master);
+            src.start(t0); src.stop(t0 + len + 0.02);
+            m.voices.push({ osc: src, g, end: t0 + len + 0.02 });
+        }
+    }
+
+    // Stop the soundtrack: halt scheduling and fast-fade any sounding/scheduled voices.
+    stopMusic() {
+        this._musicLayer = 0;
+        if (!this._music) return;
+        clearInterval(this._music.timer);
+        const now = this.ctx ? this.ctx.currentTime : 0;
+        for (const v of this._music.voices) {
+            try {
+                v.g.gain.cancelScheduledValues(now);
+                v.g.gain.setValueAtTime(Math.max(0.0001, v.g.gain.value || 0.0001), now);
+                v.g.gain.exponentialRampToValueAtTime(0.0001, now + 0.10);
+                v.osc.stop(now + 0.12);
+            } catch (e) { /* already stopped */ }
+        }
+        this._music = null;
     }
 
     // The Void Ambient — a soft, looping Am-F-C-G pad + bass, scheduled one chord at a time
@@ -499,11 +616,13 @@ export class AudioEngine {
             { bass: 98.00,  pad: [196.00, 293.66] }, // G
         ];
         const DUR = 2.2; // seconds per chord
-        const amb = { i: 0, next: this.ctx.currentTime + 0.06, timer: null };
+        const amb = { i: 0, next: this.ctx.currentTime + 0.06, timer: null, voices: [] };
         const schedule = () => {
             if (!this.ctx) return;
-            while (amb.next < this.ctx.currentTime + 0.5) { // ~0.5s lookahead
-                this._ambientChord(CHORDS[amb.i % CHORDS.length], amb.next, DUR);
+            const now = this.ctx.currentTime;
+            amb.voices = amb.voices.filter(v => v.end > now); // prune finished voices
+            while (amb.next < now + 1.0) { // > the ~1s background-tab throttle, so no gap forms
+                if (amb.next >= now - 0.05) this._ambientChord(CHORDS[amb.i % CHORDS.length], amb.next, DUR, amb); // skip past-due
                 amb.next += DUR;
                 amb.i++;
             }
@@ -512,7 +631,7 @@ export class AudioEngine {
         amb.timer = setInterval(schedule, 200);
         this._ambient = amb;
     }
-    _ambientChord(c, t0, dur) {
+    _ambientChord(c, t0, dur, amb) {
         const voice = (freq, peak) => {
             const osc = this.ctx.createOscillator();
             osc.type = 'triangle'; // soft pad
@@ -523,13 +642,25 @@ export class AudioEngine {
             g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur); // release
             osc.connect(g); g.connect(this.master);
             osc.start(t0); osc.stop(t0 + dur + 0.05);
+            amb.voices.push({ osc, g, end: t0 + dur + 0.05 });
         };
         voice(c.bass, 0.06);
         for (const f of c.pad) voice(f, 0.035);
     }
+    // End the ambient: stop scheduling AND fast-fade any voice already sounding or scheduled,
+    // so no chord swells in after a run has begun.
     stopVoidAmbient() {
         if (!this._ambient) return;
         clearInterval(this._ambient.timer);
+        const now = this.ctx ? this.ctx.currentTime : 0;
+        for (const v of this._ambient.voices) {
+            try {
+                v.g.gain.cancelScheduledValues(now);
+                v.g.gain.setValueAtTime(Math.max(0.0001, v.g.gain.value || 0.0001), now);
+                v.g.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+                v.osc.stop(now + 0.14);
+            } catch (e) { /* already stopped */ }
+        }
         this._ambient = null;
     }
 }
