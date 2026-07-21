@@ -19,6 +19,19 @@ export class AudioEngine {
         }
     }
 
+    // The coil duck (finite Wilds): 1 = normal, 0 = total held breath. Ramped, not
+    // stepped, so approaching the Kernel's body reads as the world fading — never a
+    // click. Safe to call before init(). The Renderer carries the deaf-legible twin
+    // (the room dims toward the coil + a proximity readout).
+    setDuck(v) {
+        const t = Math.max(0, Math.min(1, v));
+        if (this.duck && this.ctx) {
+            this.duck.gain.cancelScheduledValues(this.ctx.currentTime);
+            this.duck.gain.setValueAtTime(this.duck.gain.value, this.ctx.currentTime);
+            this.duck.gain.linearRampToValueAtTime(Math.max(0.0001, t), this.ctx.currentTime + 0.25);
+        }
+    }
+
     init() {
         if (this.initialized) return;
 
@@ -32,13 +45,20 @@ export class AudioEngine {
         // hard-clip the destination.
         this.master = this.ctx.createGain();
         this.master.gain.setValueAtTime(this.masterVolume, this.ctx.currentTime);
+        // The coil duck: in boundary sectors, EVERY sound (music included) fades toward
+        // silence as the head nears the Kernel's coil — the world holds its breath.
+        // Sits after the master (so the a11y volume stays independent) and before the
+        // limiter. 1 = normal, 0 = held breath. Driven by setDuck().
+        this.duck = this.ctx.createGain();
+        this.duck.gain.setValueAtTime(1, this.ctx.currentTime);
         this.limiter = this.ctx.createDynamicsCompressor();
         this.limiter.threshold.setValueAtTime(-14, this.ctx.currentTime);
         this.limiter.knee.setValueAtTime(12, this.ctx.currentTime);
         this.limiter.ratio.setValueAtTime(6, this.ctx.currentTime);
         this.limiter.attack.setValueAtTime(0.003, this.ctx.currentTime);
         this.limiter.release.setValueAtTime(0.12, this.ctx.currentTime);
-        this.master.connect(this.limiter);
+        this.master.connect(this.duck);
+        this.duck.connect(this.limiter);
         this.limiter.connect(this.ctx.destination);
 
         this._lastWubAt = -1; // throttle guard for retriggered wubs
@@ -75,7 +95,28 @@ export class AudioEngine {
         osc.start();
         osc.stop(this.ctx.currentTime + 0.1);
     }
-    
+
+    // The handshake chirp: two processes touching hail each other — a soft, quick
+    // two-tone blip whenever you bump an NPC (contacts with their own dedicated
+    // sound — clamps, scuffles, pickups — skip it). Gentle triangle voice so it
+    // never reads as a data-write (playBeep) or an alarm.
+    playBump() {
+        if (!this.initialized) return;
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gainNode = this.ctx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(540, t);
+        osc.frequency.setValueAtTime(700, t + 0.05);
+        gainNode.gain.setValueAtTime(0.0001, t);
+        gainNode.gain.exponentialRampToValueAtTime(0.12, t + 0.012);
+        gainNode.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+        osc.connect(gainNode);
+        gainNode.connect(this.master);
+        osc.start(t);
+        osc.stop(t + 0.12);
+    }
+
     playDoot() {
         if (!this.initialized) return;
         

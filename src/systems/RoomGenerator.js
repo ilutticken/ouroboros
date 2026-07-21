@@ -1,6 +1,13 @@
 import { NPC } from '../entities/NPC.js';
 import { Glitch } from '../entities/Glitch.js';
-import { DENNY_INTRO, LOCALHOST_SIGN, LOCALHOST_CITIZENS, GATE_INTRO, CADENZA_SCENE, CACHE_HOME_SCENE } from '../content/dialogue.js';
+import { DENNY_INTRO, LOCALHOST_SIGN, LOCALHOST_CITIZENS, GATE_INTRO, CADENZA_SCENE, CACHE_HOME_SCENE,
+         WILDS_CITIZENS, LORE_FRAGS, BOOTH_LORE, ROM_VAULT } from '../content/dialogue.js';
+
+// Fixed Wilds discovery rooms (matches the Topology Scan reference map).
+// Growth caches: a one-bite mass payout ('datacache', +4 Data & +4 length) so a lap of
+// the Wilds makes you longer — exploration IS progression (feeds the Encore length gate
+// and gear-3 breaches). Lore fragments and wandering clue-givers populate the deep Wilds.
+const GROWTH_CACHE_ROOMS = new Set(['7,-3', '9,1', '3,5', '11,-1']);
 
 export class RoomGenerator {
     constructor(gridSize, canvas) {
@@ -100,6 +107,76 @@ export class RoomGenerator {
                 const lvx = Math.floor(this.cols * 0.3) * this.gridSize;
                 const lvy = Math.floor(this.rows * 0.3) * this.gridSize;
                 npcs.push(new NPC(lvx, lvy, this.gridSize, 'lostverse', []));
+            }
+        } else if (worldManager && worldManager.landmarks && worldManager.landmarks.nibble
+                   && roomX === worldManager.landmarks.nibble.x && roomY === worldManager.landmarks.nibble.y) {
+            // NIBBLE's black-market stall — deep-east Wilds, squatting in freed heap right
+            // against the coil. Her stall is the room's fixture; a couple of parked Glitches
+            // are her ambience (stock, pets, security — she'd say all three).
+            npcs.push(new NPC(cx, cy, this.gridSize, 'nibble', []));
+            if (stateUnlocked && stateUnlocked.biteProgress > 0) {
+                glitches.push(new Glitch(4 * this.gridSize, 4 * this.gridSize, this.gridSize));
+                glitches.push(new Glitch((this.cols - 5) * this.gridSize, (this.rows - 5) * this.gridSize, this.gridSize));
+            }
+        } else if (worldManager && worldManager.landmarks && worldManager.landmarks.hush
+                   && roomX === worldManager.landmarks.hush.x && roomY === worldManager.landmarks.hush.y) {
+            // HUSH's post — the dead sound-stage corridor SE of Cadenza. Sterile: the
+            // suppressor clamped everything else out of this room long ago. Two obstacle
+            // rails shape a wide corridor toward the pocket door east.
+            npcs.push(new NPC(cx, cy, this.gridSize, 'hush', []));
+            for (let i = 4; i < this.cols - 4; i += 2) {
+                const ox = i * this.gridSize;
+                if (!isSafeZone(ox, 4 * this.gridSize)) obstacles.push({ x: ox, y: 4 * this.gridSize });
+                if (!isSafeZone(ox, (this.rows - 5) * this.gridSize)) obstacles.push({ x: ox, y: (this.rows - 5) * this.gridSize });
+            }
+        } else if (roomX === 10 && roomY === 5) {
+            // THE DEEP-SLEEP BOOTH — HUSH's vault, backed onto the SE coil. A lore terminal
+            // and a growth cache; the room the guardian was guarding.
+            npcs.push(new NPC(cx, cy - 2 * this.gridSize, this.gridSize, 'lorefrag', BOOTH_LORE));
+            npcs.push(new NPC(cx, cy + 2 * this.gridSize, this.gridSize, 'datacache', []));
+        } else if (GROWTH_CACHE_ROOMS.has(`${roomX},${roomY}`)) {
+            // A growth cache — one-bite mass payout, off the spine. Exploration = length.
+            const gx = Math.floor(this.cols * 0.65) * this.gridSize;
+            const gy = Math.floor(this.rows * 0.35) * this.gridSize;
+            npcs.push(new NPC(gx, gy, this.gridSize, 'datacache', []));
+        } else if (LORE_FRAGS[`${roomX},${roomY}`]) {
+            // A scannable environmental lore fragment (re-readable; it stays).
+            const lx = Math.floor(this.cols * 0.3) * this.gridSize;
+            const ly = Math.floor(this.rows * 0.65) * this.gridSize;
+            npcs.push(new NPC(lx, ly, this.gridSize, 'lorefrag', LORE_FRAGS[`${roomX},${roomY}`]));
+        } else if (WILDS_CITIZENS[`${roomX},${roomY}`]) {
+            // A wandering refugee clue-giver, out in the Wilds (they wander once Motion
+            // Carried lands — same shared tick as the Localhost citizens).
+            const wx = Math.floor(this.cols * 0.6) * this.gridSize;
+            const wy = Math.floor(this.rows * 0.55) * this.gridSize;
+            npcs.push(new NPC(wx, wy, this.gridSize, 'citizen', WILDS_CITIZENS[`${roomX},${roomY}`]));
+        } else if (roomX === 1 && roomY === -5) {
+            // THE ROM VAULT — the Scanner-only pocket, deep NW against the coil. One
+            // hidden south door (a Scanner door); inside, the vault manifest and a
+            // sealed mass cache. The Corrupted Save File (Trading-Sequence Step 1)
+            // will live here when that chain is built.
+            npcs.push(new NPC(cx, cy - 2 * this.gridSize, this.gridSize, 'lorefrag', ROM_VAULT));
+            npcs.push(new NPC(cx, cy + 2 * this.gridSize, this.gridSize, 'datacache', []));
+        } else if (roomX === 5 && roomY === -2 && stateUnlocked && stateUnlocked.purgeComplete && !stateUnlocked.dennyRematchDone) {
+            // THE FALL-THROUGH — Denny's rematch. Open floor: the maze is the one HE
+            // stamps onto your own trail, one beat late.
+            npcs.push(new NPC(cx, cy, this.gridSize, 'denny2', []));
+        } else if (roomX === 5 && roomY === -3 && stateUnlocked && stateUnlocked.purgeComplete && !stateUnlocked.gateRematchDone) {
+            // THE OVERRIDE — Gate's rematch. He guards the north egress and rewrites the
+            // rules, one override at a time. A couple of pillars for cover.
+            npcs.push(new NPC(cx, 2 * this.gridSize, this.gridSize, 'gate3', []));
+            obstacles.push({ x: 6 * this.gridSize, y: Math.floor(this.rows / 2) * this.gridSize });
+            obstacles.push({ x: (this.cols - 7) * this.gridSize, y: Math.floor(this.rows / 2) * this.gridSize });
+        } else if (roomX === 5 && roomY === -5) {
+            // PORT 0 — the Act I -> II finale arena. Gate's last stand at the door that
+            // matters, one corrupted cell he refuses to touch, and Denny slipping in
+            // behind you. After the paradox: Denny keeps the vigil.
+            if (stateUnlocked && stateUnlocked.finaleDone) {
+                npcs.push(new NPC(cx - 3 * this.gridSize, (this.rows - 4) * this.gridSize, this.gridSize, 'dennyafter', []));
+            } else {
+                npcs.push(new NPC(cx, 2 * this.gridSize, this.gridSize, 'gatefinal', []));
+                glitches.push(new Glitch(cx + 2 * this.gridSize, 2 * this.gridSize, this.gridSize));
+                npcs.push(new NPC(cx - 4 * this.gridSize, (this.rows - 3) * this.gridSize, this.gridSize, 'dennyfinal', []));
             }
         } else {
             // Random Templates

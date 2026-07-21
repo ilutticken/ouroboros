@@ -1357,13 +1357,12 @@ describe('Night-audit regression fixes', () => {
 describe('Topology Scanner — hidden doors revealed by sweeping', () => {
     beforeEach(mountDom);
 
-    // Find an off-path room boundary that HAS a weak point (so we can hide/reveal it).
+    // Only registered SCANNER DOORS are hidden now (ordinary doors are always visible).
+    // The Booth-corridor door at {9,4}->{10,4} is the canonical hidden specimen.
     function findHiddenWeakPoint(wm, dir) {
-        for (let y = 6; y <= 60; y++) {
-            const wp = wm.getWeakPoint(12, y, dir);
-            if (wp && !wm.mainPath.has(wm.boundaryKey(12, y, dir))) return { rx: 12, ry: y, wp };
-        }
-        return null;
+        if (dir !== 'right') return null;
+        const wp = wm.getWeakPoint(9, 4, 'right');
+        return wp ? { rx: 9, ry: 4, wp } : null;
     }
 
     it('off-path weak points are hidden until revealed; the guided route is always shown', () => {

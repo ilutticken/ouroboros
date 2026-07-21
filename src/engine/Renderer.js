@@ -1,29 +1,40 @@
+import { HUSH_LABELS } from '../content/dialogue.js';
+
+// The era palettes (§2 "X-Bit Neon"): the Beat-8 reboot doubles the palette — same
+// room, drawn beautiful. 8-bit is the original monochrome-neon; 16-bit deepens the
+// void to indigo, warms every hue, and turns the baseline glow up.
+const PAL8 = { bg: '#050505', wall: '#00ffcc', obstacle: '#00ffcc', apple: '#ff0055', body: '#ff0055', head: '#ffffff', glitch: '#ff00ff', glow: 15 };
+const PAL16 = { bg: '#0a0618', wall: '#3af5cf', obstacle: '#2fd6a8', apple: '#ff2e7e', body: '#ff4d94', head: '#ffffff', glitch: '#d84cff', glow: 20 };
+
 export class Renderer {
     constructor(canvas, gridSize) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.gridSize = gridSize;
     }
-    
+
     draw(state, snake, apple, npcs, glitches, worldManager, obstacles) {
         // Reduce-motion (a11y): when on, oscillating pulses hold at a steady value and
         // blinking prompts stay lit — nothing strobes. Threaded through the whole frame.
         const rm = !!state.reduceMotion;
+        // The active era palette (the Beat-8 reboot flips it mid-frame, no fanfare).
+        const P = (state.unlocked && state.unlocked.era16) ? PAL16 : PAL8;
+        this.pal = P;
         // Clear screen (The Void)
-        this.ctx.fillStyle = '#050505';
+        this.ctx.fillStyle = P.bg;
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
         // Neon Glow effect
-        this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+        this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
         
         if (state.unlocked.borders) {
             // Walls are drawn a little THICKER for legibility (a11y). Inset by half the
             // thickness so the stroke stays fully on-canvas.
             const wallThickness = 6;
             const inset = wallThickness / 2;
-            this.ctx.strokeStyle = '#00ffcc';
+            this.ctx.strokeStyle = P.wall;
             this.ctx.lineWidth = wallThickness;
-            this.ctx.shadowColor = '#00ffcc';
+            this.ctx.shadowColor = P.wall;
             this.ctx.strokeRect(inset, inset, this.canvas.width - wallThickness, this.canvas.height - wallThickness);
 
             // Weak points & smashed doorways. For each breakable side of THIS room,
@@ -53,7 +64,7 @@ export class Renderer {
                 const [rx0, ry0, rw, rh] = gapRect(dir, wp, thick);
                 this.ctx.save();
                 this.ctx.shadowBlur = 0;
-                this.ctx.fillStyle = '#050505';
+                this.ctx.fillStyle = P.bg;
                 const step = Math.max(4, Math.round(g / 3));
                 if (horizontal) {
                     for (let x = rx0 + 2; x < rx0 + rw - 1; x += step) this.ctx.fillRect(x, ry0, 2, rh);
@@ -69,19 +80,32 @@ export class Renderer {
                 const threshold = worldManager.wallBreakThreshold || 3;
                 const pulse = rm ? 0.8 : 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 200));
 
+                // THE KERNEL'S COIL: any wall facing outside the finite interior renders
+                // as the sleeper's deep-red, slowly-creeping segmented body — a corrupt
+                // mirror of your own snake. Unbreakable, lethal; motion is menace, not a
+                // gap (held static under reduce-motion). The Hub is exempt — the
+                // Architect's own quarantine masks the coil there.
+                if (worldManager.isCoilWall && !(rx === 0 && ry === 0)) {
+                    for (const dir of ['up', 'down', 'left', 'right']) {
+                        if (!worldManager.isCoilWall(rx, ry, dir)) continue;
+                        const aperture = (rx === 5 && ry === -5 && dir === 'up');
+                        this.drawCoilWall(dir, rm, aperture, !!(state.unlocked && state.unlocked.finaleDone));
+                    }
+                }
+
                 for (const dir of ['up', 'down', 'left', 'right']) {
                     const wp = worldManager.getWeakPoint(rx, ry, dir);
                     if (!wp) continue; // solid wall — no doorway to draw
                     if (worldManager.isWallBroken(rx, ry, dir)) {
                         // OPEN — punch a full-thickness black gap through the neon border.
                         this.ctx.shadowBlur = 0;
-                        this.ctx.fillStyle = '#050505';
+                        this.ctx.fillStyle = P.bg;
                         this.ctx.fillRect(...gapRect(dir, wp, wallThickness));
                         continue;
                     }
-                    // HIDDEN until revealed (guided route / ram damage / a Scanner sweep).
-                    // An un-revealed weak point renders as plain solid wall — that's the
-                    // whole point of the Topology Scanner.
+                    // Ordinary doors always draw. The few registered Scanner doors stay
+                    // HIDDEN (plain solid wall) until ram damage, a Scanner sweep, or a
+                    // breach reveals them — that's the whole point of the Topology Scanner.
                     if (worldManager.isWeakPointRevealed && !worldManager.isWeakPointRevealed(rx, ry, dir)) continue;
 
                     // CRACK — orange (pristine) -> yellow as it takes sub-max damage
@@ -112,7 +136,7 @@ export class Renderer {
                         this.ctx.restore();
                     }
                 }
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
             }
 
             // Cadenza's DIRECTIONAL cue (a11y: her beacon must not be sound-only). In
@@ -123,22 +147,48 @@ export class Renderer {
         
         // Draw Obstacles (Solid Green)
         if (obstacles) {
-            this.ctx.fillStyle = '#00ffcc';
-            this.ctx.shadowColor = '#00ffcc';
+            this.ctx.fillStyle = P.obstacle;
+            this.ctx.shadowColor = P.obstacle;
             for (const obs of obstacles) {
                 this.ctx.fillRect(obs.x + 1, obs.y + 1, this.gridSize - 2, this.gridSize - 2);
             }
         }
-        
+
+        // Denny's DENIED stamps — his lagged enforcement hardening your own trail. Amber
+        // (his colour) with a dark 'D' glyph (shape + text, never hue alone); the last
+        // ticks of a stamp's decay fade it out (a fade, not a strobe — reduce-motion-safe).
+        if (state.stamps && state.stamps.length) {
+            const g = this.gridSize;
+            for (const s of state.stamps) {
+                const a = s.ttl >= 4 ? 1 : Math.max(0.25, s.ttl / 4);
+                this.ctx.globalAlpha = a;
+                this.ctx.fillStyle = '#ffcc00';
+                this.ctx.shadowColor = '#ffcc00';
+                this.ctx.shadowBlur = 6;
+                this.ctx.fillRect(s.x + 2, s.y + 2, g - 4, g - 4);
+                this.ctx.shadowBlur = 0;
+                this.ctx.fillStyle = '#4a2c00';
+                this.ctx.font = 'bold ' + Math.max(10, Math.floor(g * 0.55)) + 'px "Press Start 2P", monospace';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.fillText('D', s.x + g / 2, s.y + g / 2 + 1);
+                this.ctx.textBaseline = 'alphabetic';
+            }
+            this.ctx.globalAlpha = 1;
+            this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+        }
+
         // Draw Glitches (Magenta) — with a dark X so corruption reads as a HAZARD by SHAPE,
         // not colour alone (a11y §2.6 redundant coding): distinct from the apple's plain data
-        // square even in grayscale / for red-magenta colour-blindness.
+        // square even in grayscale / for red-magenta colour-blindness. Once Motion Carried
+        // lands, a moving Glitch additionally wears a static directional NOTCH — its next
+        // step is printed on it (deaf/colour-blind-legible, steady under reduce-motion).
         if (glitches) {
             const gg = this.gridSize;
             for (const g of glitches) {
-                this.ctx.fillStyle = '#ff00ff';
-                this.ctx.shadowColor = '#ff00ff';
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+                this.ctx.fillStyle = P.glitch;
+                this.ctx.shadowColor = P.glitch;
+                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
                 this.ctx.fillRect(g.x + 2, g.y + 2, gg - 4, gg - 4);
                 this.ctx.shadowBlur = 0;
                 this.ctx.strokeStyle = '#2a002a';
@@ -149,17 +199,31 @@ export class Renderer {
                 this.ctx.moveTo(g.x + gg - 5, g.y + 5);
                 this.ctx.lineTo(g.x + 5, g.y + gg - 5);
                 this.ctx.stroke();
+                if (g._m) {
+                    // the drift notch: a solid wedge on the edge it will step through
+                    this.ctx.fillStyle = '#2a002a';
+                    const cx = g.x + gg / 2, cy = g.y + gg / 2;
+                    const nx = cx + g._m.dx * (gg / 2 - 3), ny = cy + g._m.dy * (gg / 2 - 3);
+                    this.ctx.beginPath();
+                    if (g._m.dx !== 0) {
+                        this.ctx.moveTo(nx, ny - 4); this.ctx.lineTo(nx, ny + 4); this.ctx.lineTo(nx + g._m.dx * 4, ny);
+                    } else {
+                        this.ctx.moveTo(nx - 4, ny); this.ctx.lineTo(nx + 4, ny); this.ctx.lineTo(nx, ny + g._m.dy * 4);
+                    }
+                    this.ctx.closePath();
+                    this.ctx.fill();
+                }
             }
             // Restore the frame glow the X-stroke zeroed, so the apple (drawn next) still glows.
-            this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+            this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
         }
 
         // Module Slot (socket you install carried modules into)
         this.drawModuleSlot(state);
 
         // Draw Apple (Red Data)
-        this.ctx.fillStyle = '#ff0055';
-        this.ctx.shadowColor = '#ff0055';
+        this.ctx.fillStyle = P.apple;
+        this.ctx.shadowColor = P.apple;
         this.ctx.fillRect(apple.x + 2, apple.y + 2, this.gridSize - 4, this.gridSize - 4);
 
         // Cache's spare-data motes (Hub only): small Data pips with a cold archival glow,
@@ -180,15 +244,30 @@ export class Renderer {
         if (npcs) {
             for (const npc of npcs) {
                 // Re-assert the frame glow each iteration (drawNpcFeatures zeroes it).
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? 15 : 0;
+                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
                 // Cache's apparition materialises/dissolves — honour her alpha (others = 1).
                 this.ctx.globalAlpha = (npc.alpha === undefined) ? 1 : Math.max(0, Math.min(1, npc.alpha));
-                if (npc.id === 'gate') {
+                if (npc.id === 'gate' || npc.id === 'gate3' || npc.id === 'gatefinal') {
                     this.ctx.fillStyle = '#0088ff';
                     this.ctx.shadowColor = '#0088ff';
-                } else if (npc.id === 'denny') {
+                } else if (npc.id === 'denny' || npc.id === 'denny2'
+                           || npc.id === 'dennyfinal' || npc.id === 'dennyafter') {
                     this.ctx.fillStyle = '#ffcc00'; // amber clerk
                     this.ctx.shadowColor = '#ffcc00';
+                } else if (npc.id === 'nibble') {
+                    this.ctx.fillStyle = '#ff9e3d'; // warm like a heat lamp — comforting, and it burns
+                    this.ctx.shadowColor = '#ff9e3d';
+                } else if (npc.id === 'hush') {
+                    // the suppressor: bruised rose awake, ash-grey at rest
+                    const asleep = npc.dormant || (state.unlocked && (state.unlocked.musicLayer || 0) >= 1);
+                    this.ctx.fillStyle = asleep ? '#5a4a52' : '#cf8aa0';
+                    this.ctx.shadowColor = asleep ? '#5a4a52' : '#cf8aa0';
+                } else if (npc.id === 'datacache') {
+                    this.ctx.fillStyle = '#ffd24d'; // a mass payout — gold crate
+                    this.ctx.shadowColor = '#ffd24d';
+                } else if (npc.id === 'lorefrag') {
+                    this.ctx.fillStyle = '#9adfff'; // a scannable log fragment — pale archival ice
+                    this.ctx.shadowColor = '#9adfff';
                 } else if (npc.id === 'signpost') {
                     this.ctx.fillStyle = '#ffffff'; // Localhost welcome sign
                     this.ctx.shadowColor = '#ffffff';
@@ -212,11 +291,15 @@ export class Renderer {
                     this.ctx.shadowColor = '#00ff00';
                 }
                 this.ctx.fillRect(npc.x + 2, npc.y + 2, this.gridSize - 4, this.gridSize - 4);
-                this.drawNpcFeatures(npc); // little 8-bit face/glyph so they aren't plain dots
+                this.drawNpcFeatures(npc, state); // little 8-bit face/glyph so they aren't plain dots
                 this.ctx.globalAlpha = 1; // reset after a possibly-faded apparition
             }
+            // HUSH's process-status label (≥16px, the deaf-legible half of its state):
+            // ON DUTY while it hunts, STANDING BY once the Locked Groove is its lullaby.
+            const hush = npcs.find(n => n.id === 'hush');
+            if (hush) this.drawHushLabel(hush, state);
         }
-        
+
         // Draw Snake
         const biteOnGrid = npcs && npcs.some(n => n.id === 'bite');
         for (let i = 0; i < snake.body.length; i++) {
@@ -230,7 +313,7 @@ export class Renderer {
                 this.ctx.shadowColor = '#00ff00';
                 this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? Math.max(1, state.gear || 0) * 10 : 0;
             } else {
-                this.ctx.fillStyle = i === 0 ? '#ffffff' : '#ff0055';
+                this.ctx.fillStyle = i === 0 ? P.head : P.body;
                 this.ctx.shadowBlur = 0;
             }
             this.ctx.fillRect(segment.x + 1, segment.y + 1, this.gridSize - 2, this.gridSize - 2);
@@ -255,8 +338,8 @@ export class Renderer {
             for (const p of state.bursts) {
                 const life = Math.max(0, p.life);
                 this.ctx.globalAlpha = life;
-                this.ctx.fillStyle = '#ff0055';
-                this.ctx.shadowColor = '#ff0055';
+                this.ctx.fillStyle = P.body;
+                this.ctx.shadowColor = P.body;
                 this.ctx.shadowBlur = 6;
                 const sz = 2 + 6 * life;
                 this.ctx.fillRect(p.x - sz / 2, p.y - sz / 2, sz, sz);
@@ -267,7 +350,33 @@ export class Renderer {
         // Reset shadow for performance
         this.ctx.shadowBlur = 0;
 
-        // 2-Bit's route map (extra feature)
+        // THE COIL'S HELD BREATH (deaf-legible twin of the audio duck): approaching the
+        // Kernel's body dims the room from the coil side and prints a signal readout —
+        // the whole approach reads with the sound off.
+        if (state.coilNear && state.coilNear.proximity > 0) {
+            this.drawCoilNear(state.coilNear, rm);
+        }
+
+        // Gate's live permission override ({5,-3}): the citation is POSTED on the room
+        // (an in-world banner, ≥16px — never the terminal, which would hang the fight).
+        // Splits at the ' — ' when the canvas is too narrow; never shrinks below 16px.
+        if (state.citation) {
+            const W = this.canvas.width;
+            this.ctx.save();
+            this.ctx.shadowBlur = 0;
+            this.ctx.font = '16px "Press Start 2P", monospace';
+            this.ctx.textAlign = 'center';
+            const fits = this.ctx.measureText(state.citation).width <= W - 16;
+            const lines = fits ? [state.citation] : state.citation.split(' — ');
+            this.ctx.fillStyle = 'rgba(40, 8, 8, 0.85)';
+            this.ctx.fillRect(0, 0, W, 8 + lines.length * 22);
+            this.ctx.fillStyle = '#ffcc00';
+            lines.forEach((ln, i) => this.ctx.fillText(ln, W / 2, 20 + i * 22));
+            this.ctx.restore();
+        }
+
+        // 2-Bit's route map (extra feature) — dropped below the citation strip when one
+        // is posted, so the banner and the map never fight over the top edge.
         this.drawMinimap(worldManager, state);
 
         // Module install animation (in flight, on top)
@@ -330,7 +439,7 @@ export class Renderer {
         // swap reads as a deliberate load, not a dropped or duplicated frame.
         if (state.gameState === 'TRANSITION') {
             this.ctx.shadowBlur = 0;
-            this.ctx.fillStyle = '#050505';
+            this.ctx.fillStyle = P.bg;
             this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         }
 
@@ -383,8 +492,235 @@ export class Renderer {
         // Cadenza's DA CAPO Encore — the ring + call/progress banner, over the live room.
         if (state.gameState === 'ENCORE' && state.encore) this.drawEncore(state);
 
+        // Heur's Purge Cycle — the sealed Decontamination Bay overlays the whole sector.
+        if (state.gameState === 'PURGE' && state.purge) this.drawPurge(state);
+
         // Accessibility / Options overlay — drawn last, on top of everything.
         if (state.options) this.drawOptions(state);
+    }
+
+    // One coil wall: the Kernel's body as segmented deep-red blocks that creep slowly
+    // along the edge (held perfectly still under reduce-motion — the menace is the
+    // texture, not the strobe). `aperture` carves PORT 0's central port ({5,-5});
+    // `released` is the post-finale state — the Kernel has let go of its own tail,
+    // and the port stands OPEN: two blunt tail-ends flank a true gap in the ring.
+    drawCoilWall(dir, rm, aperture, released) {
+        const g = this.gridSize, W = this.canvas.width, H = this.canvas.height;
+        const horizontal = (dir === 'up' || dir === 'down');
+        const span = horizontal ? W : H;
+        const thick = 8;
+        const seg = Math.round(g * 1.6), gap = 4, pitch = seg + gap;
+        const creep = rm ? 0 : Math.floor((Date.now() / 120) % pitch); // ~8px/s crawl
+        this.ctx.save();
+        this.ctx.shadowColor = '#ff2d6b';
+        this.ctx.shadowBlur = 10;
+        // aperture bounds (PORT 0): the central 5 cells stay open in the block run
+        const mid = Math.floor(span / 2 / g) * g;
+        const apLo = mid - 2 * g, apHi = mid + 3 * g;
+        for (let s = -pitch + creep; s < span; s += pitch) {
+            const lo = Math.max(0, s), hi = Math.min(span, s + seg);
+            if (hi <= lo) continue;
+            const segments = aperture
+                ? [[lo, Math.min(hi, apLo)], [Math.max(lo, apHi), hi]].filter(([a, b]) => b > a)
+                : [[lo, hi]];
+            for (const [a, b] of segments) {
+                this.ctx.fillStyle = '#8f0f2e';
+                if (dir === 'up') this.ctx.fillRect(a, 0, b - a, thick);
+                else if (dir === 'down') this.ctx.fillRect(a, H - thick, b - a, thick);
+                else if (dir === 'left') this.ctx.fillRect(0, a, thick, b - a);
+                else this.ctx.fillRect(W - thick, a, thick, b - a);
+                // the belly line — each block reads as a body segment, not a brick
+                this.ctx.fillStyle = '#ff2d6b';
+                if (horizontal) this.ctx.fillRect(a + 2, dir === 'up' ? thick / 2 - 1 : H - thick / 2 - 1, Math.max(0, b - a - 4), 2);
+                else this.ctx.fillRect(dir === 'left' ? thick / 2 - 1 : W - thick / 2 - 1, a + 2, 2, Math.max(0, b - a - 4));
+            }
+        }
+        if (aperture) {
+            this.ctx.shadowBlur = 0;
+            if (released) {
+                // POST-FINALE: the tail is RELEASED. A true gap — void, no seal, no
+                // ring — flanked by the coil's two blunt tail-ends. The Ouroboros has
+                // let go; Act II is on the other side.
+                this.ctx.fillStyle = '#05050f';
+                this.ctx.fillRect(apLo, 0, apHi - apLo, thick + 2);
+                this.ctx.fillStyle = '#ff2d6b';
+                this.ctx.fillRect(apLo - 4, 0, 4, thick);          // west tail-end, blunt cap
+                this.ctx.fillRect(apHi, 0, 4, thick);              // east tail-end
+                this.ctx.fillStyle = '#ff8a3d';
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('PORT 0 — OPEN', (apLo + apHi) / 2, thick + 18);
+            } else {
+                // PORT 0 — the sealed aperture in the coil: a dark port ringed in its
+                // own light, named in ≥16px text. The door that matters.
+                this.ctx.fillStyle = '#05050f';
+                this.ctx.fillRect(apLo, 0, apHi - apLo, thick);
+                this.ctx.strokeStyle = '#ff8a3d';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(apLo + 1, 1, apHi - apLo - 2, thick);
+                this.ctx.fillStyle = '#ff8a3d';
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('PORT 0', (apLo + apHi) / 2, thick + 18);
+            }
+        }
+        this.ctx.restore();
+    }
+
+    // The coil-approach deaf twin: the room dims from the coil side(s) and a ≥16px
+    // signal readout counts the world down toward the held breath.
+    drawCoilNear(near, rm) {
+        const W = this.canvas.width, H = this.canvas.height;
+        const p = Math.max(0, Math.min(1, near.proximity));
+        if (p <= 0) return;
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+        for (const dir of near.dirs) {
+            const depth = (dir === 'up' || dir === 'down' ? H : W) * 0.45;
+            let grad;
+            if (dir === 'up') grad = this.ctx.createLinearGradient(0, 0, 0, depth);
+            else if (dir === 'down') grad = this.ctx.createLinearGradient(0, H, 0, H - depth);
+            else if (dir === 'left') grad = this.ctx.createLinearGradient(0, 0, depth, 0);
+            else grad = this.ctx.createLinearGradient(W, 0, W - depth, 0);
+            grad.addColorStop(0, `rgba(20, 2, 8, ${0.62 * p})`);
+            grad.addColorStop(1, 'rgba(20, 2, 8, 0)');
+            this.ctx.fillStyle = grad;
+            this.ctx.fillRect(0, 0, W, H);
+        }
+        // the readout: how much of the world's signal is left
+        const bars = 8;
+        const lit = Math.max(0, Math.round(bars * (1 - p)));
+        const meter = '[' + '#'.repeat(lit) + '-'.repeat(bars - lit) + ']';
+        this.ctx.fillStyle = `rgba(255, 138, 160, ${0.55 + 0.45 * p})`;
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText(`SIGNAL ${meter}${p > 0.6 ? '  THE COIL' : ''}`, W / 2, H - 12);
+        this.ctx.restore();
+    }
+
+    // HUSH's status label — the deaf-legible half of its state machine, ≥16px, drawn
+    // near the top of its room. Redundant by text + shape + motion (the sprite itself
+    // is jaws-vs-restline, moving-vs-still).
+    drawHushLabel(hush, state) {
+        const asleep = hush.dormant || (state.unlocked && (state.unlocked.musicLayer || 0) >= 1);
+        const W = this.canvas.width;
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+        this.ctx.textAlign = 'center';
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.fillStyle = asleep ? '#8f8a92' : '#ff8aa8';
+        this.ctx.fillText(asleep ? HUSH_LABELS.standby : HUSH_LABELS.onDuty, W / 2, 24);
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.fillStyle = asleep ? '#6a6570' : '#cf8aa0';
+        this.ctx.fillText(asleep ? HUSH_LABELS.standbySub : HUSH_LABELS.onDutySub, W / 2, 46);
+        this.ctx.restore();
+    }
+
+    // Heur's Purge Cycle — the Body-Breakout overlay. The bay seals the whole sector:
+    // paddle (your body; LEFT END is the flagged read-head), the scan-ping (notched with
+    // its heading), the signature database (the weak-wall grammar: solid -> perforated ->
+    // gone), falling brick-Data, and a ≥16px clearance meter. Reduce-motion-safe: every
+    // mover steps discretely; the head warning is a steady outline, not a strobe.
+    drawPurge(state) {
+        const p = state.purge;
+        const g = this.gridSize;
+        const W = this.canvas.width, H = this.canvas.height;
+        const rm = !!state.reduceMotion;
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+
+        // the seal
+        this.ctx.fillStyle = 'rgba(2, 8, 12, 0.96)';
+        this.ctx.fillRect(0, 0, W, H);
+        this.ctx.strokeStyle = '#bfe9ff';
+        this.ctx.lineWidth = 3;
+        this.ctx.strokeRect(6, 6, W - 12, H - 12);
+
+        // the signature database (bricks): solid, then perforated (the weak-wall hatch),
+        // then gone. Heur's own signature is the pale one wearing its name.
+        for (const b of p.bricks) {
+            const bx = b.c * g, by = b.r * g, bw = b.w * g;
+            if (b.heur) {
+                this.ctx.fillStyle = '#e8f4ff';
+                this.ctx.fillRect(bx + 1, by + 1, bw - 2, g - 2);
+                this.ctx.fillStyle = '#26404d';
+                this.ctx.font = 'bold ' + Math.max(8, Math.floor(g * 0.45)) + 'px "Press Start 2P", monospace';
+                this.ctx.fillText('HEUR', bx + bw / 2, by + g * 0.68);
+            } else {
+                this.ctx.fillStyle = b.hp >= 2 ? '#7fd4ff' : '#4d90b3';
+                this.ctx.fillRect(bx + 1, by + 1, bw - 2, g - 2);
+                if (b.hp === 1) {
+                    // perforated — the same texture cue as a cracked weak wall
+                    this.ctx.fillStyle = 'rgba(2, 8, 12, 0.9)';
+                    for (let x = bx + 3; x < bx + bw - 2; x += 6) this.ctx.fillRect(x, by + 2, 2, g - 4);
+                }
+            }
+        }
+
+        // falling brick-Data
+        this.ctx.fillStyle = '#ffd24d';
+        for (const m of p.motes) {
+            this.ctx.fillRect(m.c * g + 5, m.r * g + 5, g - 10, g - 10);
+        }
+
+        // the band guides (three faint aim rows)
+        this.ctx.strokeStyle = 'rgba(191, 233, 255, 0.18)';
+        this.ctx.lineWidth = 1;
+        for (let r = 0; r < 3; r++) {
+            const y = (p.bandTop + r) * g;
+            this.ctx.strokeRect(2, y, W - 4, g);
+        }
+
+        // the paddle — your body, flattened. Interior cells are the shield; the LEFT
+        // END is the read-head (white, warning-ringed when the ping closes in).
+        const padY = (p.bandTop + p.paddle.row) * g;
+        for (let i = 0; i < p.paddle.len; i++) {
+            const x = (p.paddle.c + i) * g;
+            this.ctx.fillStyle = i === 0 ? '#ffffff' : '#ff0055';
+            this.ctx.fillRect(x + 1, padY + 1, g - 2, g - 2);
+        }
+        if (p.warnHead) {
+            this.ctx.strokeStyle = '#ff3b3b';
+            this.ctx.lineWidth = 3;
+            this.ctx.strokeRect(p.paddle.c * g - 2, padY - 2, g + 4, g + 4);
+        }
+
+        // the scan-ping: a diamond wearing its heading as a notch (discrete steps only)
+        const px = p.ping.c * g + g / 2, py = p.ping.r * g + g / 2;
+        this.ctx.fillStyle = '#d84cff';
+        this.ctx.shadowColor = '#d84cff';
+        this.ctx.shadowBlur = rm ? 0 : 10;
+        this.ctx.beginPath();
+        this.ctx.moveTo(px, py - g * 0.4);
+        this.ctx.lineTo(px + g * 0.4, py);
+        this.ctx.lineTo(px, py + g * 0.4);
+        this.ctx.lineTo(px - g * 0.4, py);
+        this.ctx.closePath();
+        this.ctx.fill();
+        this.ctx.shadowBlur = 0;
+        this.ctx.strokeStyle = '#2a002a';
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(px, py);
+        this.ctx.lineTo(px + p.ping.dc * g * 0.4, py + p.ping.dr * g * 0.4);
+        this.ctx.stroke();
+
+        // banner + clearances + message — the HUD paints LAST so the database rows can
+        // never bury the clearance meter (≥16px, the a11y floor).
+        this.ctx.shadowBlur = 0;
+        this.ctx.textAlign = 'center';
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.fillStyle = '#bfe9ff';
+        this.ctx.fillText('DECONTAMINATION — GUARD THE HEAD', W / 2, 26);
+        const meter = '[' + '#'.repeat(Math.max(0, p.clearances)) + '-'.repeat(Math.max(0, 5 - p.clearances)) + ']';
+        this.ctx.fillStyle = p.clearances <= 2 ? '#ff8a8a' : '#7fd4ff';
+        this.ctx.fillText('CLEARANCES ' + meter, W / 2, 48);
+        if (p.msg) {
+            this.ctx.fillStyle = '#ff8a8a';
+            this.ctx.fillText(p.msg, W / 2, 70);
+        }
+
+        this.ctx.restore();
     }
 
     // Accessibility / Options overlay: Volume / Mute / Reduce Motion. Green-on-black, all text
@@ -523,13 +859,52 @@ export class Renderer {
     }
 
     // Simple 8-bit features per character so NPCs aren't plain squares.
-    drawNpcFeatures(npc) {
+    drawNpcFeatures(npc, state) {
         const g = this.gridSize, x = npc.x, y = npc.y;
         this.ctx.shadowBlur = 0;
-        if (npc.id === 'gate') {
-            // a stern firewall visor
+        if (npc.id === 'gate' || npc.id === 'gate3' || npc.id === 'gatefinal') {
+            // a stern firewall visor — and, when he's a live pursuer, his next-step
+            // notch (the same shape grammar as a moving Glitch: motion is telegraphed
+            // by shape + position, never colour).
             this.ctx.fillStyle = '#00284d';
             this.ctx.fillRect(x + 4, y + g * 0.42, g - 8, Math.max(2, Math.round(g * 0.14)));
+            if (npc.notch) {
+                const ncx = x + g / 2 + npc.notch.dx * (g / 2 - 3);
+                const ncy = y + g / 2 + npc.notch.dy * (g / 2 - 3);
+                this.ctx.fillRect(ncx - 2, ncy - 2, 4, 4);
+            }
+        } else if (npc.id === 'hush') {
+            // awake: open clamp-jaws (two wedges, hungry for waveforms) + its next-step
+            // notch; dormant: a single flat rest-line. State is coded by SHAPE + motion
+            // + the room label — never colour alone.
+            const asleep = npc.dormant || (state && state.unlocked && (state.unlocked.musicLayer || 0) >= 1);
+            this.ctx.fillStyle = '#2a1218';
+            if (asleep) {
+                this.ctx.fillRect(x + 3, y + g / 2 - 1, g - 6, 3); // the rest-line
+            } else {
+                this.ctx.beginPath(); // upper jaw
+                this.ctx.moveTo(x + 4, y + 4); this.ctx.lineTo(x + g - 4, y + 4); this.ctx.lineTo(x + g / 2, y + g / 2 - 1);
+                this.ctx.closePath(); this.ctx.fill();
+                this.ctx.beginPath(); // lower jaw
+                this.ctx.moveTo(x + 4, y + g - 4); this.ctx.lineTo(x + g - 4, y + g - 4); this.ctx.lineTo(x + g / 2, y + g / 2 + 1);
+                this.ctx.closePath(); this.ctx.fill();
+                if (npc.notch) {
+                    const cx = x + g / 2 + npc.notch.dx * (g / 2 - 3);
+                    const cy = y + g / 2 + npc.notch.dy * (g / 2 - 3);
+                    this.ctx.fillRect(cx - 2, cy - 2, 4, 4);
+                }
+            }
+        } else if (npc.id === 'datacache') {
+            // a '+' on the crate: mass in a box
+            this.ctx.fillStyle = '#5a3a00';
+            this.ctx.fillRect(x + g / 2 - 1, y + 5, 3, g - 10);
+            this.ctx.fillRect(x + 5, y + g / 2 - 1, g - 10, 3);
+        } else if (npc.id === 'lorefrag') {
+            // a '?' — a fragment worth reading
+            this.ctx.fillStyle = '#123a4d';
+            this.ctx.font = 'bold ' + Math.max(10, Math.floor(g * 0.6)) + 'px "Press Start 2P", monospace';
+            this.ctx.textAlign = 'center';
+            this.ctx.fillText('?', x + g / 2, y + g * 0.72);
         } else if (npc.id === 'mapitem') {
             // a tiny map grid
             this.ctx.fillStyle = '#004a5a';
@@ -549,8 +924,10 @@ export class Renderer {
             this.ctx.fillRect(sx, y + g * 0.22, g * 0.16, 2);                 // flag
             this.ctx.fillRect(x + g * 0.34, y + g * 0.56, g * 0.24, g * 0.2); // note head
         } else {
-            // eyes for bite / denny / citizen / shop (and any friendly program)
-            this.drawEyes(x, y, npc.id === 'denny' ? '#4a2c00' : '#0a1a0a');
+            // eyes for bite / denny (all of him) / nibble / citizen / shop (any friendly program)
+            const dennyish = npc.id === 'denny' || npc.id === 'denny2'
+                || npc.id === 'dennyfinal' || npc.id === 'dennyafter';
+            this.drawEyes(x, y, dennyish ? '#4a2c00' : (npc.id === 'nibble' ? '#5a2400' : '#0a1a0a'));
         }
     }
 
@@ -605,7 +982,7 @@ export class Renderer {
         this.ctx.textAlign = 'center';
         this.ctx.fillText(carrying ? 'DROP TAIL HERE' : 'SLOT', x + size / 2, y - 4);
         // Restore the frame-wide neon glow so later draws (apple, NPCs) still glow.
-        this.ctx.shadowBlur = (state.unlocked && state.unlocked.maxSpeedReached) ? 15 : 0;
+        this.ctx.shadowBlur = (state.unlocked && state.unlocked.maxSpeedReached) ? (this.pal || PAL8).glow : 0;
     }
 
     // The two-beat install animation: the module is sucked into the socket (phase 1),
@@ -667,7 +1044,8 @@ export class Renderer {
         // Floor the panel width so the "ROUTE" header can't overflow the border at the
         // smallest explored span (the earliest the map can be installed = a 2-room span).
         const mw = Math.max(cols * cell + pad * 2, 48), mh = rows * cell + pad * 2 + header;
-        const ox = this.canvas.width - mw - 10, oy = 10;
+        // A posted citation owns the top strip — the map slides under it.
+        const ox = this.canvas.width - mw - 10, oy = state.citation ? 56 : 10;
 
         this.ctx.shadowBlur = 0;
         this.ctx.fillStyle = 'rgba(0, 20, 18, 0.72)';

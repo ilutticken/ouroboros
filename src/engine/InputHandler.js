@@ -6,11 +6,16 @@ export class InputHandler {
         // Predicate: is the sim live enough to accept steering? Set in init(); a
         // permissive default keeps unit tests that drive input directly working.
         this.canSteer = () => true;
+        // Predicate: is the worm currently a PADDLE (Heur's Purge)? In paddle mode a
+        // press always steers — horizontal reversals included (the no-180 grammar
+        // protects a snake's neck; a paddle has no neck) — and gear taps don't exist.
+        this.isPaddleMode = () => false;
     }
 
-    init(gridSize, onFirstInput, onDialogAdvance, onAction, onSpeedChange, canSteer) {
+    init(gridSize, onFirstInput, onDialogAdvance, onAction, onSpeedChange, canSteer, isPaddleMode) {
         this.gridSize = gridSize;
         if (canSteer) this.canSteer = canSteer;
+        if (isPaddleMode) this.isPaddleMode = isPaddleMode;
         window.addEventListener('keydown', (e) => this.handleKeyDown(e, onFirstInput, onDialogAdvance, onAction, onSpeedChange));
     }
 
@@ -39,6 +44,19 @@ export class InputHandler {
         // Normalize single-character keys so WASD works regardless of CapsLock / Shift
         // (arrow keys are multi-character and pass through unchanged).
         const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+
+        // PADDLE MODE (Heur's Purge): every direction press steers directly — no
+        // reversal guard, no gear routing. The paddle slides/aims; it cannot bite itself.
+        if (this.isPaddleMode()) {
+            switch (key) {
+                case 'ArrowUp': case 'w': this.nextDirection = { x: 0, y: -this.gridSize }; break;
+                case 'ArrowDown': case 's': this.nextDirection = { x: 0, y: this.gridSize }; break;
+                case 'ArrowLeft': case 'a': this.nextDirection = { x: -this.gridSize, y: 0 }; break;
+                case 'ArrowRight': case 'd': this.nextDirection = { x: this.gridSize, y: 0 }; break;
+            }
+            return;
+        }
+
         switch (key) {
             case 'ArrowUp':
             case 'w':

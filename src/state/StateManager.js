@@ -35,14 +35,38 @@ export class StateManager {
             // The DA CAPO Encore (Cadenza's music puzzle) and its Wilds gate.
             lostVerseFound: false,     // the Wilds shard that heals Cadenza's "dead note" — gates the Encore finale
             encoreComplete: false,     // the DA CAPO Encore is done (Music Layer 1 booted)
-            musicLayer: 0              // 0 = baseline silence; 1 = Cadenza's Locked Groove (booted at the Encore); 2,3 later
+            musicLayer: 0,             // 0 = baseline silence; 1 = Cadenza's Locked Groove (booted at the Encore); 2 = +bassline (Beat 8 reboot); 3 later
+            // Motion Carried — the world-state flip after the first real Gate confrontation:
+            // the Architect's grip slips, and Glitches / villagers / room furniture start
+            // moving on YOUR move-tick. One-way; never turns back off.
+            motionCarried: false,
+            hushTelegraphed: false,    // the one-time SYSTEM intercept on first entering HUSH's post awake
+            coilSeen: false,           // the Architect's one-time log on first reaching a boundary (coil) room
+            // Beat 6+ — Nibble's black market and the corruption-handling capability.
+            nibbleMet: false,          // bumped Nibble at her deep-Wilds stall
+            // Heur's Purge Cycle (the Body-Breakout). Owning the corrupted-Data module flags
+            // you as an infection vector; the daemon intercepts you in the next open sector.
+            purgeComplete: false,      // the mandatory decontamination has been survived
+            bayRoom: null,             // {x,y} where Heur caught you — remembered as the Bay (Act 2 rematch site)
+            // The Ascent to Cold Storage (armed once the purge is survived — the Architect
+            // escalates) and the Act I -> II finale chain up the north spine.
+            dennyRematchIntroSeen: false, // one-shot intro-dialog guards for the Ascent's set-piece rooms
+            gateOverrideIntroSeen: false,
+            finaleIntroSeen: false,
+            dennyRematchDone: false,   // the Fall-Through at {5,-2}
+            gateRematchDone: false,    // the Override at {5,-3} — the SECOND Gate run-in (fires Motion Carried)
+            checkpointOpen: false,     // Cache committed your save and unsealed the door north (also = checkpoint respawn armed)
+            finaleDoorFound: false,    // the hidden Scanner door out of Cold Storage has been breached at least once
+            finaleDone: false,         // Beat 8: the Port 0 paradox fired — Act I is over
+            era16: false               // the forced reboot's 16-bit graphics upgrade (set with finaleDone)
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data
             reinforcedSegments: false, // Glitch contact costs 1 segment, not 3
             pivot: false,             // press SHIFT for a safe 180 reversal
             scanner: false,           // sweep a wall to reveal its hidden weak points
-            crumpleLevel: 0           // survive hits by shedding+folding (0 = none, die on hit); higher = shed less
+            crumpleLevel: 0,          // survive hits by shedding+folding (0 = none, die on hit); higher = shed less
+            corruptHandler: false     // Nibble's Glitch Shunt: your head PUSHES corruption instead of biting into it
         };
     }
     

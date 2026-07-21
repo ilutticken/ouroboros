@@ -10,7 +10,9 @@ import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
-import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE, CADENZA_TITLE } from '../content/dialogue.js';
+import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE, CADENZA_TITLE,
+         NIBBLE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH, GATE_OVERRIDE,
+         CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING } from '../content/dialogue.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -43,14 +45,18 @@ export class GameEngine {
             if (this.state.gameState !== 'ENCORE') return;
             if (e.key === 'Escape') { this.exitEncore('left'); e.stopImmediatePropagation(); }
         });
-        // DEV audition: 'M' cycles the music layer 1->2->3->1 in play (the real boots are at
-        // the Encore = 1, Beat 8 = 2, Beat 16 = 3 via setMusicLayer). Lets us hear the mix now.
+        // DEV audition: 'M' cycles the AUDIBLE music layer 1->2->3->1 in play (the real
+        // boots are at the Encore = 1, Beat 8 = 2, Beat 16 = 3). Audition-only: it never
+        // writes unlocked.musicLayer — that flag now gates real content (HUSH's dormancy,
+        // save files), so the preview must not fake progression. Cleared whenever the
+        // game re-syncs audio to the true layer (load / new game / the real boots).
+        this._auditionLayer = null;
         window.addEventListener('keydown', (e) => {
             if ((e.key === 'm' || e.key === 'M') && (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE')) {
                 this.audio.init();
-                const n = ((this.state.unlocked.musicLayer || 0) % 3) + 1;
-                this.state.unlocked.musicLayer = n;
-                this.audio.setMusicLayer(n);
+                const cur = this._auditionLayer ?? (this.state.unlocked.musicLayer || 0);
+                this._auditionLayer = (cur % 3) + 1;
+                this.audio.setMusicLayer(this._auditionLayer);
                 e.stopImmediatePropagation();
             }
         });
@@ -191,6 +197,13 @@ export class GameEngine {
         this.pendingUnfold = 0;    // blocks still folded under you after a bounce (extrude 1/move)
         this.deathCode = '';       // rolling last-5 keys pressed to "continue" on the death screen (spell CACHE)
         this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
+        this.stamps = [];          // Denny's lagged DENIED stamps (room-local; head contact kills)
+        this._trailPrev = null;    // the cell the head occupied LAST move-tick (the stamp target)
+        this._stampStun = 0;       // ticks Denny's stamp emitter is flustered after a bump
+        this._coilNear = null;     // { proximity, dirs } — the Kernel-coil approach (audio duck + deaf twin)
+        this._ovr = null;          // Gate's active permission override in {5,-3} ({mode, t})
+        this.purge = null;         // Heur's Purge Cycle state object — non-null only during 'PURGE'
+        this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
         // carries as a sonar beacon (updateCadenzaBeacon) so the sector is findable.
@@ -217,7 +230,20 @@ export class GameEngine {
             citizen: (npc) => this.npcSign(npc),
             cadenza: (npc) => this.npcCadenza(npc),
             shop: () => this.openBiteShop(),
+            // Act I build-out: the Wilds' discoveries and the Ascent's cast.
+            nibble: (npc) => this.npcNibble(npc),
+            hush: (npc) => this.npcHush(npc),
+            datacache: (npc) => this.npcDataCache(npc),
+            lorefrag: (npc) => this.npcSign(npc),
+            denny2: (npc) => this.npcDenny2(npc),
+            gate3: (npc) => this.npcGateScuffle(npc),
+            gatefinal: (npc) => this.npcGateScuffle(npc),
+            dennyfinal: (npc) => this.npcDennyFinal(npc),
+            dennyafter: (npc) => this.npcDennyFinal(npc),
         };
+        // NPC bumps that already carry their own contact sound (a clamp, a scuffle, a
+        // pickup beep) skip the generic handshake chirp.
+        this._silentBumps = new Set(['hush', 'datacache', 'gate3', 'gatefinal', 'mapitem', 'lostverse']);
         
         // Initialize Input
         this.input.init(this.gridSize, () => {
@@ -253,7 +279,8 @@ export class GameEngine {
                 && !(this.narrative && this.narrative.isPrinting) && !this.moduleLoad) {
                 this.changeGear(delta);
             }
-        }, () => (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE') && !this.moduleLoad);
+        }, () => (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE' || this.state.gameState === 'PURGE') && !this.moduleLoad,
+           () => this.state.gameState === 'PURGE');
         // ^ canSteer gates ONLY on PLAYING (+ no install). It deliberately does NOT
         // block during narrative.isPrinting: the wake-press after a death happens while
         // the death log is still typing, and it must be able to set your respawn
@@ -273,13 +300,17 @@ export class GameEngine {
     get hasBiteSegment() { return this.state.unlocked.tailRider && !this.state.unlocked.biteDroppedOff; }
 
     changeGear(delta) {
-        // Max gear scales with score: 
+        // Max gear scales with score:
         // 0-9 data: gear 0
         // 10-19 data: max gear 1
         // 20-29 data: max gear 2
         // 30+ data: max gear 3
-        const maxGear = Math.min(3, Math.floor(this.state.score / 10));
-        
+        let maxGear = Math.min(3, Math.floor(this.state.score / 10));
+        // Gate's VELOCITY CAP citation (the {5,-3} Override fight): while it holds, the
+        // whole gearbox is administratively capped at 1 — you cannot build breach speed
+        // until his next recalibration window.
+        if (this._ovr && this._ovr.mode === 'cap') maxGear = Math.min(maxGear, 1);
+
         this.gear += delta;
         
         // Min gear is -1 (brake)
@@ -407,7 +438,10 @@ export class GameEngine {
         const headOff = newHead.x < 0 || newHead.x >= this.canvas.width || newHead.y < 0 || newHead.y >= this.canvas.height;
         const wallAhead = this.state.unlocked.borders && (nx < 0 || nx >= this.canvas.width || ny < 0 || ny >= this.canvas.height);
         const bodyAhead = b.some((s, i) => i !== 0 && i !== b.length - 1 && s.x === nx && s.y === ny);
-        if (headOff || wallAhead || bodyAhead) {
+        // Denny's DENIED stamps harden the trail the reversed head would drive into —
+        // the "truly safe 180" promise holds in the Fall-Through too.
+        const stampAhead = this.stamps && this.stamps.some(s => s.x === nx && s.y === ny);
+        if (headOff || wallAhead || bodyAhead || stampAhead) {
             this.audio.playDenied(); // can't pivot safely here — refuse rather than self-kill
             return;
         }
@@ -480,13 +514,43 @@ export class GameEngine {
     }
     
     shiftScreen(dx, dy) {
+        const fromX = this.worldManager.currentRoomX;
+        const fromY = this.worldManager.currentRoomY;
+
         // Advancing EAST out of Denny's room without ever meeting him? You slipped
         // past the Last Line (retreating West back to the Hub doesn't count) —
         // remembered and paid off later (Gate's dialogue).
-        if (dx === 1 && this.worldManager.currentRoomX === 1 && this.worldManager.currentRoomY === 0
+        if (dx === 1 && fromX === 1 && fromY === 0
             && !this.state.unlocked.dennyMet && !this.state.unlocked.dennySlipped) {
             this.state.unlocked.dennySlipped = true;
         }
+
+        // The Ascent's clears: breaching NORTH out of an armed rematch room resolves it.
+        let clearedDialog = null;
+        if (dy === -1 && this.state.unlocked.purgeComplete) {
+            if (fromX === 5 && fromY === -2 && !this.state.unlocked.dennyRematchDone) {
+                this.state.unlocked.dennyRematchDone = true;
+                clearedDialog = DENNY_REMATCH.cleared;
+            } else if (fromX === 5 && fromY === -3 && !this.state.unlocked.gateRematchDone) {
+                this.state.unlocked.gateRematchDone = true;
+                clearedDialog = GATE_OVERRIDE.cleared;
+                // MOTION CARRIED — the SECOND Gate run-in is the moment the Architect's
+                // white-knuckle grip on the world's clock slips. One-way; from here the
+                // Wilds move on your tick. The committee memo doubles as the telegraph.
+                if (!this.state.unlocked.motionCarried) {
+                    this.state.unlocked.motionCarried = true;
+                    this.narrative.printMessage(ARCHITECT.motionCarried);
+                    this.narrative.printMessage(ARCHITECT.motionDrift);
+                }
+            }
+        }
+
+        // Leaving a room resets its transient battle state: Denny's stamps, Gate's
+        // override (and its gear cap), the stamp-trail memory.
+        this.stamps = [];
+        this._trailPrev = null;
+        this._stampStun = 0;
+        this._ovr = null;
 
         // Auto-attach Bite if left behind (unless he's dropped off in Localhost)
         if (this.hasBiteSegment) {
@@ -497,18 +561,36 @@ export class GameEngine {
                 this.npcs.splice(biteIdx, 1);
             }
         }
-        
+
         // Remove Bite before saving so he isn't baked into the room's permanent state
         const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite' && n.id !== 'cache');
         this.worldManager.saveRoom(this.apple, this.glitches, npcsWithoutBite, this.obstacles);
-        
+
         this.worldManager.shiftRoom(dx, dy);
+
+        // Scripted set-piece rooms regenerate FRESH each entry until their beat is done —
+        // a clean retry every time (obstacle layouts, enforcer positions, the finale's
+        // corrupted cell), instead of a half-resolved cached husk.
+        this._maybeRegenerateScriptedRoom();
 
         const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
         this.apple = room.apple;
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
+
+        // ONE-WAY: stepping through Cache's checkpoint door re-seals it behind you.
+        // The reboot beyond flushes volatile memory; doors out of her stacks are one-way.
+        // (Death in the finale reopens it — the checkpoint respawn, see die().) ONLY
+        // while the finale is unresolved: after the paradox the way home is permanently
+        // open (_finaleParadox re-breaks it), and resealing on a post-finale visit to
+        // Denny's vigil would trap the player in Port 0 with no exit.
+        if (this.worldManager.currentRoomX === 5 && this.worldManager.currentRoomY === -5 && dy === -1) {
+            this.state.unlocked.finaleDoorFound = true; // the Scanner door has been breached once
+            if (!this.state.unlocked.finaleDone) {
+                this.worldManager.brokenWalls.delete(this.worldManager.boundaryKey(5, -5, 'down'));
+            }
+        }
 
         // Reaching Cadenza's sealed sector resolves her homing beacon — you've located
         // her. Her NPC (RoomGenerator) delivers the actual scene on contact.
@@ -524,9 +606,48 @@ export class GameEngine {
 
         this.architectGuide(); // the Architect accidentally narrates your route
 
+        // The coil's proximity presentation resets with the room (recomputed next tick).
+        this._coilNear = null;
+        this.audio.setDuck(1);
+
+        // First time the anomaly reaches a perimeter sector: the Architect files the
+        // outer wall under GEOLOGY. Long fuse — no further explanation for acts.
+        if (this._inBoundaryRoom() && !this.state.unlocked.coilSeen) {
+            this.state.unlocked.coilSeen = true;
+            this.narrative.printMessage(ARCHITECT.coilFirst);
+        }
+
+        // HUSH's post, entered while it's still ON DUTY: a one-time SYSTEM intercept
+        // (rule 1 — the clamp is telegraphed before it can bite).
+        if (this.worldManager.currentRoomX === this.worldManager.landmarks.hush.x
+            && this.worldManager.currentRoomY === this.worldManager.landmarks.hush.y
+            && (this.state.unlocked.musicLayer || 0) < 1
+            && !this.state.unlocked.hushTelegraphed) {
+            this.state.unlocked.hushTelegraphed = true;
+            this.narrative.printMessage(HUSH_INTERCEPT);
+        }
+
         // 2-Bit sets up shop the first time you reach Localhost; its dialogue takes
         // over from the room-entry transition pause.
         if (this.checkBiteDropOff()) return;
+
+        // HEUR'S INTERCEPT — the mandatory purge. Owning Nibble's module flags you as an
+        // infection vector; the sweeper daemon seals the next open sector you enter.
+        if (this._purgeInterceptHere()) return;
+
+        // An Ascent rematch resolved on the way in: its cast calls after you — and then
+        // the NEW room's own intro still gets its turn (clearing the Fall-Through lands
+        // you straight in the Override; skipping Gate's intro would skip its telegraph).
+        if (clearedDialog) {
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(clearedDialog, () => {
+                if (!this._scriptedRoomIntro()) this.state.gameState = 'PLAYING';
+            });
+            return;
+        }
+
+        // Armed set-piece rooms open on their intro scene (once each).
+        if (this._scriptedRoomIntro()) return;
 
         this.state.gameState = 'TRANSITION';
         setTimeout(() => {
@@ -534,6 +655,66 @@ export class GameEngine {
                 this.state.gameState = 'PLAYING';
             }
         }, 500);
+    }
+
+    // Is the current room on the finite interior's edge (any wall is the Kernel's
+    // coil)? The Hub is exempt — the Architect's own quarantine masks the coil there.
+    _inBoundaryRoom() {
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        if (rx === 0 && ry === 0) return false;
+        return ['up', 'down', 'left', 'right'].some(d => this.worldManager.isCoilWall(rx, ry, d));
+    }
+
+    // Wipe the cached copy of a scripted set-piece room when entering it unresolved, so
+    // it regenerates fresh (clean retries). Port 0 regenerates until the finale is done.
+    _maybeRegenerateScriptedRoom() {
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const u = this.state.unlocked;
+        if (rx !== 5) return;
+        const stale =
+            (ry === -2 && u.purgeComplete && !u.dennyRematchDone) ||
+            (ry === -3 && u.purgeComplete && !u.gateRematchDone) ||
+            (ry === -5 && !u.finaleDone);
+        if (stale) delete this.worldManager.rooms[this.worldManager.getRoomKey(rx, ry)];
+    }
+
+    // Fire Heur's seal-and-purge if this room is eligible: you carry the corruption
+    // module, you haven't been decontaminated, and the room is open Wilds (no Safe
+    // Zone, no Hub, no story landmark, no Ascent set-piece — a functionary doesn't
+    // interrupt other people's scenes). Returns true if it took over the transition.
+    _purgeInterceptHere() {
+        const u = this.state.unlocked;
+        if (!this.state.upgrades.corruptHandler || u.purgeComplete) return false;
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        if (rx === 0 && ry === 0) return false;
+        if (this.worldManager.isSafeZone(rx, ry)) return false;
+        for (const lm of Object.values(this.worldManager.landmarks)) {
+            if (rx === lm.x && ry === lm.y) return false;
+        }
+        if (rx === 10 && ry === 5) return false;                    // the Booth
+        if (rx === 1 && ry === -5) return false;                    // the ROM Vault
+        if (rx === 1 && ry === 0) return false;                     // Denny's checkpoint
+        if (rx === 3 && ry === 0) return false;                     // Gate's arena
+        if (rx === 5 && ry <= -2 && ry >= -5) return false;         // the Ascent's set-piece rooms
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(HEUR.intercept, () => this.startPurge());
+        return true;
+    }
+
+    // Armed set-piece rooms open on a one-time intro dialog. Returns true if one played.
+    _scriptedRoomIntro() {
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const u = this.state.unlocked;
+        if (rx !== 5) return false;
+        let lines = null, flag = null;
+        if (ry === -2 && u.purgeComplete && !u.dennyRematchDone && !u.dennyRematchIntroSeen) { lines = DENNY_REMATCH.enter; flag = 'dennyRematchIntroSeen'; }
+        else if (ry === -3 && u.purgeComplete && !u.gateRematchDone && !u.gateOverrideIntroSeen) { lines = GATE_OVERRIDE.enter; flag = 'gateOverrideIntroSeen'; }
+        else if (ry === -5 && !u.finaleDone && !u.finaleIntroSeen) { lines = GATE_FINALE.enter; flag = 'finaleIntroSeen'; }
+        if (!lines) return false;
+        u[flag] = true;
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+        return true;
     }
 
     // On first reaching Localhost, 2-Bit hops off your tail to set up shop. This beat
@@ -633,8 +814,20 @@ export class GameEngine {
 
     _cellBlocked(x, y) {
         if (this.obstacles && this.obstacles.some(o => o.x === x && o.y === y)) return true;
+        if (this.stamps && this.stamps.some(s => s.x === x && s.y === y)) return true;
         if (this.apple && this.apple.x === x && this.apple.y === y) return true;
         if (this.snake.body.some(s => s.x === x && s.y === y)) return true;
+        return false;
+    }
+
+    // Full occupancy test for autonomous movers (Glitch drifters, wanderers, listing
+    // obstacles, pursuit hazards): everything solid or precious blocks a step.
+    _moverBlocked(x, y, opts = {}) {
+        if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) return true;
+        if (this._cellBlocked(x, y)) return true;
+        if ((this.dataMotes || []).some(m => m.x === x && m.y === y)) return true;
+        if (!opts.ignoreGlitches && (this.glitches || []).some(gl => gl.x === x && gl.y === y)) return true;
+        if (!opts.ignoreNpcs && this.npcs.some(n => n.x === x && n.y === y)) return true;
         return false;
     }
 
@@ -753,6 +946,29 @@ export class GameEngine {
             this.shiftScreen(dx, dy);
             return { stop: false, shifted: true, dx, dy };
         }
+        // ROM-sealed scripted doors (Cache's checkpoint door north out of Cold Storage):
+        // a real doorway that ramming can NEVER crack — a harmless bonk, whatever your
+        // gear. Only Cache's script opens it. Non-lethal: it's her door, not a trap.
+        if (isWeakPoint && this.worldManager.isRomSealed(rx, ry, directionStr)) {
+            if (!this._wallBonking) {
+                this.audio.playDenied();
+                this.narrative.printMessage(ROM_DOOR_BONK);
+            }
+            this._wallBonking = true;
+            this.gear = 0;
+            this.speed = this.baseSpeed;
+            return { stop: true };
+        }
+        // Gate's SEAL override (the {5,-3} rematch): while CITATION §7 holds, the north
+        // egress is administratively revoked — a bonk, not a wall. Wait out the cycle.
+        if (isWeakPoint && this._ovr && this._ovr.mode === 'seal'
+            && rx === 5 && ry === -3 && directionStr === 'up') {
+            if (!this._wallBonking) this.audio.playDenied();
+            this._wallBonking = true;
+            this.gear = 0;
+            this.speed = this.baseSpeed;
+            return { stop: true };
+        }
         if (isWeakPoint) {
             // Smash mechanic: base speed does nothing (non-lethal bonk); sub-max cracks the wall
             // but the impact RESTARTS you (keeping some crack); ONLY a max-gear (gear 3) hit
@@ -784,7 +1000,25 @@ export class GameEngine {
             this.die('border');
             return { stop: true };
         }
-        // Solid wall (non-weak-point, or a sealed Hub wall): lethal.
+        // PORT 0 — the aperture in the top coil out of {5,-5}. The central span is the
+        // Kernel's own port: sealed, but a bonk, never a death (a door, not a wall).
+        // After the finale it names itself; the deep sectors are still compiling.
+        if (rx === 5 && ry === -5 && directionStr === 'up') {
+            const dim = this.canvas.width;
+            const g = this.gridSize;
+            const mid = Math.floor(dim / 2 / g) * g;
+            if (newHeadX >= mid - 2 * g && newHeadX <= mid + 2 * g) {
+                if (!this._wallBonking) {
+                    this.audio.playDenied();
+                    if (this.state.unlocked.finaleDone) this.narrative.printMessage(PORT0_COMPILING);
+                }
+                this._wallBonking = true;
+                this.gear = 0;
+                this.speed = this.baseSpeed;
+                return { stop: true };
+            }
+        }
+        // Solid wall (non-weak-point, a sealed Hub wall, or the Kernel's coil): lethal.
         this.die('border');
         return { stop: true };
     }
@@ -861,10 +1095,32 @@ export class GameEngine {
 
     // Corruption (Glitch) collision: drains segments + Data, or kills you if it drains you to
     // nothing. Returns true if it killed you (the move-tick must return).
+    // With Nibble's GLITCH SHUNT installed, the head PUSHES corruption instead: the
+    // Glitch slides one cell along your heading (a shove, playDenied) — no bite — and
+    // only bites as before when the push is blocked. Corruption becomes a thing you
+    // herd, stack, and park somewhere load-bearing.
     hitGlitch() {
         for (let i = 0; i < this.glitches.length; i++) {
             const g = this.glitches[i];
             if (this.snake.head.x === g.x && this.snake.head.y === g.y) {
+                if (this.state.upgrades.corruptHandler) {
+                    const d = this.input.direction;
+                    const px = g.x + d.x, py = g.y + d.y;
+                    if (!this._moverBlocked(px, py)) {
+                        g.x = px; g.y = py;
+                        delete g._m; // a shoved Glitch re-seeds its drift from the new cell
+                        this.audio.playDenied(); // the shove — corruption bent, not bitten
+                        break;
+                    }
+                }
+                // The finale's corrupted cell is INDESTRUCTIBLE while the fight is live —
+                // corruption this dense doesn't yield to a bite (or a blocked shove). A
+                // harmless bonk; the funnel's one lever can never be eaten by accident.
+                if (this.worldManager.currentRoomX === 5 && this.worldManager.currentRoomY === -5
+                    && !this.state.unlocked.finaleDone) {
+                    this.audio.playDenied();
+                    break;
+                }
                 const damage = this.state.upgrades.reinforcedSegments ? 1 : 3;
                 for (let d = 0; d < damage; d++) {
                     if (this.snake.body.length > 1) {
@@ -901,6 +1157,9 @@ export class GameEngine {
         // hazards, no growth) — quantized to the same move clock as the rest of the world.
         if (this.state.gameState === 'ENCORE') { this.updateEncore(dt); return; }
 
+        // Heur's Purge Cycle — the Body-Breakout — is its own modal move-tick too.
+        if (this.state.gameState === 'PURGE') { this.updatePurge(dt); return; }
+
         if (this.state.gameState === 'DEAD') {
             return;
         }
@@ -928,6 +1187,11 @@ export class GameEngine {
 
             this.updateGate();
             this.updateDenny();
+            this.updateHush();          // the feedback-suppressor's turn-locked pursuit (its room only)
+            this.updateWorldMotion();   // Motion Carried: Glitches drift, villagers wiggle, furniture lists
+            this.updateDenny2();        // the Fall-Through — lagged DENIED stamps on your trail
+            this.updateGate3();         // the Override — one permission rewrite at a time
+            this.updateGateFinal();     // Port 0 — the rigidity funnel
 
             this.input.updateDirection();
 
@@ -984,9 +1248,21 @@ export class GameEngine {
                     }
                 }
 
+                // Denny's lagged DENIED stamps harden your own trail behind you — head
+                // contact is an obstacle-death (only doubling back can hit one).
+                if (this.stamps.length) {
+                    for (const s of this.stamps) {
+                        if (this.snake.head.x === s.x && this.snake.head.y === s.y) {
+                            this.die('obstacle');
+                            return;
+                        }
+                    }
+                }
+
                 // Diegetic ambient audio: the system's own signals bleeding into your
                 // senses as you move through it (corruption proximity, wall friction).
                 this.playAmbientAudio();
+                this.updateCoilProximity(); // the world holds its breath near the Kernel's coil
                 this.detectScannerSweep(); // Topology Scanner: sweeping a wall reveals hidden doors
 
                 if (this.collectData()) return; // apple / spare-data motes + tail handling
@@ -1020,6 +1296,7 @@ export class GameEngine {
         // Otherwise it parks on the obstacle and clips through it next tick.
         const h = this.snake.head;
         const onHazard = (this.obstacles && this.obstacles.some(o => o.x === h.x && o.y === h.y))
+            || (this.stamps && this.stamps.some(s => s.x === h.x && s.y === h.y))
             || this.snake.body.slice(1).some(s => s.x === h.x && s.y === h.y);
         if (onHazard && this.snake.body.length > 1) this.snake.body.shift();
 
@@ -1132,6 +1409,10 @@ export class GameEngine {
     // window — re-spell CACHE (or visit Cold Storage {5,-4}) to see her again.
     summonCache() {
         if (this.state.unlocked.cacheStage >= 3) return; // she's said her piece; never again
+        // The ARG assumes "a real death warps you to the Hub" — but the checkpoint
+        // respawn lands in Cold Storage, where the resident archivist already IS.
+        // Her Hub apparition only ever manifests in the Hub.
+        if (this.worldManager.currentRoomX !== 0 || this.worldManager.currentRoomY !== 0) return;
         const already = this.npcs.some(n => n.id === 'cache');
         this.state.unlocked.cacheFound = true; // mark discovered (clue-gating / records)
         this.spawnCacheNpc();
@@ -1175,7 +1456,12 @@ export class GameEngine {
             if (this.snake.head.x === npc.x && this.snake.head.y === npc.y) {
                 if (npc.leaving) continue; // a fleeing NPC is non-interactive
                 const handler = this.npcHandlers[npc.id];
-                if (handler) handler(npc);
+                if (handler) {
+                    // Two processes touching exchange a little handshake chirp — unless
+                    // this contact already has its own sound (clamps, scuffles, pickups).
+                    if (!this._silentBumps.has(npc.id)) this.audio.playBump();
+                    handler(npc);
+                }
                 return true;
             }
         }
@@ -1446,6 +1732,692 @@ export class GameEngine {
         };
     }
 
+    // --- The Finite Wilds: the Kernel's coil (boundary sectors) -------------------------
+
+    // How close is the head to the coil, in the current room? Sets the audio duck (the
+    // world holds its breath) and the Renderer's deaf-legible twin (the room dims toward
+    // the wall + a proximity readout). Runs once per grid step; the Hub is exempt.
+    updateCoilProximity() {
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        if (rx === 0 && ry === 0) {
+            if (this._coilNear) { this._coilNear = null; this.audio.setDuck(1); }
+            return;
+        }
+        const g = this.gridSize, W = this.canvas.width, H = this.canvas.height;
+        const head = this.snake.head;
+        const felt = 6; // cells out at which the hush begins
+        let best = 0;
+        const dirs = [];
+        const checks = [
+            ['left', head.x / g],
+            ['right', (W - g - head.x) / g],
+            ['up', head.y / g],
+            ['down', (H - g - head.y) / g],
+        ];
+        for (const [dir, dist] of checks) {
+            if (!this.worldManager.isCoilWall(rx, ry, dir)) continue;
+            dirs.push(dir);
+            const p = Math.max(0, Math.min(1, (felt - dist) / felt));
+            if (p > best) best = p;
+        }
+        if (!dirs.length) {
+            if (this._coilNear) { this._coilNear = null; this.audio.setDuck(1); }
+            return;
+        }
+        this._coilNear = { proximity: best, dirs };
+        this.audio.setDuck(1 - 0.95 * best); // near-silence pressed against the sleeper
+    }
+
+    // --- MOTION CARRIED: the world moves on your tick ----------------------------------
+    // One-way world-state flip (set when Gate's first confrontation resolves): Glitches
+    // drift on deterministic patterns, villagers wander, room furniture lists. Everything
+    // is turn-locked — one cell per YOUR move-tick, never faster than you, telegraphed by
+    // a static directional notch (a11y: motion is coded by shape + position, never colour).
+
+    _glitchMotionFor(i, rx, ry) {
+        const h = (Math.imul((rx * 73856093) ^ (ry * 19349663) ^ ((i + 1) * 83492791), 2654435761)) >>> 0;
+        const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+        const [dx, dy] = dirs[h % 4];
+        return { kind: (h >>> 4) % 2 === 0 ? 'drift' : 'patrol', dx, dy, step: 0 };
+    }
+
+    // Is this cell inside a doorway lane (the cleared corridor aligned with any of the
+    // room's weak points)? Listing furniture must never seal a door.
+    _inDoorLane(x, y) {
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        for (const dir of ['up', 'down', 'left', 'right']) {
+            const wp = this.worldManager.getWeakPoint(rx, ry, dir);
+            if (!wp) continue;
+            const c = (dir === 'up' || dir === 'down') ? x : y;
+            if (c >= wp.start && c <= wp.end) return true;
+        }
+        return false;
+    }
+
+    updateWorldMotion() {
+        if (!this.state.unlocked.motionCarried) return;
+        const g = this.gridSize;
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const cx = Math.floor(this.canvas.width / 2 / g) * g;
+        const cy = Math.floor(this.canvas.height / 2 / g) * g;
+        const inHub = rx === 0 && ry === 0;
+        const finaleRoom = rx === 5 && ry === -5;
+
+        // 1) Glitches drift — deterministic per room+index (they telegraph and stay
+        // stable across deaths), blocked by everything, bouncing when they hit it.
+        // The finale's corrupted cell is exempt: the funnel needs it to hold still.
+        // Keep-out anchors: the Hub respawn, and the checkpoint spawn cell in {5,-4}.
+        const chkRoom = rx === 5 && ry === -4 && this.state.unlocked.checkpointOpen;
+        const spawnAnchorY = chkRoom ? Math.min(cy + 3 * g, this.canvas.height - g) : cy;
+        const guardSpawn = inHub || chkRoom;
+        if (!finaleRoom && this._tick % 2 === 0 && this.glitches && this.glitches.length) {
+            // Half your cadence — the drift menaces without racing you.
+            for (let i = 0; i < this.glitches.length; i++) {
+                const gl = this.glitches[i];
+                if (!gl._m) gl._m = this._glitchMotionFor(i, rx, ry);
+                const m = gl._m;
+                const nx = gl.x + m.dx * g, ny = gl.y + m.dy * g;
+                const nearSpawn = guardSpawn && Math.max(Math.abs(nx - cx), Math.abs(ny - spawnAnchorY)) <= 2 * g;
+                if (nearSpawn || this._moverBlocked(nx, ny)) {
+                    m.dx = -m.dx; m.dy = -m.dy; m.step = 0; // bounce; step next tick
+                } else {
+                    gl.x = nx; gl.y = ny; m.step++;
+                    // A patrol turns around AFTER its 3rd step — flip now so the stored
+                    // vector (and its rendered notch) always shows the NEXT step.
+                    if (m.kind === 'patrol' && m.step >= 3) { m.dx = -m.dx; m.dy = -m.dy; m.step = 0; }
+                }
+            }
+        }
+
+        // 2) Villagers WIGGLE — mostly still, an occasional single-cell shuffle around
+        // home (radius 1, home-biased so they oscillate in place rather than roam).
+        if (this._tick % 4 === 0) {
+            for (const npc of this.npcs) {
+                if (npc.id !== 'citizen' || npc.leaving) continue;
+                if (!npc._home) npc._home = { x: npc.x, y: npc.y };
+                if (Math.random() >= 0.25) continue;
+                const away = npc.x !== npc._home.x || npc.y !== npc._home.y;
+                let dx = 0, dy = 0;
+                if (away) {
+                    dx = Math.sign(npc._home.x - npc.x) * g;
+                    dy = Math.sign(npc._home.y - npc.y) * g;
+                    if (dx !== 0 && dy !== 0) dy = 0; // one axis per shuffle
+                } else {
+                    const dirs = [[g, 0], [-g, 0], [0, g], [0, -g]];
+                    [dx, dy] = dirs[Math.floor(Math.random() * 4)];
+                }
+                const nx = npc.x + dx, ny = npc.y + dy;
+                if (Math.max(Math.abs(nx - npc._home.x), Math.abs(ny - npc._home.y)) > g) continue;
+                if (this._moverBlocked(nx, ny)) continue;
+                npc.x = nx; npc.y = ny;
+            }
+        }
+
+        // 3) Room furniture LISTS — every 8th tick one obstacle shifts a cell, never
+        // into a doorway lane and never beside the head (the head's next cell must
+        // stay fair — no untelegraphed same-tick obstacle death), so layouts drift
+        // without ever sealing a route or ambushing anyone.
+        if (this.obstacles && this.obstacles.length && this._tick % 8 === 0) {
+            const idx = Math.floor(this._tick / 8) % this.obstacles.length;
+            const o = this.obstacles[idx];
+            const h = ((o.x * 31 + o.y * 17 + rx * 7 + ry * 3) >>> 0);
+            const dirs = [[g, 0], [-g, 0], [0, g], [0, -g]];
+            const [dx, dy] = dirs[h % 4];
+            const nx = o.x + dx, ny = o.y + dy;
+            const nearHead = Math.abs(nx - this.snake.head.x) + Math.abs(ny - this.snake.head.y) <= g;
+            if (!nearHead && !this._moverBlocked(nx, ny) && !this._inDoorLane(nx, ny)) {
+                o.x = nx; o.y = ny;
+            }
+        }
+    }
+
+    // --- HUSH: the House Silence (Encore-gated guardian at {9,4}) -----------------------
+    // Awake (Music Layer 0): a turn-locked pursuit hazard in the GC's idiom — one cell
+    // per your step, homing on your head, CLAMPING segments off anything it reaches.
+    // Survivable attrition, never a kill. The instant Cadenza's Locked Groove boots
+    // (Layer 1 — a STATE flag, not audible output, so muted/Deaf play reads identically),
+    // her tone is the one authorized waveform: HUSH logs itself redundant and collapses
+    // into a static standby coil you simply walk past.
+
+    updateHush() {
+        const lm = this.worldManager.landmarks.hush;
+        if (this.worldManager.currentRoomX !== lm.x || this.worldManager.currentRoomY !== lm.y) return;
+        const hush = this.npcs.find(n => n.id === 'hush');
+        if (!hush) return;
+        if ((this.state.unlocked.musicLayer || 0) >= 1) { hush.dormant = true; return; }
+        hush.dormant = false;
+        if (hush.stun > 0) { hush.stun--; return; }
+        const g = this.gridSize;
+        const head = this.snake.head;
+        const dx = Math.sign(head.x - hush.x) * g;
+        const dy = Math.sign(head.y - hush.y) * g;
+        const tries = Math.abs(head.x - hush.x) >= Math.abs(head.y - hush.y)
+            ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]];
+        for (const [mx, my] of tries) {
+            if (mx === 0 && my === 0) continue;
+            const nx = hush.x + mx, ny = hush.y + my;
+            if (nx < 0 || ny < 0 || nx >= this.canvas.width || ny >= this.canvas.height) continue;
+            if ((this.obstacles || []).some(o => o.x === nx && o.y === ny)) continue;
+            if ((this.glitches || []).some(gl => gl.x === nx && gl.y === ny)) continue; // never COVER corruption (a hidden hazard)
+            if (this.apple && this.apple.x === nx && this.apple.y === ny) continue;
+            if (this.npcs.some(n => n !== hush && n.x === nx && n.y === ny)) continue;
+            if (this.snake.head.x === nx && this.snake.head.y === ny) continue; // never ON the head
+            hush.notch = { dx: Math.sign(mx), dy: Math.sign(my) };
+            hush.x = nx; hush.y = ny;
+            break;
+        }
+        this._hushClamp(hush);
+    }
+
+    // The CLAMP: HUSH overlapping any body segment bites two segments (and two Data —
+    // coupled) off the tail, then stalls two ticks so it can't chain-clamp every step.
+    _hushClamp(hush) {
+        if (hush.dormant || hush.stun > 0) return;
+        const onBody = this.snake.body.some(s => s.x === hush.x && s.y === hush.y);
+        if (!onBody) return;
+        let clamped = 0;
+        for (let d = 0; d < 2; d++) {
+            if (this.snake.body.length > 1) { this.snake.shrink(this.hasBiteSegment); clamped++; }
+        }
+        if (clamped > 0) {
+            this.state.score = Math.max(0, this.state.score - clamped);
+            this.refreshScore();
+            this.changeGear(0);
+            this.audio.playCorruptHit(); // reused: corruption's bite (no new sound, no new cause)
+        }
+        hush.stun = 2;
+    }
+
+    // Head-on into HUSH: dormant, it's a soft bump (a coil at rest); awake, walking
+    // into the clamp is a clamp.
+    npcHush(npc) {
+        if ((this.state.unlocked.musicLayer || 0) >= 1 || npc.dormant) {
+            this.audio.playDenied();
+            return;
+        }
+        this._hushClamp(npc);
+    }
+
+    // --- Nibble's black market ({11,-4}) & the Glitch Shunt -----------------------------
+    // House rules apply (the 2-Bit consent GAG): the only way through a dialog is
+    // SPACE, so finishing her pitch IS buying it. No separate confirm. Data = segments:
+    // the 20-Data price comes off your body.
+    npcNibble(npc) {
+        this.state.gameState = 'DIALOG';
+        const done = () => { this.state.gameState = 'PLAYING'; };
+        const u = this.state.unlocked;
+        if (!u.nibbleMet) {
+            u.nibbleMet = true;
+            this.dialogManager.start(NIBBLE.intro, done);
+            return;
+        }
+        if (this.state.upgrades.corruptHandler) { this.dialogManager.start(NIBBLE.idle, done); return; }
+        if (this.state.score < 20) { this.dialogManager.start(NIBBLE.tooPoor, done); return; }
+        this.dialogManager.start(NIBBLE.pitch, () => {
+            this.state.score -= 20;
+            this.spendData(20);
+            this.state.upgrades.corruptHandler = true;
+            this.audio.playBeep();
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(NIBBLE.buy, done);
+        });
+    }
+
+    // A growth cache: one bite, +4 Data and +4 length (coupled) — the Wilds' reason
+    // to explore. Consumed permanently (the room remembers).
+    npcDataCache(npc) {
+        this.npcs = this.npcs.filter(n => n !== npc);
+        this.state.addScore(4);
+        this.growSnake(4);
+        this.audio.playBeep();
+        this.checkUnlocks();
+        this.refreshScore();
+    }
+
+    // --- HEUR'S PURGE CYCLE (the Body-Breakout) -----------------------------------------
+    // A modal 'PURGE' state, quantized to its own move-tick like the Encore. Your whole
+    // body flattens into a PADDLE (width = your length, hard 3-cell minimum) sliding in
+    // a 3-row band; Heur's scan-ping ricochets between its signature database (the
+    // brick wall — reusing the weak-wall grammar) and you. The paddle's interior is a
+    // safe deflector; the LEFT END is your flagged read-head — a ping that reads it
+    // docks 2 segments + 2 Data. Break every signature (Heur's own is last) to leave.
+    // Failure is non-lethal: 5 clearances, then the cycle reseals and restarts you at
+    // entry length, banking any brick-Data actually eaten. NO self-bite anywhere.
+
+    startPurge() {
+        const g = this.gridSize;
+        const cols = Math.floor(this.canvas.width / g), rows = Math.floor(this.canvas.height / g);
+        this.state.unlocked.bayRoom = { x: this.worldManager.currentRoomX, y: this.worldManager.currentRoomY };
+        // 2-Bit's ridden segment is HIM, not your Data — it never enters the purge's
+        // mass accounting (and so can never be docked by a head-read). pendingUnfold
+        // is left alone: folded mass is still yours; it rides `virtual` through the
+        // cycle and _purgeWin/_purgeReseal reconstitute it (Data = segments holds).
+        const bite = this.hasBiteSegment ? 1 : 0;
+        const entryLen = this.snake.body.length + this.pendingUnfold - bite;
+        const bricks = [];
+        for (let c = 2; c + 1 <= cols - 3; c += 2) bricks.push({ c, w: 2, r: 2, hp: 2, heur: false });
+        const midC = Math.floor(cols / 2);
+        bricks.push({ c: midC - 1, w: 2, r: 1, hp: 1, heur: true });
+        this._purgeReturn = { x: this.snake.head.x, y: this.snake.head.y };
+        this.speed = 120;
+        this.moveTimer = 0;
+        this.input.reset();
+        this.purge = {
+            cols, rows, bandTop: rows - 5,
+            paddle: { c: Math.max(1, midC - 2), row: 1 },
+            virtual: entryLen, entryScore: this.state.score, motesEaten: 0, bite,
+            ping: { c: midC, r: rows - 8, dc: 1, dr: -1, speed: 1 },
+            bricks, brickHits: 0, tick: 0,
+            clearances: 5, motes: [], msg: '', warnHead: false,
+        };
+        this.state.gameState = 'PURGE';
+    }
+
+    // The paddle's drawn/effective width: your length, clamped to [3, room-4].
+    get paddleLen() {
+        if (!this.purge) return 3;
+        return Math.max(3, Math.min(this.purge.cols - 4, this.purge.virtual));
+    }
+
+    updatePurge(dt) {
+        if (!this.purge) { this.state.gameState = 'PLAYING'; return; }
+        this.moveTimer += dt;
+        if (this.moveTimer < this.speed) return;
+        this.moveTimer = 0;
+        const p = this.purge;
+        p.tick++;
+
+        // Paddle input rides the steering keys in PADDLE MODE (InputHandler): hold a
+        // horizontal to slide — reversals included — tap up/down to switch band rows
+        // (the aim).
+        const prevRow = p.paddle.row;
+        this.input.updateDirection();
+        const d = this.input.direction;
+        if (d.x > 0) p.paddle.c = Math.min(p.cols - this.paddleLen, p.paddle.c + 1);
+        else if (d.x < 0) p.paddle.c = Math.max(0, p.paddle.c - 1);
+        if (d.y < 0) p.paddle.row = Math.max(0, p.paddle.row - 1);
+        else if (d.y > 0) p.paddle.row = Math.min(2, p.paddle.row + 1);
+
+        // Dropped brick-Data drifts floorward every other tick; any paddle cell catches.
+        // The swap case counts too: paddle stepping UP through a mote drifting DOWN on
+        // the same tick (they exchange rows) is a catch, not a pass-through.
+        const padY = p.bandTop + p.paddle.row;
+        const prevPadY = p.bandTop + prevRow;
+        const drifted = p.tick % 2 === 0;
+        if (drifted) for (const m of p.motes) m.r++;
+        for (let i = p.motes.length - 1; i >= 0; i--) {
+            const m = p.motes[i];
+            const inSpan = m.c >= p.paddle.c && m.c < p.paddle.c + this.paddleLen;
+            const swapped = drifted && p.paddle.row < prevRow && m.r === prevPadY;
+            if ((m.r === padY || swapped) && inSpan) {
+                p.motes.splice(i, 1);
+                p.virtual++; p.motesEaten++;
+                // growth can push the paddle past the right wall — keep it in the room
+                p.paddle.c = Math.min(p.paddle.c, Math.max(0, p.cols - this.paddleLen));
+                this.state.addScore(1);
+                this.audio.playBeep();
+                this.refreshScore();
+            } else if (m.r > p.rows - 1) {
+                p.motes.splice(i, 1);
+            }
+        }
+
+        // The scan-ping: 1 cell/tick, deterministically 2 after ~6 breaches or ~40 ticks.
+        if (p.brickHits >= 6 || p.tick >= 40) p.ping.speed = 2;
+        for (let s = 0; s < p.ping.speed; s++) {
+            if (this._purgePingStep()) return; // a reseal or the win consumed this cycle
+        }
+        // The read-head warning (2 ticks out, descending): redundant-coded — the ping
+        // is already discrete + notched; this adds the outline flash on the head cell.
+        p.warnHead = p.ping.dr > 0
+            && Math.max(Math.abs(p.ping.c - p.paddle.c), Math.abs(p.ping.r - padY)) <= 2;
+    }
+
+    _purgePingStep() {
+        const p = this.purge;
+        const padY = p.bandTop + p.paddle.row;
+        let nc = p.ping.c + p.ping.dc, nr = p.ping.r + p.ping.dr;
+        if (nc < 0 || nc > p.cols - 1) { p.ping.dc = -p.ping.dc; nc = p.ping.c + p.ping.dc; }
+        if (nr < 0) { p.ping.dr = 1; nr = p.ping.r + 1; }
+
+        const hit = p.bricks.find(b => b.r === nr && nc >= b.c && nc < b.c + b.w);
+        if (hit) {
+            const others = p.bricks.some(b => !b.heur);
+            if (hit.heur && others) {
+                // Heur's own signature reads clean — unbreachable until every other
+                // entry is gone. ("The last infected object between you and the door
+                // is the thing that came to clean it.")
+                p.ping.dr = -p.ping.dr;
+                // Ceiling-corridor escape: at row 0 an upward reflection would be
+                // undone by the ceiling next substep — the ping would freeze forever
+                // between the ceiling and the clean signature. Kick it sideways
+                // (deterministic) so it always leaves the corner.
+                if (p.ping.r === 0 && p.ping.dr < 0) {
+                    p.ping.dc = (p.ping.dc === 0 ? -1 : -p.ping.dc);
+                }
+                return false;
+            }
+            hit.hp--;
+            p.brickHits++;
+            this.audio.playCrack(); // the wall grammar's crack — a database entry giving way
+            if (hit.hp <= 0) {
+                p.bricks = p.bricks.filter(b => b !== hit);
+                // Every 2nd breach drops a Data mote — deterministic, no RNG.
+                if (!hit.heur && p.brickHits % 2 === 0) p.motes.push({ c: nc, r: nr + 1 });
+                if (!p.bricks.length) { this._purgeWin(); return true; }
+            }
+            p.ping.dr = -p.ping.dr; // a true reflection: down off a from-below hit, up off a from-above hit
+            return false;
+        }
+
+        if (nr === padY && nc >= p.paddle.c && nc < p.paddle.c + this.paddleLen && p.ping.dr > 0) {
+            if (nc === p.paddle.c) {
+                // THE READ-HEAD: the ping reads you — 2 segments, 2 Data (coupled).
+                p.virtual = Math.max(1, p.virtual - 2);
+                this.state.score = Math.max(0, this.state.score - 2);
+                this.refreshScore();
+                this.audio.playCorruptHit();
+            } else {
+                this.audio.playDoot(); // a clean block off the shield
+            }
+            p.ping.dr = -1;
+            // Three band rows = three discrete rebound angles (the aim):
+            // top keeps the heading, middle sends it straight up, bottom reverses it.
+            if (p.paddle.row === 1) p.ping.dc = 0;
+            else if (p.paddle.row === 2) p.ping.dc = p.ping.dc === 0 ? 1 : -p.ping.dc;
+            p.ping.c = nc; p.ping.r = nr - 1;
+            return false;
+        }
+
+        if (nr > p.rows - 1) {
+            // Past the band: a clearance is spent. At zero, Heur reseals and restarts you.
+            p.clearances--;
+            this.audio.playDenied();
+            if (p.clearances <= 0) { this._purgeReseal(); return true; }
+            p.msg = 'CLEARANCE LOST — ' + p.clearances + ' REMAIN';
+            p.ping.c = Math.floor(p.cols / 2); p.ping.r = p.bandTop - 3; p.ping.dc = 1; p.ping.dr = -1;
+            return false;
+        }
+
+        p.ping.c = nc; p.ping.r = nr;
+        return false;
+    }
+
+    // Reseal: non-lethal. Restart in place at entry length, banking eaten brick-Data as
+    // real length (Data = segments: score and body move together — folded mass included).
+    _purgeReseal() {
+        const p = this.purge;
+        this.state.score = Math.max(0, p.entryScore + p.motesEaten);
+        this.growSnake(p.motesEaten);
+        this.refreshScore();
+        this.purge = null;
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(HEUR.reseal, () => this.startPurge());
+    }
+
+    _purgeWin() {
+        const p = this.purge;
+        const u = this.state.unlocked;
+        const finalLen = Math.max(1, p.virtual) + p.bite; // 2-Bit's segment comes back untouched
+        // Re-materialize at the entry cell, FOLDED (the Crumple fold, reused) — the body
+        // extrudes one block per move as you drive off. No overlap, no self-collision.
+        this.snake.body = [{ x: this._purgeReturn.x, y: this._purgeReturn.y }];
+        this.pendingUnfold = finalLen - 1;
+        // Drive off from a standstill: gear and speed re-derived as a coherent pair
+        // (the purge can change your Data, so re-clamp against the new cap too).
+        this.gear = 0;
+        this.changeGear(0);
+        this.input.reset();
+        this.purge = null;
+        u.purgeComplete = true;
+        // The Architect escalates: the rematch posts up the north spine arm (their
+        // cached rooms regenerate with the enforcers deployed).
+        for (const key of ['5,-2', '5,-3']) delete this.worldManager.rooms[key];
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(HEUR.win, () => {
+            this.state.gameState = 'PLAYING';
+            this.narrative.printMessage(ARCHITECT.purgeAudit);
+        });
+    }
+
+    getPurgeRenderState() {
+        const p = this.purge;
+        return {
+            cols: p.cols, rows: p.rows, bandTop: p.bandTop,
+            paddle: { c: p.paddle.c, row: p.paddle.row, len: this.paddleLen },
+            ping: { c: p.ping.c, r: p.ping.r, dc: p.ping.dc, dr: p.ping.dr },
+            bricks: p.bricks.map(b => ({ c: b.c, w: b.w, r: b.r, hp: b.hp, heur: b.heur })),
+            motes: p.motes.slice(),
+            clearances: p.clearances, msg: p.msg, warnHead: p.warnHead,
+        };
+    }
+
+    // --- THE ASCENT: Beat 7 and the rematches up the north spine ------------------------
+
+    // A shared axis-priority pursuit step (Gate's interchange chase). Blocked by the
+    // worm, furniture, stamps, other NPCs — and optionally corruption.
+    _pursueHead(npc, opts = {}) {
+        const g = this.gridSize;
+        const head = this.snake.head;
+        const dx = Math.sign(head.x - npc.x) * g;
+        const dy = Math.sign(head.y - npc.y) * g;
+        const tries = Math.abs(head.x - npc.x) >= Math.abs(head.y - npc.y)
+            ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]];
+        for (const [mx, my] of tries) {
+            if (mx === 0 && my === 0) continue;
+            const nx = npc.x + mx, ny = npc.y + my;
+            if (nx < 0 || ny < 0 || nx >= this.canvas.width || ny >= this.canvas.height) continue;
+            if (this._cellBlocked(nx, ny)) continue;
+            if (opts.avoidGlitches && (this.glitches || []).some(gl => gl.x === nx && gl.y === ny)) continue;
+            if (this.npcs.some(n => n !== npc && n.x === nx && n.y === ny)) continue;
+            npc.notch = { dx: Math.sign(mx), dy: Math.sign(my) };
+            npc.x = nx; npc.y = ny;
+            return;
+        }
+    }
+
+    // Bumping a pursuing/guarding Gate: a SCUFFLE, not an arrest — three segments and
+    // three Data (coupled), he's knocked back along your heading and stalls a beat.
+    // The pressure valve: you can always fight through him, at a price.
+    npcGateScuffle(npc) {
+        const shed = Math.min(3, Math.max(0, this.snake.body.length - 1));
+        for (let i = 0; i < shed; i++) this.snake.shrink(this.hasBiteSegment);
+        this.state.score = Math.max(0, this.state.score - shed);
+        this.refreshScore();
+        this.changeGear(0);
+        this.audio.playCrash();
+        const d = this.input.direction;
+        const g = this.gridSize;
+        // Grid-aligned clamp (the canvas need not be a grid multiple — a raw width-g
+        // clamp would park him OFF-grid where every cell-equality check misses him).
+        const maxX = Math.floor((this.canvas.width - 1) / g) * g;
+        const maxY = Math.floor((this.canvas.height - 1) / g) * g;
+        const nx = Math.max(0, Math.min(maxX, npc.x + Math.sign(d.x) * 3 * g));
+        const ny = Math.max(0, Math.min(maxY, npc.y + Math.sign(d.y) * 3 * g));
+        // Never knock him ONTO anything — furniture, corruption (a shoved Gate on a
+        // Glitch would fire the finale's paradox by accident), the worm, the apple, a
+        // stamp, or another NPC. A blocked knockback just leaves him where he stands.
+        const blocked = this._moverBlocked(nx, ny)
+            || this.npcs.some(n => n !== npc && n.x === nx && n.y === ny);
+        if (!blocked) { npc.x = nx; npc.y = ny; }
+        npc.stun = 3;
+    }
+
+    // The Fall-Through — Denny's rematch ({5,-2}): the goalie half slow-tracks like his
+    // first post; the stamp half lands one move-tick LATE, on the cell your head just
+    // left, hardening your own trail into DENIED walls. Stamps decay (no soft-lock);
+    // the current cell is always safe by construction — only doubling back can kill.
+    updateDenny2() {
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -2) return;
+        if (this.state.unlocked.dennyRematchDone) { this._trailPrev = null; return; }
+        const denny = this.npcs.find(n => n.id === 'denny2');
+        if (!denny) { this._trailPrev = null; return; }
+        for (const s of this.stamps) s.ttl--;
+        this.stamps = this.stamps.filter(s => s.ttl > 0);
+        if (this._tick % 2 === 0) this._trackTowardRow(denny);
+        if (this._stampStun > 0) {
+            this._stampStun--;
+        } else if (this._trailPrev) {
+            const t = this._trailPrev;
+            const occupied = (this.apple && this.apple.x === t.x && this.apple.y === t.y)
+                || this.npcs.some(n => n.x === t.x && n.y === t.y)
+                || (this.dataMotes || []).some(m => m.x === t.x && m.y === t.y)
+                || this.stamps.some(s => s.x === t.x && s.y === t.y);
+            if (!occupied) this.stamps.push({ x: t.x, y: t.y, ttl: 12 });
+        }
+        this._trailPrev = { x: this.snake.head.x, y: this.snake.head.y };
+    }
+
+    // Bumping the Fall-Through Denny: apologetic, and the emitter is flustered a while.
+    npcDenny2(npc) {
+        this.state.gameState = 'DIALOG';
+        this._stampStun = 4;
+        this.dialogManager.start(DENNY_REMATCH.bump, () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // The Override — Gate's rematch ({5,-3}). He holds exactly ONE override at a time:
+    // SEAL (north egress revoked) -> CAP (gearbox held at 1) -> a scripted safe 180
+    // ("heading inverted by policy" — the Pivot verb, reused, so it can never self-kill)
+    // + a short RECALIBRATING window. The window is the answer: be in position, then
+    // build to gear 3 and breach north before he re-targets.
+    updateGate3() {
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -3) return;
+        if (this.state.unlocked.gateRematchDone) { this._ovr = null; return; }
+        const gate = this.npcs.find(n => n.id === 'gate3');
+        if (!gate) { this._ovr = null; return; }
+        if (!this._ovr) this._ovr = { mode: 'seal', t: 0 };
+        const o = this._ovr;
+        o.t++;
+        if (o.mode === 'seal' && o.t >= 5) {
+            o.mode = 'cap'; o.t = 0;
+            this.changeGear(0); // the cap clamps the live gear immediately
+        } else if (o.mode === 'cap' && o.t >= 5) {
+            o.mode = 'recal'; o.t = 0;
+            this.pivot(); // the one override that touches your heading — safely, by construction
+        } else if (o.mode === 'recal' && o.t >= 3) {
+            o.mode = 'seal'; o.t = 0;
+        }
+        if (gate.stun > 0) { gate.stun--; return; }
+        // The exit-goalie: he shadows your column along the north wall.
+        const g = this.gridSize;
+        const hx = this.snake.head.x;
+        let nx = gate.x;
+        if (gate.x < hx) nx = Math.min(gate.x + g, hx);
+        else if (gate.x > hx) nx = Math.max(gate.x - g, hx);
+        if (nx !== gate.x && !this._cellBlocked(nx, gate.y)
+            && !this.npcs.some(n => n !== gate && n.x === nx && n.y === gate.y)
+            && !(this.glitches || []).some(gl => gl.x === nx && gl.y === gate.y)) {
+            gate.x = nx;
+        }
+    }
+
+    // The active citation, for the Renderer's in-room banner (never the terminal — a
+    // printing log would hang the fight).
+    _citationLabel() {
+        if (!this._ovr) return null;
+        if (this._ovr.mode === 'seal') return GATE_OVERRIDE.citations.seal;
+        if (this._ovr.mode === 'cap') return GATE_OVERRIDE.citations.cap;
+        return GATE_OVERRIDE.citations.invert;
+    }
+
+    // --- PORT 0: the Act I finale ({5,-5}) — the rigidity funnel ------------------------
+    // Gate has LEARNED: he refuses Glitch cells. His mandate: hold the door (the post
+    // south of the aperture), shadowing your head. Drape your body over his legal
+    // moves until only the corrupted cell remains; when he's down to ONE clean escape,
+    // Denny issues the only genuine deny of his eleven thousand cycles — and the
+    // firewall's own rulebook walks him onto the paradox. NO self-bite, NO encircle.
+    updateGateFinal() {
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -5) return;
+        if (this.state.unlocked.finaleDone) return;
+        const gate = this.npcs.find(n => n.id === 'gatefinal');
+        if (!gate) return;
+        const g = this.gridSize;
+
+        const neigh = [[g, 0], [-g, 0], [0, g], [0, -g]].map(([dx, dy]) => ({ x: gate.x + dx, y: gate.y + dy }));
+        const isGlitch = (c) => (this.glitches || []).some(gl => gl.x === c.x && gl.y === c.y);
+        const isBlocked = (c) =>
+            c.x < 0 || c.y < 0 || c.x >= this.canvas.width || c.y >= this.canvas.height
+            || this._cellBlocked(c.x, c.y)
+            || this.npcs.some(n => n !== gate && n.x === c.x && n.y === c.y);
+        const freeClean = neigh.filter(c => !isBlocked(c) && !isGlitch(c));
+        const freeGlitch = neigh.filter(c => !isBlocked(c) && isGlitch(c));
+
+        const denny = this.npcs.find(n => n.id === 'dennyfinal');
+        if (freeClean.length === 1 && freeGlitch.length > 0 && denny && !denny.acted) {
+            denny.acted = true;
+            this.stamps.push({ x: freeClean[0].x, y: freeClean[0].y, ttl: 9999, denied: true });
+            this.audio.playBeep(); // a data-write: the one real stamp
+            return;
+        }
+        if (freeClean.length === 0 && freeGlitch.length > 0) {
+            gate.x = freeGlitch[0].x;
+            gate.y = freeGlitch[0].y;
+            this._finaleParadox(gate);
+            return;
+        }
+
+        if (gate.stun > 0) { gate.stun--; return; }
+        // Duty: hold the door. At post he side-steps to shadow your column (±2 of it).
+        const midX = Math.floor(this.canvas.width / 2 / g) * g;
+        const post = { x: midX, y: g };
+        let target = post;
+        if (gate.x === post.x && gate.y === post.y) {
+            const hx = Math.max(midX - 2 * g, Math.min(midX + 2 * g, this.snake.head.x));
+            target = { x: hx, y: g };
+        }
+        const dx = Math.sign(target.x - gate.x) * g;
+        const dy = Math.sign(target.y - gate.y) * g;
+        const tries = Math.abs(target.x - gate.x) >= Math.abs(target.y - gate.y)
+            ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]];
+        for (const [mx, my] of tries) {
+            if (mx === 0 && my === 0) continue;
+            const c = { x: gate.x + mx, y: gate.y + my };
+            if (isBlocked(c) || isGlitch(c)) continue;
+            gate.notch = { dx: Math.sign(mx), dy: Math.sign(my) };
+            gate.x = c.x; gate.y = c.y;
+            break;
+        }
+    }
+
+    // The paradox fires: Gate steps onto the corrupted cell his own rule forbade.
+    // The sector crashes, and the crash IS the upgrade: era 16 snaps on mid-frame,
+    // Cadenza's second channel wakes, and Act I is over.
+    _finaleParadox(gate) {
+        const u = this.state.unlocked;
+        this.spawnBurst([{ x: gate.x, y: gate.y }]);
+        this.glitches = this.glitches.filter(gl => !(gl.x === gate.x && gl.y === gate.y));
+        this.npcs = this.npcs.filter(n => n !== gate);
+        this.audio.playCrash();
+        this.audio.playDeath(); // reserved for a true termination — and this is one
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(GATE_FINALE.forced, () => {
+            u.finaleDone = true;
+            u.era16 = true;
+            u.dennyRematchDone = true; u.gateRematchDone = true; // the spine stands down
+            // Fallback: if the rematches were routed around, the world starts moving
+            // HERE at the latest — the Kernel releasing its tail is motion nobody holds.
+            if (!u.motionCarried) {
+                u.motionCarried = true;
+                this.narrative.printMessage(ARCHITECT.motionCarried);
+            }
+            if ((u.musicLayer || 0) < 2) u.musicLayer = 2;
+            this.audio.setMusicLayer(u.musicLayer); // the bassline has an owner
+            // The way home re-opens — the stacks heard the crash.
+            this.worldManager.brokenWalls.add(this.worldManager.boundaryKey(5, -5, 'down'));
+            const denny = this.npcs.find(n => n.id === 'dennyfinal');
+            if (denny) { denny.id = 'dennyafter'; denny.dialog = GATE_FINALE.after; }
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(GATE_FINALE.reboot, () => { this.state.gameState = 'PLAYING'; });
+        });
+    }
+
+    // Denny at Port 0: mid-fight he is officially a clipboard; after, he keeps the vigil.
+    npcDennyFinal(npc) {
+        this.state.gameState = 'DIALOG';
+        const lines = this.state.unlocked.finaleDone ? GATE_FINALE.after : GATE_FINALE.dennyBusy;
+        this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+    }
+
     // Cache's staged Hub conversation. Like 2-Bit, she offers no real choice — finishing
     // the dialog IS the transaction. Each call advances her one stage and, when the dialog
     // closes, fades her out (dismissCache); she returns next Hub visit until she's given
@@ -1498,6 +2470,32 @@ export class GameEngine {
     talkToCacheHome(npc) {
         const u = this.state.unlocked;
         let lines;
+        // THE CHECKPOINT (armed once the purge is survived): Cold Storage is read-only —
+        // sanctuary — and Cache will not open the one-way door north until you're FILED.
+        // The reboot beyond flushes volatile memory; only a ROM save carries you across.
+        // Committing the save (Pause -> S, in this room) is what breaches the door: see
+        // saveGame(). Always satisfiable — she installs Save on the spot if you lack it.
+        if (u.purgeComplete) {
+            if (u.checkpointOpen) {
+                u.cacheFound = true;
+                lines = this._diedSinceCheckpoint ? CACHE_CHECKPOINT.reopen : CACHE_CHECKPOINT.open;
+                this._diedSinceCheckpoint = false;
+            } else if (u.saveFunction) {
+                u.cacheFound = true;
+                if (u.cacheStage < 3) u.cacheStage = 3;
+                lines = CACHE_CHECKPOINT.demand;
+            } else if (u.pauseMenu) {
+                u.saveFunction = true;
+                u.startScreenUnlocked = true;
+                u.cacheFound = true;
+                u.cacheStage = 3;
+                lines = [...CACHE.home.install, ...CACHE_CHECKPOINT.demand];
+            } else {
+                lines = CACHE.home.brushOff;
+            }
+            this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
         if (u.saveFunction) {
             // Already saved-enabled (Hub grant or a prior visit): a calmer at-home chat.
             u.cacheFound = true;
@@ -1719,8 +2717,10 @@ export class GameEngine {
         this.worldManager.brokenWalls = new Set();
         this.worldManager.wallDamage = {};
         this.worldManager.scannerReveals = {};
+        this.worldManager.resetRomSeals(); // a fresh run's checkpoint door is write-protected again
         this.worldManager.currentRoomX = 0;
         this.worldManager.currentRoomY = 0;
+        this._auditionLayer = null;
 
         const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
         const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
@@ -1730,6 +2730,9 @@ export class GameEngine {
         this.carriedModule = null; this.moduleLoad = null; this.bursts = []; this.dataMotes = [];
         this.onUnpauseCallback = null; this._guided = new Set(); this._tick = 0;
         this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
+        this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
+        this.purge = null; this._coilNear = null; this._diedSinceCheckpoint = false;
+        this.audio.setDuck(1);
 
         // Back to the cold open: HUD hidden, terminal wiped (re-revealed at 5 Data).
         const top = document.getElementById('ui-layer');
@@ -1756,7 +2759,10 @@ export class GameEngine {
         if (u.biteDroppedOff) place = 'Localhost';
         if (u.cadenzaFound) place = 'Cadenza';
         if (u.cacheStage >= 3) place = 'Cold Storage';
-        const mods = ['dataCompression', 'reinforcedSegments', 'pivot', 'scanner'].filter(k => up[k]).length
+        if (u.purgeComplete) place = 'The Ascent';
+        if (u.checkpointOpen) place = 'The Checkpoint';
+        if (u.finaleDone) place = 'Act II - 16-bit';
+        const mods = ['dataCompression', 'reinforcedSegments', 'pivot', 'scanner', 'corruptHandler'].filter(k => up[k]).length
             + (up.crumpleLevel > 0 ? 1 : 0);
         return { place, mods };
     }
@@ -1814,6 +2820,20 @@ export class GameEngine {
         this.carriedModule = d.carriedModule || null; // preserve an un-installed module (the map)
         this.moduleLoad = null; this.bursts = [];
         this.state.isSuspended = false; this.onUnpauseCallback = null; // never load INTO a Gate suspension
+        this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
+        this.purge = null; this._coilNear = null; this._diedSinceCheckpoint = false;
+        this._auditionLayer = null;
+        this.audio.setDuck(1);
+        // The checkpoint door's state is derived from flags, not stored: reset the ROM
+        // seals to baseline, then re-derive — committed = unsealed; once-breached =
+        // standing open (a load must never demand a gear-3 re-ram from a fresh worm).
+        this.worldManager.resetRomSeals();
+        if (this.state.unlocked.checkpointOpen) {
+            this.worldManager.unsealRomDoor(5, -4, 'up');
+            if (this.state.unlocked.finaleDoorFound) {
+                this.worldManager.brokenWalls.add(this.worldManager.boundaryKey(5, -4, 'up'));
+            }
+        }
         this.state.score = 0;
         const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
         this.apple = room.apple;
@@ -1854,6 +2874,28 @@ export class GameEngine {
     saveGame() {
         const ok = this.saveManager.save(this.activeSlot, this.serialize());
         this.flashSave(ok ? `SAVED - FILE ${this.activeSlot}` : 'SAVE FAILED');
+        // Cold Storage: a committed save while the Ascent is armed is exactly what Cache
+        // demanded. The moment you're FILED she breaches the one-way door north — and the
+        // committed checkpoint becomes the finale's respawn. (Re-save immediately so the
+        // file itself carries the opened-checkpoint state.)
+        if (ok && !this.state.unlocked.checkpointOpen && this.state.unlocked.purgeComplete
+            && this.worldManager.currentRoomX === 5 && this.worldManager.currentRoomY === -4) {
+            this.state.unlocked.checkpointOpen = true;
+            // Committing here settles her whole questline: the Hub apparition retires
+            // (she IS here, filing you) — consistent with the demand branch.
+            if (this.state.unlocked.cacheStage < 3) this.state.unlocked.cacheStage = 3;
+            this.state.unlocked.cacheFound = true;
+            // She lifts the WRITE-PROTECTION — she doesn't open the door. The seam
+            // stays a hidden Scanner door: sweep the north wall to light it, then
+            // breach it at max gear. (ROM doesn't do doors.)
+            this.worldManager.unsealRomDoor(5, -4, 'up');
+            this.saveManager.save(this.activeSlot, this.serialize());
+            this.audio.playMaterialize(); // something older than the Architect lets go
+            this.onUnpauseCallback = () => {
+                this.state.gameState = 'DIALOG';
+                this.dialogManager.start(CACHE_CHECKPOINT.breach, () => { this.state.gameState = 'PLAYING'; });
+            };
+        }
     }
 
     loadGame() {
@@ -1880,15 +2922,38 @@ export class GameEngine {
         const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
         const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
 
+        // THE CHECKPOINT RESPAWN: once Cache has committed you (checkpointOpen), death
+        // returns you to Cold Storage {5,-4} — not the Hub — and her one-way door
+        // re-opens (the whole reason the Save gate exists). Seated a few cells south
+        // of centre so you never re-materialize on top of the archivist.
+        const toCheckpoint = !!this.state.unlocked.checkpointOpen;
+        const spawnY = toCheckpoint ? Math.min(cy + 3 * this.gridSize, this.canvas.height - this.gridSize) : cy;
+
         this.audio.playDeath(); // ONE death cue for every cause (border/self/obstacle/glitch)
         this.state.gameState = 'DEAD';
-        this.snake.reset(cx, cy, this.hasBiteSegment);
+        this.snake.reset(cx, spawnY, this.hasBiteSegment);
         this.input.reset();
         this.state.resetScore();
         this.pendingUnfold = 0;     // a fresh run isn't mid-unfold
         this.gear = 0;              // fresh runs start from a standstill (sub-smash
         this.speed = this.baseSpeed; // deaths would otherwise respawn you mid-gear)
         this._wallBonking = false;
+        // Battle transients die with you: stamps, the stamp trail, Gate's override (and
+        // its gear cap), the coil's held breath.
+        this.stamps = [];
+        this._trailPrev = null;
+        this._stampStun = 0;
+        this._ovr = null;
+        this._coilNear = null;
+        this.audio.setDuck(1);
+        if (toCheckpoint) {
+            this._diedSinceCheckpoint = true;
+            // The seam re-opens only once you've breached it before (finale retries must
+            // never demand a gear-3 re-ram from a score-0 respawn — that would soft-lock).
+            if (this.state.unlocked.finaleDoorFound) {
+                this.worldManager.brokenWalls.add(this.worldManager.boundaryKey(5, -4, 'up'));
+            }
+        }
 
         // Save current room, then warp back to hub (0,0)
         let appleToSave = this.apple;
@@ -1900,8 +2965,8 @@ export class GameEngine {
         const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite' && n.id !== 'cache');
         this.worldManager.saveRoom(appleToSave, this.glitches, npcsWithoutBite, this.obstacles);
 
-        this.worldManager.currentRoomX = 0;
-        this.worldManager.currentRoomY = 0;
+        this.worldManager.currentRoomX = toCheckpoint ? 5 : 0;
+        this.worldManager.currentRoomY = toCheckpoint ? -4 : 0;
 
         const room = this.worldManager.getOrCreateRoom(this.state.unlocked);
         this.apple = room.apple;
@@ -1914,8 +2979,10 @@ export class GameEngine {
         // chain-death spawn-camp you. Clear any within 2 cells of the spawn point and
         // write the cleaned set back into the cached room so it stays clear.
         const g = this.gridSize;
+        // Anchor the clearing ring on the ACTUAL spawn cell (spawnY — offset 3 south of
+        // centre at the checkpoint), not the room centre, so nothing camps the respawn.
         this.glitches = this.glitches.filter(gl =>
-            Math.max(Math.abs(gl.x - cx) / g, Math.abs(gl.y - cy) / g) > 2
+            Math.max(Math.abs(gl.x - cx) / g, Math.abs(gl.y - spawnY) / g) > 2
         );
         room.glitches = this.glitches;
 
@@ -2000,6 +3067,10 @@ export class GameEngine {
         this.state.reduceMotion = this.settings.reduceMotion; // Renderer dampens pulses/blinks
         this.state.options = this.optionsOpen ? { index: this.optionsIndex, settings: this.settings } : null;
         this.state.encore = (this.state.gameState === 'ENCORE' && this.encore) ? this.getEncoreRenderState() : null;
+        this.state.purge = (this.state.gameState === 'PURGE' && this.purge) ? this.getPurgeRenderState() : null;
+        this.state.stamps = this.stamps;           // Denny's DENIED stamps
+        this.state.coilNear = this._coilNear;      // the coil approach (deaf-legible dim + readout)
+        this.state.citation = this._citationLabel(); // Gate's active override banner ({5,-3})
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();

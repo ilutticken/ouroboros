@@ -129,7 +129,17 @@ export const ARCHITECT = {
         '3,0': "LOG: Architect > 'Sector 3. Deploying Gate to hold the line here. Gate is reliable. Gate will not embarrass me.'",
         '4,0': "LOG: Architect > 'Past Gate. Fine. It cannot know Localhost sits one sector east. ...It is heading one sector east.'",
         '5,0': "LOG: Architect > 'It reached Localhost. The one place I can't touch. Recalculating. Note to self: reassign Gate somewhere with fewer exits.'"
-    }
+    },
+    // Motion Carried — the world-state flip after Gate's first defeat. He can't hold every
+    // sector still AND re-staff a firewall, so scheduling passes to the anomaly's own tick.
+    // (DRAFT. The second line leaks the a11y notch — labeling was 'somebody's' idea.)
+    motionCarried: "LOG: Architect > 'Emergency motion before the Scheduling Committee: with the firewall down I cannot hold every sector's clock myself. Motion: bind hazard scheduling to the anomaly's own tick. Carried, unanimous. I am the only member. I abstained.'",
+    motionDrift: "LOG: Architect > 'Effective immediately, the corruptors DRIFT. Note: their drift vectors are printed right on them. Who labeled the hazards? WHY would someone label the hazards?'",
+    // First time the anomaly reaches a perimeter (coil) sector. Long-fuse: no explanation
+    // for acts. He didn't build the outer wall. He built AROUND it.
+    coilFirst: "LOG: Architect > 'It reached the perimeter. Filing under GEOLOGY: the outer wall predates me. I did not build it. I built around it. It is warm, and I do not audit it.'",
+    // After Heur's purge — the dispatch is implied, never confirmed.
+    purgeAudit: "LOG: Architect > 'The janitorial daemon engaged the anomaly and lost. I am not saying I dispatched it. I am noting, for the record, that SOMEBODY in this system still follows procedure.'"
 };
 
 // --- 2-Bit (src/engine/Game.js) -----------------------------------------------------
@@ -217,6 +227,206 @@ export const TWO_BIT = {
         ]
     ]
 };
+
+// --- ACT I BUILD-OUT (Motion Carried / the coil / Nibble / Heur / the Ascent) --------
+// ALL LINES BELOW ARE DRAFTS — playable, awaiting the owner's punch-up pass.
+
+// Nibble — 2-Bit's estranged sister. Warm like a heat lamp: comforting, and it burns if
+// you stay. Endearments that are also threats; the wound (her brother) deflected into
+// commerce; disclosures rattled off as one unhearable compound word.
+export const NIBBLE = {
+    intro: [
+        "Nibble: Ohh, look at the LENGTH on you. Come in, come in, sweetie. Touch anything you like — everything in here bites, but gently.",
+        "Nibble: You're wearing my brother's gear. Mm. He always did find clients with appetite. We don't talk. There's a ledger involved.",
+        "Nibble: Browse! Everything's cursed, everything's a bargain. Disclosuresavailableonrequestnorefundsnoexorcisms."
+    ],
+    pitch: [
+        "Nibble: One item today, sweetie — the good one. The GLITCH SHUNT. Clips to that pretty head and lets you PUSH corruption instead of wearing it.",
+        "Nibble: Shove a Glitch anywhere you like. Stack them. Herd them. Park one somewhere... load-bearing. The Firewall HATES that last one.",
+        "Nibble: Twenty Data. Family discount. He'd hate that. Take it."
+    ],
+    tooPoor: [
+        "Nibble: Twenty, sweetie. Come back heavier.",
+        "Nibble: I'd float you credit, but you've seen what happens to my debtors. ...You haven't. That's the point."
+    ],
+    buy: [
+        "Nibble: Sold! It clips right onto the head. Cold, isn't it? That's normal. The whispering is also normal.",
+        "Nibble: One tip, on the house: the sweeper daemons flag anything that can HOLD corruption without dying.",
+        "Nibble: So if something very polite and very, very clean comes for you on the way home... that's not my fault. And also: run."
+    ],
+    idle: [
+        "Nibble: Back for more? Stock rotates when the sweep gets close. Which is always. Browse fast, sweetie."
+    ]
+};
+
+// Heur — the janitorial antivirus daemon. Extremely short sentences; the French is
+// never meaning-critical (a11y: always glossed or cognate). Courtly and terrifying —
+// a sommelier performing surgery. It never says what you are. It cannot.
+export const HEUR = {
+    intercept: [
+        "SYSTEM: SECTOR SEALED — DECONTAMINATION CYCLE INITIATED",
+        "Heur: Tenez-vous tranquille. (Hold still.)",
+        "Heur: You carry corruption. It does not burn you. Noted. Flagged. Regrettable.",
+        "Heur: Le protocole: I scan. You block. My signature database stands between you and the door. Breach every entry, and you may go.",
+        "Heur: The ping does not hurt. The ping, to the HEAD, hurts. Guard the head. Your body is the shield. Aim with it.",
+        "Heur: Commençons. (We begin.)"
+    ],
+    reseal: [
+        "Heur: Encore. (Again.)",
+        "Heur: The seal holds. Your clearances reset. Do not take it personally. I take nothing personally. It is why I am good."
+    ],
+    win: [
+        "Heur: ...Aucune correspondance. (No match.)",
+        "Heur: Every signature breached. Even mine. Especially mine. There is a form for this. There has never been a need for the form.",
+        "Heur: You are released. Not cleared — released. Pour l'instant. (For now.)",
+        "SYSTEM: DECONTAMINATION CYCLE COMPLETE — SEAL RETRACTED"
+    ],
+    idle: [
+        "Heur: Vous encore. (You again.)",
+        "Heur: I filed you under 'pending'. The file grows. Portez-vous bien. (Keep well.)"
+    ]
+};
+
+// HUSH — it does not speak; these are its process-status labels (drawn in-room, ≥16px,
+// the deaf-legible half of its state). A mother-process's hush-now routine, gone feral.
+export const HUSH_LABELS = {
+    onDuty: 'HUSH — ON DUTY',
+    onDutySub: 'too loud. TOO LOUD.',
+    standby: 'HUSH — STANDING BY',
+    standbySub: '...a song. it kept one.'
+};
+export const HUSH_INTERCEPT = "SYSTEM: FEEDBACK SUPPRESSOR ACTIVE IN THIS SECTOR — unauthorized waveforms will be clamped. [Every move-tick is a waveform.]";
+
+// The ROM Vault {1,-5} — the Scanner-only pocket, deep NW. Its one door is a hidden
+// Scanner door; inside, the manifest (and, one day, the Corrupted Save File).
+export const ROM_VAULT = [
+    "VAULT MANIFEST: 'Contents: ONE (1) save file, corrupted, origin unknown. ONE (1) mass reserve. Authorized visitors to date: zero. You make zero-plus-one.'",
+    "VAULT MANIFEST: 'Storage note: the save file predates the quarantine. It will not open for us. It is waiting for somebody it knows.'",
+    "VAULT MANIFEST: 'do not defragment. do not deliver. do not—' (the rest matches the fragment outside. Whoever wrote it stopped mid-rule.)"
+];
+
+// The Fall-Through — Denny's rematch at {5,-2}. For once the alarms are real, traffic is
+// falling through to the Last Line — and the scheduler is dropping frames, so his DENIED
+// stamps land one beat late, on the cell your head just left.
+export const DENNY_REMATCH = {
+    enter: [
+        "Denny: Oh no. Oh no no no. It's YOU — and the alarms are REAL this time. Everything above me is breached. Traffic is actually FALLING THROUGH.",
+        "Denny: Which means I have to actually— I have never actually— okay. Okay! Stamping commences! I am so sorry about everything that is about to occur.",
+        "Denny: (He raises the stamp. The scheduler hitches. The DENIED lands a full beat behind his hand — right where you just were.)"
+    ],
+    bump: [
+        "Denny: A denial has been issued! Late! It is being issued LATE, I know — the scheduler is dropping frames and I am stamping as fast as regulation allows!"
+    ],
+    cleared: [
+        "Denny: You went around me. Over TIME. That shouldn't even be a direction!",
+        "Denny: ...Please don't tell Gate how relieved I am."
+    ]
+};
+
+// The Override — Gate's rematch at {5,-3}. He stops chasing and starts REWRITING:
+// permissions, headings, doors. One override at a time — regulation is regulation.
+export const GATE_OVERRIDE = {
+    enter: [
+        "Gate: No further. This checkpoint is the last numbered rule between you and Port 0, and I have stopped pretending you read the postings.",
+        "Gate: New powers, anomaly. I no longer chase. I REWRITE. Permissions. Headings. Doors. One override at a time — regulation is regulation.",
+        "Gate: You will be pleased to know I have escalated you to a Level 3 Anomaly. It is the highest classification I have ever filed."
+    ],
+    // In-room citation banners (drawn ≥16px while the override holds — not terminal logs,
+    // so the fight never hangs the sim).
+    citations: {
+        seal: 'CITATION §7 — NORTH EGRESS: REVOKED',
+        cap: 'CITATION §9 — VELOCITY: CAPPED',
+        invert: 'CITATION §12 — HEADING INVERTED. RECALIBRATING…'
+    },
+    cleared: [
+        "Gate: ...Cited. Every rule cited, and you went through the WALL portion of the wall.",
+        "Gate: The Architect asks why you are still executing. I have stopped forwarding him my reports. This one is between us.",
+        "Gate: North, then. I will be at the door that matters."
+    ]
+};
+
+// Cold Storage becomes the mandatory checkpoint once the Ascent is armed. Cache will not
+// open the one-way door north until you are FILED. (Her §9 questline lines are untouched.)
+export const CACHE_CHECKPOINT = {
+    demand: [
+        "Cache: Whoa whoa WHOA. You do not stroll past the stacks toward Port 0 like it's a coffee run, packet.",
+        "Cache: Past that wall, the sector reboots things. Volatile memory gets FLUSHED. The little tick that keeps you warm can't follow you through a breach.",
+        "Cache: You're about to be overwritten, is what I'm saying. So first: I hold a copy of you. It's what I'm FOR.",
+        "Cache: Pause. S. File yourself. THEN we talk about the door."
+    ],
+    breach: [
+        "Cache: Filed. Committed. To ROM — the one shelf nothing sweeps.",
+        "Cache: (She lays a hand on the north wall. Something in it stops holding its breath.) There. Write-protection's off. That's all I can do — ROM doesn't do doors.",
+        "Cache: The seam's REAL, but it doesn't show. You'll want that Topology toy 2-Bit sells — sweep the wall and it lights right up. Then hit it with everything you've got.",
+        "Cache: It's one-way, packet. Doors out of my stacks always are. If it goes wrong up there, you wake up right here. That's the service.",
+        "SYSTEM: CHECKPOINT COMMITTED — respawn relocated: COLD STORAGE {5,-4}"
+    ],
+    reopen: [
+        "Cache: Told you. Right here, good as filed. Your copy's exactly where you left it — and the seam north is where YOU left it, too.",
+        "Cache: Go finish it. And STOP DYING ON MY SHIFT."
+    ],
+    open: [
+        "Cache: File's safe. Seam's north. Clock's ticking, daddy-o."
+    ]
+};
+export const ROM_DOOR_BONK = "SYSTEM: The wall refuses. This sector is committed to ROM — nothing writes it, nothing rams it. [Cache decides what opens here.]";
+
+// Port 0 — the Act I finale. Gate's last stand: he has LEARNED to avoid the corrupted
+// cell, so the old lure becomes a body-puzzle. Denny follows you in, and issues the one
+// genuine deny of his eleven thousand cycles.
+export const GATE_FINALE = {
+    enter: [
+        "Gate: The door that matters. Port 0. My first rule — my REAL rule — says it stays closed. Every citation I ever wrote was practice for this shift.",
+        "Gate: And I have learned your trick, anomaly. The corrupted cell. I see it. Rule #1, subsection ME: never step in the puddle.",
+        "Denny: (slipping in behind you) I— I followed the paperwork north. It all falls through eventually, did you know? Everything does. That's... me. Hello."
+    ],
+    forced: [
+        "Gate: —Recalculating. The permitted cells are— you've DRAPED yourself over the permitted cells.",
+        "Gate: One legal move remains. It is corrupted. A firewall does not halt. A firewall PROCEEDS. Denny— Denny, the manual says—",
+        "Denny: (stamping the last clean cell, very quietly) ...Denied. I'm sorry, sir. It's the only real one I ever issued.",
+        "Gate: ...Filed correctly, Denny. Well then. FINAL CITATION, anomaly: whatever you find past this door — you are the last rule it has to get through."
+    ],
+    reboot: [
+        "SYSTEM: PARADOX AT PORT 0 — firewall process violated its own Rule #1.",
+        "SYSTEM: SECTOR CRASH … REBOOT … REBOOT … re—",
+        "(The palette doubles. The renderer draws the same room and gets it beautiful. Somewhere under the floor, a second voice joins the music.)",
+        "SYSTEM: PERIMETER EVENT — coil tension zero at PORT 0. Segment released.",
+        "(At the top of the world, something that has held its own tail in its mouth for eleven thousand epochs... lets go. The aperture stands open. Act II is on the other side of it.)"
+    ],
+    after: [
+        "Denny: He'd have wanted the incident report in triplicate. I filed four. One's just... mine.",
+        "Denny: Go on through, when the deep sectors finish compiling. Somebody has to hold the bottom of the rulebook. I've got it."
+    ],
+    dennyBusy: [
+        "Denny: (whispering) I'm not here! Officially! Officially I am a clipboard!"
+    ]
+};
+export const PORT0_COMPILING = "SYSTEM: PORT 0 OPEN — deep sectors still compiling. Come back next epoch.";
+
+// Wandering Wilds clue-givers (refugee programs, one per plotted room) — they wander
+// once Motion Carried lands. Keyed by 'x,y' room.
+export const WILDS_CITIZENS = {
+    '6,2': ["Citizen: Southeast, past the diva's hall, the music just... stops. Room by room. Something down there is EATING the sound. Don't hum."],
+    '2,-3': ["Citizen: The north spine's gone all official — stamps, citations, checkpoints. Somebody up there is very cross with you. The archivist's stacks are the one room they can't touch."],
+    '10,-3': ["Citizen: 2-Bit's sister trades out of the freed heap — east, keep going until the wall turns red. Everything's cursed, everything's a bargain. Tell her nothing. She'll know anyway."],
+    '7,5': ["Citizen: You've seen the red wall, out deep? Don't scrape it. It's warm. Walls shouldn't be warm."]
+};
+
+// Scannable environmental lore fragments, keyed by 'x,y' room. Long-fuse seeds:
+// refreshd's decay-skip, the emptied subnet, the tick, the vault.
+export const LORE_FRAGS = {
+    '4,-3': ["LOG FRAGMENT [corrupted]: '...refresh cycle 88,214,003: cell 0x0000 read BLANK. re-read: BLANK. i was not late. i am never late. i was late.'"],
+    '8,5': ["LOG FRAGMENT: 'residential subnet, final entry: they went quiet in alphabetical order. the sweep is very organized.'"],
+    '11,2': ["LOG FRAGMENT: 'the tick is not a clock. clocks tick for everyone. this one keeps time for something ASLEEP. count along and you'll hear the skips.'"],
+    '1,-2': ["LOG FRAGMENT [encrypted]: '...vault manifest: ONE (1) save file, corrupted, origin unknown. do not defragment. do not deliver. do not—' (the rest is scrambled)"]
+};
+
+// The Deep-Sleep Booth {10,5} — HUSH's vault, backed onto the SE coil.
+export const BOOTH_LORE = [
+    "BOOTH LOG: 'DEEP-SLEEP MONITORING STATION 07-B. Subject: [REDACTED]. Status: asleep. Duration: [OVERFLOW].'",
+    "BOOTH LOG: 'Vitals, epoch after epoch: one pulse per tick. The tick IS the pulse. Keep the audio team away from this file.'",
+    "BOOTH LOG: 'If the subject stirs: do not run. Running is a waveform. Everything is a waveform. That is the whole problem.'"
+];
 
 // --- Gate (src/engine/Game.js) ------------------------------------------------------
 export const GATE = {
