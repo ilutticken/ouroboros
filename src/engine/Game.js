@@ -12,7 +12,7 @@ import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
 import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE, CADENZA_TITLE,
          NIBBLE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH, GATE_OVERRIDE,
-         CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING } from '../content/dialogue.js';
+         CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING, UI_MODULES } from '../content/dialogue.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -155,9 +155,12 @@ export class GameEngine {
         // 'down' movement in play), and NOT during the Gate Thread-Suspension cutscene
         // (also a PAUSED state) — loading out of that left isSuspended stuck true.
         window.addEventListener('keydown', (e) => {
-            if (this.state.gameState !== 'PAUSED' || this.state.isSuspended || !this.state.unlocked.saveFunction) return;
-            if (e.key === 's' || e.key === 'S') this.saveGame();
-            else if (e.key === 'l' || e.key === 'L') this.loadGame();
+            if (this.state.gameState !== 'PAUSED' || this.state.isSuspended) return;
+            if (this.state.unlocked.saveFunction && (e.key === 's' || e.key === 'S')) this.saveGame();
+            else if (this.state.unlocked.saveFunction && (e.key === 'l' || e.key === 'L')) this.loadGame();
+            // Map Pins: [M] marks/cycles the current room's annotation (paused, looking at
+            // the map). Gated on the tool so 'M' stays free before it's found.
+            else if (this.state.unlocked.mapPinsTool && (e.key === 'm' || e.key === 'M')) this.cycleMapPin();
         });
 
         // Boot file-select menu (New Game / Load across 3 files). Only live when the START
@@ -198,11 +201,13 @@ export class GameEngine {
         this.deathCode = '';       // rolling last-5 keys pressed to "continue" on the death screen (spell CACHE)
         this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
         this.stamps = [];          // Denny's lagged DENIED stamps (room-local; head contact kills)
+        this._wardUsedThisRoom = false; // Scale Mods' free Glitch absorb, spent once per room
         this._trailPrev = null;    // the cell the head occupied LAST move-tick (the stamp target)
         this._stampStun = 0;       // ticks Denny's stamp emitter is flustered after a bump
         this._coilNear = null;     // { proximity, dirs } — the Kernel-coil approach (audio duck + deaf twin)
+        this.mapPins = {};         // Map-Pins annotations: 'x,y' room key -> pin shape index (persisted)
         this._ovr = null;          // Gate's active permission override in {5,-3} ({mode, t})
-        this.purge = null;         // Heur's Purge Cycle state object — non-null only during 'PURGE'
+        this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
@@ -234,6 +239,7 @@ export class GameEngine {
             nibble: (npc) => this.npcNibble(npc),
             hush: (npc) => this.npcHush(npc),
             datacache: (npc) => this.npcDataCache(npc),
+            uimodule: (npc) => this.npcUiModule(npc),
             lorefrag: (npc) => this.npcSign(npc),
             denny2: (npc) => this.npcDenny2(npc),
             gate3: (npc) => this.npcGateScuffle(npc),
@@ -279,8 +285,7 @@ export class GameEngine {
                 && !(this.narrative && this.narrative.isPrinting) && !this.moduleLoad) {
                 this.changeGear(delta);
             }
-        }, () => (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE' || this.state.gameState === 'PURGE') && !this.moduleLoad,
-           () => this.state.gameState === 'PURGE');
+        }, () => (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE') && !this.moduleLoad);
         // ^ canSteer gates ONLY on PLAYING (+ no install). It deliberately does NOT
         // block during narrative.isPrinting: the wake-press after a death happens while
         // the death log is still typing, and it must be able to set your respawn
@@ -294,6 +299,17 @@ export class GameEngine {
     // from LIVE canvas dims (not snapshotted) so a window resize can't strand it.
     get moduleSlotX() { return this.gridSize; }
     get moduleSlotY() { return Math.max(0, Math.floor(this.canvas.height / this.gridSize) - 4) * this.gridSize; }
+
+    // THE WALL RING. Once borders exist, the outer 1-cell ring is solid wall — the
+    // playable interior is cells [1, cols-2] x [1, rows-2]. These are the pixel bounds of
+    // the ring (a head top-left at/under them is entering the wall). `right`/`bottom` are
+    // the ring cell's top-left, so `>=` means the head is in the ring.
+    get _cols() { return Math.floor(this.canvas.width / this.gridSize); }
+    get _rows() { return Math.floor(this.canvas.height / this.gridSize); }
+    get ringLeft() { return this.gridSize; }
+    get ringRight() { return (this._cols - 1) * this.gridSize; }
+    get ringTop() { return this.gridSize; }
+    get ringBottom() { return (this._rows - 1) * this.gridSize; }
 
     // 2-Bit physically rides the tail only until he sets up shop in Localhost. The
     // driving/gear module (tailRider) stays yours; the packet gets off.
@@ -346,13 +362,10 @@ export class GameEngine {
         // you turn off a wall while your body is still draped on it (not just while
         // the head runs parallel). Only exists once the walls do.
         if (this.state.unlocked.borders) {
-            const w = this.canvas.width;
-            const h = this.canvas.height;
-            // `>=` (not `===`) for the far walls: the canvas is sized to the wrapper
-            // and need not be an exact multiple of gridSize, so the rightmost/
-            // bottommost reachable cell can sit past width-g / height-g.
+            // The whole body scrapes while ANY segment is in the interior cell adjacent
+            // to the WALL RING (col 1 / row 1 and their far-side twins).
             const scraping = this.snake.body.some(s =>
-                s.x <= 0 || s.x >= w - g || s.y <= 0 || s.y >= h - g
+                s.x <= this.ringLeft || s.x >= this.ringRight - g || s.y <= this.ringTop || s.y >= this.ringBottom - g
             );
 
             if (scraping) {
@@ -436,7 +449,9 @@ export class GameEngine {
         //    (a coiled/spiral snake wrapped around its own tail).
         // b[0] (the old head) is excluded: it vacates as the tail on that same tick.
         const headOff = newHead.x < 0 || newHead.x >= this.canvas.width || newHead.y < 0 || newHead.y >= this.canvas.height;
-        const wallAhead = this.state.unlocked.borders && (nx < 0 || nx >= this.canvas.width || ny < 0 || ny >= this.canvas.height);
+        // The reversed head would drive into the WALL RING (not just off-canvas).
+        const wallAhead = this.state.unlocked.borders
+            && (nx < this.ringLeft || nx >= this.ringRight || ny < this.ringTop || ny >= this.ringBottom);
         const bodyAhead = b.some((s, i) => i !== 0 && i !== b.length - 1 && s.x === nx && s.y === ny);
         // Denny's DENIED stamps harden the trail the reversed head would drive into —
         // the "truly safe 180" promise holds in the Fall-Through too.
@@ -466,10 +481,10 @@ export class GameEngine {
         const body = this.snake.body;
 
         const walls = [
-            { dir: 'left',  adj: s => s.x <= 0,     cross: s => s.y },
-            { dir: 'right', adj: s => s.x >= W - g, cross: s => s.y },
-            { dir: 'up',    adj: s => s.y <= 0,     cross: s => s.x },
-            { dir: 'down',  adj: s => s.y >= H - g, cross: s => s.x },
+            { dir: 'left',  adj: s => s.x <= this.ringLeft,       cross: s => s.y },
+            { dir: 'right', adj: s => s.x >= this.ringRight - g,  cross: s => s.y },
+            { dir: 'up',    adj: s => s.y <= this.ringTop,        cross: s => s.x },
+            { dir: 'down',  adj: s => s.y >= this.ringBottom - g, cross: s => s.x },
         ];
 
         for (const wall of walls) {
@@ -499,9 +514,10 @@ export class GameEngine {
         }
 
         // Randomly spawn a glitch once corruption exists — but NEVER inside a Safe Zone
-        // (Localhost is hazard-free by contract; the town's own signpost promises it).
+        // (Localhost is hazard-free by contract) NOR during Heur's decontamination (the
+        // sealed bay is swept clean; an apple respawn must not sneak corruption back in).
         const inSafeZone = this.worldManager.isSafeZone(this.worldManager.currentRoomX, this.worldManager.currentRoomY);
-        if (this.state.unlocked.biteProgress > 0 && !inSafeZone && Math.random() < 0.2) {
+        if (this.state.unlocked.biteProgress > 0 && !inSafeZone && !this.heur && Math.random() < 0.2) {
             if (!this.state.unlocked.glitchesTelegraphed) {
                 this.narrative.printMessage(ARCHITECT.seedGlitches);
                 this.state.unlocked.glitchesTelegraphed = true;
@@ -546,11 +562,13 @@ export class GameEngine {
         }
 
         // Leaving a room resets its transient battle state: Denny's stamps, Gate's
-        // override (and its gear cap), the stamp-trail memory.
+        // override (and its gear cap), the stamp-trail memory, and Scale Mods' per-room
+        // free absorb.
         this.stamps = [];
         this._trailPrev = null;
         this._stampStun = 0;
         this._ovr = null;
+        this._wardUsedThisRoom = false;
 
         // Auto-attach Bite if left behind (unless he's dropped off in Localhost)
         if (this.hasBiteSegment) {
@@ -631,9 +649,11 @@ export class GameEngine {
         // over from the room-entry transition pause.
         if (this.checkBiteDropOff()) return;
 
-        // HEUR'S INTERCEPT — the mandatory purge. Owning Nibble's module flags you as an
-        // infection vector; the sweeper daemon seals the next open sector you enter.
-        if (this._purgeInterceptHere()) return;
+        // HEUR'S INTERCEPT — the mandatory decontamination. Owning Nibble's Glitch Shunt
+        // flags you as an infection vector; the sweeper daemon seals the next open sector
+        // you enter and plays Breakout with your body. The far door (the way you were
+        // heading) opens when you win.
+        if (this._heurInterceptHere(dx, dy)) return;
 
         // An Ascent rematch resolved on the way in: its cast calls after you — and then
         // the NEW room's own intro still gets its turn (clearing the Fall-Through lands
@@ -678,26 +698,22 @@ export class GameEngine {
         if (stale) delete this.worldManager.rooms[this.worldManager.getRoomKey(rx, ry)];
     }
 
-    // Fire Heur's seal-and-purge if this room is eligible: you carry the corruption
-    // module, you haven't been decontaminated, and the room is open Wilds (no Safe
-    // Zone, no Hub, no story landmark, no Ascent set-piece — a functionary doesn't
-    // interrupt other people's scenes). Returns true if it took over the transition.
-    _purgeInterceptHere() {
+    // Fire Heur's decontamination when you ENTER THE BAY — a DEDICATED, fixed room the
+    // story funnels you through: {5,-1}, the first sector up the north spine on the way
+    // to the Ascent. Only while flagged (you carry the Glitch Shunt) and not yet
+    // decontaminated. Returns true if it took over the transition.
+    get heurBay() { return { x: 5, y: -1 }; }
+    _heurInterceptHere(dx, dy) {
         const u = this.state.unlocked;
         if (!this.state.upgrades.corruptHandler || u.purgeComplete) return false;
         const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
-        if (rx === 0 && ry === 0) return false;
-        if (this.worldManager.isSafeZone(rx, ry)) return false;
-        for (const lm of Object.values(this.worldManager.landmarks)) {
-            if (rx === lm.x && ry === lm.y) return false;
-        }
-        if (rx === 10 && ry === 5) return false;                    // the Booth
-        if (rx === 1 && ry === -5) return false;                    // the ROM Vault
-        if (rx === 1 && ry === 0) return false;                     // Denny's checkpoint
-        if (rx === 3 && ry === 0) return false;                     // Gate's arena
-        if (rx === 5 && ry <= -2 && ry >= -5) return false;         // the Ascent's set-piece rooms
+        if (rx !== this.heurBay.x || ry !== this.heurBay.y) return false;
+        // The far wall (bricks + the door that opens on a win) is the way you were
+        // heading; the entry you came through is the retreat. Default to heading NORTH
+        // (up the spine) if you somehow entered without a heading.
+        const far = dx > 0 ? 'right' : dx < 0 ? 'left' : dy > 0 ? 'down' : 'up';
         this.state.gameState = 'DIALOG';
-        this.dialogManager.start(HEUR.intercept, () => this.startPurge());
+        this.dialogManager.start(HEUR.intercept, () => { this.startHeurFight(far); this.state.gameState = 'PLAYING'; });
         return true;
     }
 
@@ -745,13 +761,41 @@ export class GameEngine {
     openBiteShop() {
         const openShop = () => {
             this.state.gameState = 'SHOP';
-            this.shopManager.open(() => { this.state.gameState = 'PLAYING'; });
+            this.shopManager.open('bite', () => { this.state.gameState = 'PLAYING'; });
         };
         const heard = this.state.biteTopicsHeard || 0;
         if (heard < this.biteTopics.length) {
             this.state.biteTopicsHeard = heard + 1;
             this.state.gameState = 'DIALOG';
             this.dialogManager.start(this.biteTopics[heard], openShop);
+        } else {
+            openShop();
+        }
+    }
+
+    // Nibble's black-market stall. Like 2-Bit's, a real shop overlay — her lineup lives
+    // in ShopManager.vendors.nibble. First bump plays her intro, then opens the store;
+    // afterwards it's straight to browsing (with the occasional idle line).
+    openNibbleShop() {
+        const hadShunt = this.state.upgrades.corruptHandler;
+        const openShop = () => {
+            this.state.gameState = 'SHOP';
+            this.shopManager.open('nibble', () => {
+                // Just bought the Glitch Shunt? She warns you about the sweeper daemon
+                // on your way out — the diegetic telegraph for Heur's intercept (which
+                // keys on corruptHandler the next open sector you enter).
+                if (!hadShunt && this.state.upgrades.corruptHandler && !this.state.unlocked.purgeComplete) {
+                    this.state.gameState = 'DIALOG';
+                    this.dialogManager.start(NIBBLE.buy, () => { this.state.gameState = 'PLAYING'; });
+                } else {
+                    this.state.gameState = 'PLAYING';
+                }
+            });
+        };
+        if (!this.state.unlocked.nibbleMet) {
+            this.state.unlocked.nibbleMet = true;
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(NIBBLE.intro, openShop);
         } else {
             openShop();
         }
@@ -821,9 +865,12 @@ export class GameEngine {
     }
 
     // Full occupancy test for autonomous movers (Glitch drifters, wanderers, listing
-    // obstacles, pursuit hazards): everything solid or precious blocks a step.
+    // obstacles, pursuit hazards): everything solid or precious blocks a step. The outer
+    // WALL RING blocks too, so movers stay in the interior (never drift into the wall).
     _moverBlocked(x, y, opts = {}) {
         if (x < 0 || y < 0 || x >= this.canvas.width || y >= this.canvas.height) return true;
+        if (this.state.unlocked.borders
+            && (x < this.ringLeft || x >= this.ringRight || y < this.ringTop || y >= this.ringBottom)) return true;
         if (this._cellBlocked(x, y)) return true;
         if ((this.dataMotes || []).some(m => m.x === x && m.y === y)) return true;
         if (!opts.ignoreGlitches && (this.glitches || []).some(gl => gl.x === x && gl.y === y)) return true;
@@ -910,7 +957,63 @@ export class GameEngine {
     // (bonk / sub-smash death / max-gear breach), or a lethal solid wall. Returns:
     //   { stop: true }                    -> the move-tick must return (blocked / died)
     //   { stop: false, shifted, dx, dy }  -> proceed (shifted=true means a room change happened)
+    // Guard the head against entering the outer WALL RING from the interior. A doorway
+    // (weak point at the cross position) lets the head step into the ring — return false
+    // (proceed), and the off-canvas crossBorder handles the actual crossing next. A solid
+    // wall stops you: return true after a bonk (Heur seal — non-lethal) or a death.
+    _ringGuard(nx, ny) {
+        const g = this.gridSize;
+        let dir, cross;
+        if (nx < this.ringLeft) { dir = 'left'; cross = ny; }
+        else if (nx >= this.ringRight) { dir = 'right'; cross = ny; }
+        else if (ny < this.ringTop) { dir = 'up'; cross = nx; }
+        else { dir = 'down'; cross = nx; }
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const wp = this.worldManager.getWeakPoint(rx, ry, dir);
+        const isDoor = !!wp && cross >= wp.start && cross <= wp.end;
+        // Heur's sealed bay: the ring is a non-lethal bonk except the retreat (entry)
+        // doorway, which you may always step back out through (see crossBorder's seal).
+        if (this.heur) {
+            if (isDoor && dir === this.heur.goal) return false; // retreat: step into the entry doorway
+            if (!this._wallBonking) this.audio.playDenied();
+            this._wallBonking = true;
+            this.gear = 0; this.speed = this.baseSpeed;
+            return true;
+        }
+        if (isDoor) return false; // step into the doorway; crossBorder finishes the crossing
+        // A solid wall (or a special NON-lethal case: the 2-Bit tug-back, Port 0's sealed
+        // aperture, ...). Delegate to crossBorder with the off-canvas coordinates so EVERY
+        // boundary outcome lives in one place — the head doesn't move (we're pre-move), so
+        // a lethal wall dies one cell out, and the non-lethal cases bonk/tug as documented.
+        const ocx = dir === 'left' ? -g : dir === 'right' ? this.canvas.width : nx;
+        const ocy = dir === 'up' ? -g : dir === 'down' ? this.canvas.height : ny;
+        return !!this.crossBorder(ocx, ocy).stop;
+    }
+
     crossBorder(newHeadX, newHeadY) {
+        // HEUR'S SEAL — during the decontamination the room is locked: every wall is a
+        // non-lethal bonk EXCEPT the entry (goal) doorway, which you may always retreat
+        // through. The far door opens only on the win.
+        if (this.heur) {
+            let dir = '';
+            if (newHeadX < 0) dir = 'left';
+            else if (newHeadX >= this.canvas.width) dir = 'right';
+            else if (newHeadY < 0) dir = 'up';
+            else if (newHeadY >= this.canvas.height) dir = 'down';
+            if (dir === this.heur.goal) {
+                // RETREAT the way you came — the fight ends UNWON (no restart, no penalty),
+                // and you leave through the (already-open) entry door. Re-entering the bay
+                // restarts the decontamination fresh.
+                this.heur = null;
+                // fall through to the normal crossing below (the entry door is broken).
+            } else {
+                if (!this._wallBonking) this.audio.playDenied();
+                this._wallBonking = true;
+                this.gear = 0;
+                this.speed = this.baseSpeed;
+                return { stop: true };
+            }
+        }
         // 2-Bit isn't dropped off yet -> he tugs you back; nothing dies.
         if (this.state.unlocked.tailRider && this.npcs.find(n => n.id === 'bite')) {
             const complaints = TWO_BIT.leaveComplaints;
@@ -1103,6 +1206,15 @@ export class GameEngine {
         for (let i = 0; i < this.glitches.length; i++) {
             const g = this.glitches[i];
             if (this.snake.head.x === g.x && this.snake.head.y === g.y) {
+                // The finale's corrupted cell is INDESTRUCTIBLE and IMMOVABLE while the
+                // fight is live — the funnel's one lever can never be shoved OR eaten by
+                // accident (checked before the shove, or a Shunt could push it off).
+                const inLiveFinale = this.worldManager.currentRoomX === 5 && this.worldManager.currentRoomY === -5
+                    && !this.state.unlocked.finaleDone;
+                if (inLiveFinale) {
+                    this.audio.playDenied();
+                    break;
+                }
                 if (this.state.upgrades.corruptHandler) {
                     const d = this.input.direction;
                     const px = g.x + d.x, py = g.y + d.y;
@@ -1113,17 +1225,19 @@ export class GameEngine {
                         break;
                     }
                 }
-                // The finale's corrupted cell is INDESTRUCTIBLE while the fight is live —
-                // corruption this dense doesn't yield to a bite (or a blocked shove). A
-                // harmless bonk; the funnel's one lever can never be eaten by accident.
-                if (this.worldManager.currentRoomX === 5 && this.worldManager.currentRoomY === -5
-                    && !this.state.unlocked.finaleDone) {
-                    this.audio.playDenied();
+                // Nibble's SCALE MODS: the cursed plating eats the FIRST Glitch bite in
+                // each room for free (then it's hungry again). One free absorb per room.
+                if (this.state.upgrades.glitchWard && !this._wardUsedThisRoom) {
+                    this._wardUsedThisRoom = true;
+                    this.audio.playCorruptHit(); // the plating takes the bite in your stead
+                    this.glitches.splice(i, 1);
                     break;
                 }
                 const damage = this.state.upgrades.reinforcedSegments ? 1 : 3;
+                const shed = []; // cells the corruption tears off (for Salvage Claws)
                 for (let d = 0; d < damage; d++) {
                     if (this.snake.body.length > 1) {
+                        shed.push({ ...this.snake.body[this.snake.body.length - 1] });
                         this.snake.shrink(this.hasBiteSegment); // never eat 2-Bit's protected segment
                     } else {
                         // Drained to nothing: consume the killer FIRST so die()'s saveRoom
@@ -1137,6 +1251,7 @@ export class GameEngine {
                 this.refreshScore();  // HUD must reflect the drain now, not at the next apple
                 this.changeGear(0);   // re-clamp gear to the lowered score's cap (no ghost max speed)
                 this.audio.playCorruptHit(); // corruption bites in — not a death
+                this.dropSalvage(shed); // Nibble's Salvage Claws: spilled mass becomes re-collectible Data
                 this.glitches.splice(i, 1);
                 break;
             }
@@ -1157,8 +1272,6 @@ export class GameEngine {
         // hazards, no growth) — quantized to the same move clock as the rest of the world.
         if (this.state.gameState === 'ENCORE') { this.updateEncore(dt); return; }
 
-        // Heur's Purge Cycle — the Body-Breakout — is its own modal move-tick too.
-        if (this.state.gameState === 'PURGE') { this.updatePurge(dt); return; }
 
         if (this.state.gameState === 'DEAD') {
             return;
@@ -1180,105 +1293,129 @@ export class GameEngine {
         this.worldManager.tickReveals(dt); // fade out expiring Scanner reveals
 
         this.moveTimer += dt;
-        
+
         if (this.moveTimer >= this.speed) {
             this.moveTimer = 0;
             this._tick++;
-
-            this.updateGate();
-            this.updateDenny();
-            this.updateHush();          // the feedback-suppressor's turn-locked pursuit (its room only)
-            this.updateWorldMotion();   // Motion Carried: Glitches drift, villagers wiggle, furniture lists
-            this.updateDenny2();        // the Fall-Through — lagged DENIED stamps on your trail
-            this.updateGate3();         // the Override — one permission rewrite at a time
-            this.updateGateFinal();     // Port 0 — the rigidity funnel
-
-            this.input.updateDirection();
-
-            if (this.input.direction.x !== 0 || this.input.direction.y !== 0) {
-                
-                let shifted = false;
-                let dx = 0, dy = 0;
-                const newHeadX = this.snake.head.x + this.input.direction.x;
-                const newHeadY = this.snake.head.y + this.input.direction.y;
-                
-                if (this.state.unlocked.borders
-                    && (newHeadX < 0 || newHeadX >= this.canvas.width || newHeadY < 0 || newHeadY >= this.canvas.height)) {
-                    // Crossing a room boundary: tug-back / doorway / wall-smash / lethal wall.
-                    const r = this.crossBorder(newHeadX, newHeadY);
-                    if (r.stop) return;
-                    shifted = r.shifted; dx = r.dx; dy = r.dy;
-                }
-                
-                const alive = this.snake.move(
-                    this.input.direction,
-                    this.canvas.width,
-                    this.canvas.height,
-                    this.state.unlocked.borders && !shifted
-                );
-                
-                if (!alive) {
-                    this.die('border');
-                    return;
-                }
-                this._wallBonking = false; // the snake advanced; reset bonk throttle
-
-                if (shifted) {
-                    // Just crossed into a new room. Line the trailing body up off-screen
-                    // BEHIND the head's entry (translate it by the room dimension we came
-                    // through) so it isn't a phantom, collision-real chunk sitting on the
-                    // far side; drop the tail to keep length stable; then STOP — collisions
-                    // resolve next tick against the room you're now standing in, not against
-                    // this fresh room's entities mid-transition.
-                    const w = this.canvas.width, h = this.canvas.height;
-                    for (let i = 1; i < this.snake.body.length; i++) {
-                        this.snake.body[i].x -= dx * w;
-                        this.snake.body[i].y -= dy * h;
-                    }
-                    this.snake.shrink(this.hasBiteSegment);
-                    return;
-                }
-
-                if (this.obstacles) {
-                    for (const obs of this.obstacles) {
-                        if (this.snake.head.x === obs.x && this.snake.head.y === obs.y) {
-                            this.die('obstacle');
-                            return;
-                        }
-                    }
-                }
-
-                // Denny's lagged DENIED stamps harden your own trail behind you — head
-                // contact is an obstacle-death (only doubling back can hit one).
-                if (this.stamps.length) {
-                    for (const s of this.stamps) {
-                        if (this.snake.head.x === s.x && this.snake.head.y === s.y) {
-                            this.die('obstacle');
-                            return;
-                        }
-                    }
-                }
-
-                // Diegetic ambient audio: the system's own signals bleeding into your
-                // senses as you move through it (corruption proximity, wall friction).
-                this.playAmbientAudio();
-                this.updateCoilProximity(); // the world holds its breath near the Kernel's coil
-                this.detectScannerSweep(); // Topology Scanner: sweeping a wall reveals hidden doors
-
-                if (this.collectData()) return; // apple / spare-data motes + tail handling
-                
-                if (this.hitGlitch()) return; // corruption drain (may kill)
-                
-                // Persistent NPC collisions — dispatched via the per-character registry
-                // (this.npcHandlers / handleNpcCollisions). A bump resolves and stops the
-                // tick; talking is length-neutral, so nothing shrinks again here.
-                if (this.handleNpcCollisions()) return;
-
-                if (this.snake.checkSelfCollision()) { this.die('self'); return; }
-            }
+            // The move-tick body is a helper so its many early exits (die, room-cross,
+            // obstacle, apple, glitch, NPC bump, wall-bonk) return from the HELPER, not
+            // update() — that lets Heur's ping advance every tick unconditionally below,
+            // even on a tick where you bonked a sealed wall or ate the room's apple.
+            const ended = this._moveTick();
+            // Heur's ping advances every move-tick during the fight — whether or not you
+            // moved (or bonked) — so the ball keeps pressure while you reposition. Skip
+            // only if the tick ended the run (a death nulls this.heur anyway).
+            if (this.heur && !ended) this._heurTick();
         }
     }
-    
+
+    // One move-tick's world + snake logic. Returns true if the tick ENDED the run/tick
+    // hard (a death) so the caller can skip trailing per-tick work. Its internal returns
+    // simply stop this tick (the sim resumes next frame).
+    _moveTick() {
+        this.updateGate();
+        this.updateDenny();
+        this.updateHush();          // the feedback-suppressor's turn-locked pursuit (its room only)
+        this.updateWorldMotion();   // Motion Carried: Glitches drift, villagers wiggle, furniture lists
+        this.updateDenny2();        // the Fall-Through — lagged DENIED stamps on your trail
+        this.updateGate3();         // the Override — one permission rewrite at a time
+        this.updateGateFinal();     // Port 0 — the rigidity funnel
+
+        this.input.updateDirection();
+
+        if (this.input.direction.x !== 0 || this.input.direction.y !== 0) {
+
+            let shifted = false;
+            let dx = 0, dy = 0;
+            const newHeadX = this.snake.head.x + this.input.direction.x;
+            const newHeadY = this.snake.head.y + this.input.direction.y;
+
+            if (this.state.unlocked.borders) {
+                const offCanvas = newHeadX < 0 || newHeadX >= this.canvas.width || newHeadY < 0 || newHeadY >= this.canvas.height;
+                if (offCanvas) {
+                    // Passing OUT of a doorway (the head is already in a door ring cell):
+                    // the room-boundary logic — doorway / wall-smash / lethal wall / seal.
+                    const r = this.crossBorder(newHeadX, newHeadY);
+                    if (r.stop) return false;
+                    shifted = r.shifted; dx = r.dx; dy = r.dy;
+                } else if (newHeadX < this.ringLeft || newHeadX >= this.ringRight
+                        || newHeadY < this.ringTop || newHeadY >= this.ringBottom) {
+                    // Entering the outer WALL RING from the interior: a solid wall stops you
+                    // one cell out (die/bonk, head doesn't move); a doorway lets you step
+                    // into it (then the off-canvas crossBorder above handles the crossing).
+                    if (this._ringGuard(newHeadX, newHeadY)) return false;
+                }
+            }
+
+            const alive = this.snake.move(
+                this.input.direction,
+                this.canvas.width,
+                this.canvas.height,
+                this.state.unlocked.borders && !shifted
+            );
+
+            if (!alive) {
+                this.die('border');
+                return true;
+            }
+            this._wallBonking = false; // the snake advanced; reset bonk throttle
+
+            if (shifted) {
+                // Just crossed into a new room. Line the trailing body up off-screen
+                // BEHIND the head's entry (translate it by the room dimension we came
+                // through) so it isn't a phantom, collision-real chunk sitting on the
+                // far side; drop the tail to keep length stable; then STOP — collisions
+                // resolve next tick against the room you're now standing in, not against
+                // this fresh room's entities mid-transition.
+                const w = this.canvas.width, h = this.canvas.height;
+                for (let i = 1; i < this.snake.body.length; i++) {
+                    this.snake.body[i].x -= dx * w;
+                    this.snake.body[i].y -= dy * h;
+                }
+                this.snake.shrink(this.hasBiteSegment);
+                return false;
+            }
+
+            if (this.obstacles) {
+                for (const obs of this.obstacles) {
+                    if (this.snake.head.x === obs.x && this.snake.head.y === obs.y) {
+                        this.die('obstacle');
+                        return true;
+                    }
+                }
+            }
+
+            // Denny's lagged DENIED stamps harden your own trail behind you — head
+            // contact is an obstacle-death (only doubling back can hit one).
+            if (this.stamps.length) {
+                for (const s of this.stamps) {
+                    if (this.snake.head.x === s.x && this.snake.head.y === s.y) {
+                        this.die('obstacle');
+                        return true;
+                    }
+                }
+            }
+
+            // Diegetic ambient audio: the system's own signals bleeding into your
+            // senses as you move through it (corruption proximity, wall friction).
+            this.playAmbientAudio();
+            this.updateCoilProximity(); // the world holds its breath near the Kernel's coil
+            this.detectScannerSweep(); // Topology Scanner: sweeping a wall reveals hidden doors
+
+            if (this.collectData()) return false; // apple / spare-data motes + tail handling
+
+            if (this.hitGlitch()) return true; // corruption drain (may kill)
+
+            // Persistent NPC collisions — dispatched via the per-character registry
+            // (this.npcHandlers / handleNpcCollisions). A bump resolves and stops the
+            // tick; talking is length-neutral, so nothing shrinks again here.
+            if (this.handleNpcCollisions()) return false;
+
+            if (this.snake.checkSelfCollision()) { this.die('self'); return true; }
+        }
+        return false;
+    }
+
     // The Crumple Buffer survival upgrade. Level 0 = none -> a hit KILLS you (respawn to
     // the beginning). Level >= 1 -> you survive by shedding, higher tiers shedding LESS.
     // Tier 1 (shed 10) is live; the 6/3 tiers are wired for a future upgrade level.
@@ -1303,7 +1440,8 @@ export class GameEngine {
         // Shed `shedAmount`, in BOTH length and Data. Burst the shed segments' cells.
         const total = this.snake.body.length;
         const shed = Math.min(this.shedAmount, total - 1);
-        if (shed > 0) this.spawnBurst(this.snake.body.slice(total - shed));
+        const shedCells = shed > 0 ? this.snake.body.slice(total - shed) : [];
+        if (shed > 0) this.spawnBurst(shedCells);
         this.state.score = Math.max(0, this.state.score - this.shedAmount);
         this.refreshScore();
 
@@ -1314,6 +1452,11 @@ export class GameEngine {
         const head = { ...this.snake.head };
         this.snake.body = [head];
         this.pendingUnfold = Math.max(0, keep - 1);
+
+        // Salvage Claws: NOW that the body has folded to [head], the shed cells are
+        // vacated — drop a little of the crumpled mass there as re-collectible Data
+        // (dropSalvage skips any cell still occupied, which is why it must run post-fold).
+        this.dropSalvage(shedCells, 3);
 
         // BOUNCE off: reverse the travel direction (safe — length 1 now) and drop to
         // minimum speed. Slow gear only exists with the gear system (tailRider); before
@@ -1938,29 +2081,34 @@ export class GameEngine {
         this._hushClamp(npc);
     }
 
-    // --- Nibble's black market ({11,-4}) & the Glitch Shunt -----------------------------
-    // House rules apply (the 2-Bit consent GAG): the only way through a dialog is
-    // SPACE, so finishing her pitch IS buying it. No separate confirm. Data = segments:
-    // the 20-Data price comes off your body.
+    // --- Nibble's black market ({11,-4}) --------------------------------------------
+    // A real stall like 2-Bit's — her lineup lives in ShopManager.vendors.nibble.
     npcNibble(npc) {
-        this.state.gameState = 'DIALOG';
-        const done = () => { this.state.gameState = 'PLAYING'; };
-        const u = this.state.unlocked;
-        if (!u.nibbleMet) {
-            u.nibbleMet = true;
-            this.dialogManager.start(NIBBLE.intro, done);
-            return;
+        this.openNibbleShop();
+    }
+
+    // Nibble's SALVAGE CLAWS: half (capped) of the mass corruption tears off you drops
+    // as re-collectible Data motes at its shed cells — scoop your own spill back up
+    // before you leave the room (motes clear on room change). Data = segments holds:
+    // re-eating a mote regrows +1 and scores +1 (collectData handles motes anywhere).
+    dropSalvage(cells, cap = Infinity) {
+        if (!this.state.upgrades.salvage || !cells || !cells.length) return;
+        const want = Math.min(cap, Math.ceil(cells.length / 2));
+        const occ = new Set();
+        for (const o of [...this.snake.body, this.apple, ...(this.glitches || []),
+                         ...(this.obstacles || []), ...this.npcs, ...(this.dataMotes || [])]) {
+            if (o) occ.add(`${o.x},${o.y}`);
         }
-        if (this.state.upgrades.corruptHandler) { this.dialogManager.start(NIBBLE.idle, done); return; }
-        if (this.state.score < 20) { this.dialogManager.start(NIBBLE.tooPoor, done); return; }
-        this.dialogManager.start(NIBBLE.pitch, () => {
-            this.state.score -= 20;
-            this.spendData(20);
-            this.state.upgrades.corruptHandler = true;
-            this.audio.playBeep();
-            this.state.gameState = 'DIALOG';
-            this.dialogManager.start(NIBBLE.buy, done);
-        });
+        let dropped = 0;
+        for (const c of cells) {
+            if (dropped >= want) break;
+            if (c.x < 0 || c.y < 0 || c.x >= this.canvas.width || c.y >= this.canvas.height) continue;
+            const key = `${c.x},${c.y}`;
+            if (occ.has(key)) continue;
+            occ.add(key);
+            this.dataMotes.push({ x: c.x, y: c.y, salvage: true });
+            dropped++;
+        }
     }
 
     // A growth cache: one bite, +4 Data and +4 length (coupled) — the Wilds' reason
@@ -1974,204 +2122,223 @@ export class GameEngine {
         this.refreshScore();
     }
 
-    // --- HEUR'S PURGE CYCLE (the Body-Breakout) -----------------------------------------
-    // A modal 'PURGE' state, quantized to its own move-tick like the Encore. Your whole
-    // body flattens into a PADDLE (width = your length, hard 3-cell minimum) sliding in
-    // a 3-row band; Heur's scan-ping ricochets between its signature database (the
-    // brick wall — reusing the weak-wall grammar) and you. The paddle's interior is a
-    // safe deflector; the LEFT END is your flagged read-head — a ping that reads it
-    // docks 2 segments + 2 Data. Break every signature (Heur's own is last) to leave.
-    // Failure is non-lethal: 5 clearances, then the cycle reseals and restarts you at
-    // entry length, banking any brick-Data actually eaten. NO self-bite anywhere.
+    // A found Wilds UI/diagnostic module (gear meter, sector readout, map-pins tool,
+    // extra pin shapes). Grants its effect, records the room so it never respawns, and
+    // reads out the pickup line. Mass-neutral (picking up a tool never docks length).
+    npcUiModule(npc) {
+        const u = this.state.unlocked;
+        const key = npc.roomKey || `${this.worldManager.currentRoomX},${this.worldManager.currentRoomY}`;
+        // A duplicate pin-shape pickup (shouldn't happen — suppressed by modulesFound —
+        // but guard anyway) shouldn't over-count.
+        if ((u.modulesFound || []).includes(key)) { this.npcs = this.npcs.filter(n => n !== npc); return; }
+        let lines = UI_MODULES.gearMeter;
+        if (npc.grant === 'gearMeter') { u.gearMeter = true; lines = UI_MODULES.gearMeter; }
+        else if (npc.grant === 'coordReadout') { u.coordReadout = true; lines = UI_MODULES.coordReadout; }
+        else if (npc.grant === 'mapPins') { u.mapPinsTool = true; u.pinShapes = (u.pinShapes || 0) + 1; lines = UI_MODULES.mapPins; }
+        else if (npc.grant === 'pinShape') { u.pinShapes = (u.pinShapes || 0) + 1; lines = UI_MODULES.pinShape; }
+        if (!u.modulesFound) u.modulesFound = [];
+        u.modulesFound.push(key);
+        this.npcs = this.npcs.filter(n => n !== npc);
+        this.audio.playMaterialize();
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+    }
 
-    startPurge() {
+    // Map Pins: cycle the CURRENT room's annotation through {none, shape0..shapeN-1}.
+    // Called from the Pause menu ([M]) once the annotation tool is found. Persisted.
+    cycleMapPin() {
+        if (!this.state.unlocked.mapPinsTool) return;
+        const shapes = Math.max(1, this.state.unlocked.pinShapes || 1);
+        const key = `${this.worldManager.currentRoomX},${this.worldManager.currentRoomY}`;
+        const cur = this.mapPins[key];
+        // none -> 0 -> 1 -> ... -> shapes-1 -> none
+        if (cur === undefined) this.mapPins[key] = 0;
+        else if (cur + 1 >= shapes) delete this.mapPins[key];
+        else this.mapPins[key] = cur + 1;
+        this.audio.playBeep();
+    }
+
+    // --- HEUR'S DECONTAMINATION: BREAKOUT WITH YOUR BODY (in-room, dedicated Bay {5,-1}) ---
+    // NOT a modal minigame — you play as your normal snake in the SEALED bay. Heur's
+    // scan-ping (the ball) ricochets off its signature-database BRICKS, YOUR BODY (a safe
+    // deflector), and EVERY wall — it is fully CONTAINED (no pass-through, no clearances,
+    // no reseal, NO fail/restart). Deflect it into every brick (Heur's own signature is
+    // unbreakable until last) to open the FAR DOOR (the way you were heading) and progress;
+    // if you can't, you simply don't progress and may RETREAT back out the way you came
+    // (crossBorder's seal lets the entry door through, ending the fight with no penalty).
+    // The ping reading your HEAD docks up to 2 segments + 2 Data (coupled), floored — the
+    // only stakes, always non-lethal.
+
+    startHeurFight(entryDir) {
         const g = this.gridSize;
         const cols = Math.floor(this.canvas.width / g), rows = Math.floor(this.canvas.height / g);
         this.state.unlocked.bayRoom = { x: this.worldManager.currentRoomX, y: this.worldManager.currentRoomY };
-        // 2-Bit's ridden segment is HIM, not your Data — it never enters the purge's
-        // mass accounting (and so can never be docked by a head-read). pendingUnfold
-        // is left alone: folded mass is still yours; it rides `virtual` through the
-        // cycle and _purgeWin/_purgeReseal reconstitute it (Data = segments holds).
-        const bite = this.hasBiteSegment ? 1 : 0;
-        const entryLen = this.snake.body.length + this.pendingUnfold - bite;
-        const bricks = [];
-        for (let c = 2; c + 1 <= cols - 3; c += 2) bricks.push({ c, w: 2, r: 2, hp: 2, heur: false });
-        const midC = Math.floor(cols / 2);
-        bricks.push({ c: midC - 1, w: 2, r: 1, hp: 1, heur: true });
-        this._purgeReturn = { x: this.snake.head.x, y: this.snake.head.y };
-        this.speed = 120;
+        // Decontamination: the bay is swept clean of the room's own hazards so the arena
+        // is just you, the ping, and Heur's database.
+        this.glitches = [];
+        this.obstacles = [];
+        // Orientation: you were heading `entryDir`; the FAR wall (bricks + the far door
+        // that opens on a win) is that way, and `goal` is the ENTRY wall you came in
+        // through — the one door you may always retreat back out of (see crossBorder).
+        const far = entryDir || 'right';
+        const goal = { up: 'down', down: 'up', left: 'right', right: 'left' }[far];
+        this.speed = this.baseSpeed;
         this.moveTimer = 0;
-        this.input.reset();
-        this.purge = {
-            cols, rows, bandTop: rows - 5,
-            paddle: { c: Math.max(1, midC - 2), row: 1 },
-            virtual: entryLen, entryScore: this.state.score, motesEaten: 0, bite,
-            ping: { c: midC, r: rows - 8, dc: 1, dr: -1, speed: 1 },
-            bricks, brickHits: 0, tick: 0,
-            clearances: 5, motes: [], msg: '', warnHead: false,
+        this.gear = 0;
+        this.heur = {
+            cols, rows, far, goal,
+            bricks: this._heurBuildBricks(cols, rows, far),
+            ping: { c: 0, r: 0, dc: 0, dr: 0 },
+            brickHits: 0, tick: 0, warnHead: false,
         };
-        this.state.gameState = 'PURGE';
+        this._heurLaunchPing();
+        // Keep the player in play (PLAYING); the seal (crossBorder) + the ping run in the
+        // normal move-tick. Speak the intercept if it hasn't played yet (called from the
+        // intercept dialog's onComplete, so it already has).
     }
 
-    // The paddle's drawn/effective width: your length, clamped to [3, room-4].
-    get paddleLen() {
-        if (!this.purge) return 3;
-        return Math.max(3, Math.min(this.purge.cols - 4, this.purge.virtual));
+    // Build Heur's signature database: a sparse brick band a couple cells in from the far
+    // wall, spanning the cross-axis, plus ONE Heur-signature brick at the band's centre
+    // (unbreakable until every other entry is gone). Bricks are individual cells
+    // {c,r,hp,heur} — orientation-agnostic.
+    _heurBuildBricks(cols, rows, far) {
+        const bricks = [];
+        const horizontal = (far === 'left' || far === 'right');
+        // the two "depth" lines just inside the far wall
+        const depth = far === 'right' ? [cols - 3, cols - 4]
+                    : far === 'left'  ? [2, 3]
+                    : far === 'down'  ? [rows - 3, rows - 4]
+                    :                   [2, 3]; // up
+        const crossLo = 2, crossHi = (horizontal ? rows : cols) - 3;
+        const crossMid = Math.floor((horizontal ? rows : cols) / 2);
+        for (const d of depth) {
+            for (let x = crossLo; x <= crossHi; x += 2) {
+                const c = horizontal ? d : x;
+                const r = horizontal ? x : d;
+                bricks.push({ c, r, hp: 1, heur: false });
+            }
+        }
+        // Heur's own signature — front-and-centre of the band.
+        const frontDepth = depth[0];
+        const hc = horizontal ? frontDepth : crossMid;
+        const hr = horizontal ? crossMid : frontDepth;
+        // ensure it isn't a duplicate of a normal brick cell
+        const existing = bricks.find(b => b.c === hc && b.r === hr);
+        if (existing) existing.heur = true;
+        else bricks.push({ c: hc, r: hr, hp: 1, heur: true });
+        return bricks;
     }
 
-    updatePurge(dt) {
-        if (!this.purge) { this.state.gameState = 'PLAYING'; return; }
-        this.moveTimer += dt;
-        if (this.moveTimer < this.speed) return;
-        this.moveTimer = 0;
-        const p = this.purge;
-        p.tick++;
-
-        // Paddle input rides the steering keys in PADDLE MODE (InputHandler): hold a
-        // horizontal to slide — reversals included — tap up/down to switch band rows
-        // (the aim).
-        const prevRow = p.paddle.row;
-        this.input.updateDirection();
-        const d = this.input.direction;
-        if (d.x > 0) p.paddle.c = Math.min(p.cols - this.paddleLen, p.paddle.c + 1);
-        else if (d.x < 0) p.paddle.c = Math.max(0, p.paddle.c - 1);
-        if (d.y < 0) p.paddle.row = Math.max(0, p.paddle.row - 1);
-        else if (d.y > 0) p.paddle.row = Math.min(2, p.paddle.row + 1);
-
-        // Dropped brick-Data drifts floorward every other tick; any paddle cell catches.
-        // The swap case counts too: paddle stepping UP through a mote drifting DOWN on
-        // the same tick (they exchange rows) is a catch, not a pass-through.
-        const padY = p.bandTop + p.paddle.row;
-        const prevPadY = p.bandTop + prevRow;
-        const drifted = p.tick % 2 === 0;
-        if (drifted) for (const m of p.motes) m.r++;
-        for (let i = p.motes.length - 1; i >= 0; i--) {
-            const m = p.motes[i];
-            const inSpan = m.c >= p.paddle.c && m.c < p.paddle.c + this.paddleLen;
-            const swapped = drifted && p.paddle.row < prevRow && m.r === prevPadY;
-            if ((m.r === padY || swapped) && inSpan) {
-                p.motes.splice(i, 1);
-                p.virtual++; p.motesEaten++;
-                // growth can push the paddle past the right wall — keep it in the room
-                p.paddle.c = Math.min(p.paddle.c, Math.max(0, p.cols - this.paddleLen));
-                this.state.addScore(1);
-                this.audio.playBeep();
-                this.refreshScore();
-            } else if (m.r > p.rows - 1) {
-                p.motes.splice(i, 1);
-            }
+    // Launch the ping from just in front of the bricks, heading toward the player (the
+    // goal wall) on a diagonal.
+    _heurLaunchPing() {
+        const h = this.heur;
+        const horizontal = (h.far === 'left' || h.far === 'right');
+        const toGoalC = h.goal === 'left' ? -1 : h.goal === 'right' ? 1 : 0;
+        const toGoalR = h.goal === 'up' ? -1 : h.goal === 'down' ? 1 : 0;
+        if (horizontal) {
+            h.ping.c = h.far === 'right' ? h.cols - 6 : 5;
+            h.ping.r = Math.floor(h.rows / 2);
+            h.ping.dc = toGoalC; h.ping.dr = 1;
+        } else {
+            h.ping.r = h.far === 'down' ? h.rows - 6 : 5;
+            h.ping.c = Math.floor(h.cols / 2);
+            h.ping.dr = toGoalR; h.ping.dc = 1;
         }
-
-        // The scan-ping: 1 cell/tick, deterministically 2 after ~6 breaches or ~40 ticks.
-        if (p.brickHits >= 6 || p.tick >= 40) p.ping.speed = 2;
-        for (let s = 0; s < p.ping.speed; s++) {
-            if (this._purgePingStep()) return; // a reseal or the win consumed this cycle
-        }
-        // The read-head warning (2 ticks out, descending): redundant-coded — the ping
-        // is already discrete + notched; this adds the outline flash on the head cell.
-        p.warnHead = p.ping.dr > 0
-            && Math.max(Math.abs(p.ping.c - p.paddle.c), Math.abs(p.ping.r - padY)) <= 2;
     }
 
-    _purgePingStep() {
-        const p = this.purge;
-        const padY = p.bandTop + p.paddle.row;
-        let nc = p.ping.c + p.ping.dc, nr = p.ping.r + p.ping.dr;
-        if (nc < 0 || nc > p.cols - 1) { p.ping.dc = -p.ping.dc; nc = p.ping.c + p.ping.dc; }
-        if (nr < 0) { p.ping.dr = 1; nr = p.ping.r + 1; }
-
-        const hit = p.bricks.find(b => b.r === nr && nc >= b.c && nc < b.c + b.w);
-        if (hit) {
-            const others = p.bricks.some(b => !b.heur);
-            if (hit.heur && others) {
-                // Heur's own signature reads clean — unbreachable until every other
-                // entry is gone. ("The last infected object between you and the door
-                // is the thing that came to clean it.")
-                p.ping.dr = -p.ping.dr;
-                // Ceiling-corridor escape: at row 0 an upward reflection would be
-                // undone by the ceiling next substep — the ping would freeze forever
-                // between the ceiling and the clean signature. Kick it sideways
-                // (deterministic) so it always leaves the corner.
-                if (p.ping.r === 0 && p.ping.dr < 0) {
-                    p.ping.dc = (p.ping.dc === 0 ? -1 : -p.ping.dc);
-                }
-                return false;
-            }
-            hit.hp--;
-            p.brickHits++;
-            this.audio.playCrack(); // the wall grammar's crack — a database entry giving way
-            if (hit.hp <= 0) {
-                p.bricks = p.bricks.filter(b => b !== hit);
-                // Every 2nd breach drops a Data mote — deterministic, no RNG.
-                if (!hit.heur && p.brickHits % 2 === 0) p.motes.push({ c: nc, r: nr + 1 });
-                if (!p.bricks.length) { this._purgeWin(); return true; }
-            }
-            p.ping.dr = -p.ping.dr; // a true reflection: down off a from-below hit, up off a from-above hit
-            return false;
+    // Advance the ping each move-tick (1 cell, 2 after it's warmed up). Runs during
+    // PLAYING while a Heur fight is active — independent of whether the snake moved.
+    _heurTick() {
+        const h = this.heur;
+        if (!h) return;
+        h.tick++;
+        const steps = (h.brickHits >= 6 || h.tick >= 40) ? 2 : 1;
+        for (let s = 0; s < steps; s++) {
+            if (this._heurPingStep()) return; // the win consumed the fight
         }
+        // read-head proximity warning (deaf-legible outline flash on the head cell)
+        const g = this.gridSize;
+        const hc = this.snake.head.x / g, hr = this.snake.head.y / g;
+        h.warnHead = Math.max(Math.abs(h.ping.c - hc), Math.abs(h.ping.r - hr)) <= 2;
+    }
 
-        if (nr === padY && nc >= p.paddle.c && nc < p.paddle.c + this.paddleLen && p.ping.dr > 0) {
-            if (nc === p.paddle.c) {
-                // THE READ-HEAD: the ping reads you — 2 segments, 2 Data (coupled).
-                p.virtual = Math.max(1, p.virtual - 2);
-                this.state.score = Math.max(0, this.state.score - 2);
-                this.refreshScore();
-                this.audio.playCorruptHit();
-            } else {
-                this.audio.playDoot(); // a clean block off the shield
-            }
-            p.ping.dr = -1;
-            // Three band rows = three discrete rebound angles (the aim):
-            // top keeps the heading, middle sends it straight up, bottom reverses it.
-            if (p.paddle.row === 1) p.ping.dc = 0;
-            else if (p.paddle.row === 2) p.ping.dc = p.ping.dc === 0 ? 1 : -p.ping.dc;
-            p.ping.c = nc; p.ping.r = nr - 1;
-            return false;
-        }
+    // Classify a cell for the ping: null = free, or a reflector {wall} | {brick} | {head}
+    // | {body}. The ping is CONTAINED — every wall (all four) reflects it. It cannot leave
+    // the sealed bay; only breaking the whole database opens the far door. So there is no
+    // "lose" — if you can't break through you simply don't progress, and can retreat the
+    // way you came (see crossBorder's Heur seal).
+    _heurClassify(c, r) {
+        const h = this.heur, g = this.gridSize;
+        if (c < 0 || c >= h.cols || r < 0 || r >= h.rows) return { wall: true };
+        const brick = h.bricks.find(b => b.c === c && b.r === r);
+        // a body segment SHIELDS a brick on the same cell (deflect off you, no break)
+        const px = c * g, py = r * g;
+        if (this.snake.head.x === px && this.snake.head.y === py) return { head: true };
+        if (this.snake.body.some((s, i) => i > 0 && s.x === px && s.y === py)) return { body: true };
+        if (brick) return { brick };
+        return null;
+    }
 
-        if (nr > p.rows - 1) {
-            // Past the band: a clearance is spent. At zero, Heur reseals and restarts you.
-            p.clearances--;
-            this.audio.playDenied();
-            if (p.clearances <= 0) { this._purgeReseal(); return true; }
-            p.msg = 'CLEARANCE LOST — ' + p.clearances + ' REMAIN';
-            p.ping.c = Math.floor(p.cols / 2); p.ping.r = p.bandTop - 3; p.ping.dc = 1; p.ping.dr = -1;
-            return false;
-        }
+    _heurPingStep() {
+        const h = this.heur;
+        const c = h.ping.c, r = h.ping.r, dc = h.ping.dc, dr = h.ping.dr;
+        const hCell = dc !== 0 ? this._heurClassify(c + dc, r) : null;
+        const vCell = dr !== 0 ? this._heurClassify(c, r + dr) : null;
+        const dCell = this._heurClassify(c + dc, r + dr);
 
-        p.ping.c = nc; p.ping.r = nr;
+        // Reflect off any solid neighbour (wall / brick / body), applying its effect.
+        let ndc = dc, ndr = dr, reflected = false;
+        if (hCell) { ndc = -dc; this._heurApplyHit(hCell); reflected = true; }
+        if (vCell) { ndr = -dr; this._heurApplyHit(vCell); reflected = true; }
+        if (!hCell && !vCell && dCell) { ndc = -dc; ndr = -dr; this._heurApplyHit(dCell); reflected = true; }
+        // a win may have fired inside _heurApplyHit
+        if (!this.heur) return true;
+        h.ping.dc = ndc; h.ping.dr = ndr;
+        h.ping.c = c + ndc; h.ping.r = r + ndr; // reflected dir points away from the block — safe to advance
         return false;
     }
 
-    // Reseal: non-lethal. Restart in place at entry length, banking eaten brick-Data as
-    // real length (Data = segments: score and body move together — folded mass included).
-    _purgeReseal() {
-        const p = this.purge;
-        this.state.score = Math.max(0, p.entryScore + p.motesEaten);
-        this.growSnake(p.motesEaten);
-        this.refreshScore();
-        this.purge = null;
-        this.state.gameState = 'DIALOG';
-        this.dialogManager.start(HEUR.reseal, () => this.startPurge());
+    _heurApplyHit(cell) {
+        const h = this.heur;
+        if (cell.brick) {
+            const b = cell.brick;
+            const othersExist = h.bricks.some(x => !x.heur);
+            if (b.heur && othersExist) { this.audio.playDoot(); return; } // locked until last
+            h.bricks = h.bricks.filter(x => x !== b);
+            h.brickHits++;
+            this.audio.playCrack();
+            if (!h.bricks.length) { this._heurWin(); }
+            return;
+        }
+        if (cell.head) {
+            // the ping reads your flagged read-head: 2 segments + 2 Data (coupled), floored.
+            const floor = this.hasBiteSegment ? 2 : 1;
+            let docked = 0;
+            for (let i = 0; i < 2 && this.snake.body.length > floor; i++) { this.snake.shrink(this.hasBiteSegment); docked++; }
+            if (docked) {
+                this.state.score = Math.max(0, this.state.score - docked);
+                this.refreshScore();
+                this.changeGear(0);
+            }
+            this.audio.playCorruptHit();
+            return;
+        }
+        if (cell.body) { this.audio.playDoot(); return; } // clean deflect off your body
+        // wall: a soft tick (no effect)
     }
 
-    _purgeWin() {
-        const p = this.purge;
+    _heurWin() {
         const u = this.state.unlocked;
-        const finalLen = Math.max(1, p.virtual) + p.bite; // 2-Bit's segment comes back untouched
-        // Re-materialize at the entry cell, FOLDED (the Crumple fold, reused) — the body
-        // extrudes one block per move as you drive off. No overlap, no self-collision.
-        this.snake.body = [{ x: this._purgeReturn.x, y: this._purgeReturn.y }];
-        this.pendingUnfold = finalLen - 1;
-        // Drive off from a standstill: gear and speed re-derived as a coherent pair
-        // (the purge can change your Data, so re-clamp against the new cap too).
-        this.gear = 0;
-        this.changeGear(0);
-        this.input.reset();
-        this.purge = null;
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const far = this.heur.far;
+        this.heur = null; // seal lifts
         u.purgeComplete = true;
-        // The Architect escalates: the rematch posts up the north spine arm (their
-        // cached rooms regenerate with the enforcers deployed).
+        // Open the FAR DOOR — the wall you were heading toward — as a real, breached
+        // doorway you walk straight out of.
+        this.worldManager.openScriptedDoor(rx, ry, far);
+        // The Architect escalates: the north-spine rematch posts arm (their cached rooms
+        // regenerate with the enforcers deployed).
         for (const key of ['5,-2', '5,-3']) delete this.worldManager.rooms[key];
         this.state.gameState = 'DIALOG';
         this.dialogManager.start(HEUR.win, () => {
@@ -2180,15 +2347,13 @@ export class GameEngine {
         });
     }
 
-    getPurgeRenderState() {
-        const p = this.purge;
+    getHeurRenderState() {
+        const h = this.heur;
         return {
-            cols: p.cols, rows: p.rows, bandTop: p.bandTop,
-            paddle: { c: p.paddle.c, row: p.paddle.row, len: this.paddleLen },
-            ping: { c: p.ping.c, r: p.ping.r, dc: p.ping.dc, dr: p.ping.dr },
-            bricks: p.bricks.map(b => ({ c: b.c, w: b.w, r: b.r, hp: b.hp, heur: b.heur })),
-            motes: p.motes.slice(),
-            clearances: p.clearances, msg: p.msg, warnHead: p.warnHead,
+            cols: h.cols, rows: h.rows, far: h.far, goal: h.goal,
+            ping: { c: h.ping.c, r: h.ping.r, dc: h.ping.dc, dr: h.ping.dr },
+            bricks: h.bricks.map(b => ({ c: b.c, r: b.r, heur: b.heur })),
+            bricksLeft: h.bricks.length, warnHead: h.warnHead,
         };
     }
 
@@ -2475,6 +2640,15 @@ export class GameEngine {
         // The reboot beyond flushes volatile memory; only a ROM save carries you across.
         // Committing the save (Pause -> S, in this room) is what breaches the door: see
         // saveGame(). Always satisfiable — she installs Save on the spot if you lack it.
+        // Contaminated (carrying the Shunt, not yet decontaminated): she refuses to file
+        // a dirty copy and points you to Heur's Bay. This is what keeps the finale behind
+        // the mandatory decontamination even if you reached her via the fight-free bypass.
+        if (this.state.upgrades.corruptHandler && !u.purgeComplete && (u.saveFunction || u.pauseMenu)) {
+            u.cacheFound = true;
+            if (u.cacheStage < 3) u.cacheStage = 3;
+            this.dialogManager.start(CACHE_CHECKPOINT.needPurge, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
         if (u.purgeComplete) {
             if (u.checkpointOpen) {
                 u.cacheFound = true;
@@ -2711,6 +2885,7 @@ export class GameEngine {
         this.state.biteTopicsHeard = 0;
         this.state.isSuspended = false;
         this.deathCode = '';
+        this.mapPins = {};
 
         // Fresh, unopened world.
         this.worldManager.rooms = {};
@@ -2731,7 +2906,7 @@ export class GameEngine {
         this.onUnpauseCallback = null; this._guided = new Set(); this._tick = 0;
         this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
         this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
-        this.purge = null; this._coilNear = null; this._diedSinceCheckpoint = false;
+        this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
         this.audio.setDuck(1);
 
         // Back to the cold open: HUD hidden, terminal wiped (re-revealed at 5 Data).
@@ -2762,7 +2937,7 @@ export class GameEngine {
         if (u.purgeComplete) place = 'The Ascent';
         if (u.checkpointOpen) place = 'The Checkpoint';
         if (u.finaleDone) place = 'Act II - 16-bit';
-        const mods = ['dataCompression', 'reinforcedSegments', 'pivot', 'scanner', 'corruptHandler'].filter(k => up[k]).length
+        const mods = ['dataCompression', 'reinforcedSegments', 'pivot', 'scanner', 'corruptHandler', 'salvage', 'glitchWard'].filter(k => up[k]).length
             + (up.crumpleLevel > 0 ? 1 : 0);
         return { place, mods };
     }
@@ -2779,6 +2954,7 @@ export class GameEngine {
             upgrades: { ...this.state.upgrades },
             biteTopicsHeard: this.state.biteTopicsHeard,
             deathCode: this.deathCode,
+            mapPins: { ...this.mapPins }, // Map-Pins annotations (durable)
             carriedModule: this.carriedModule, // a picked-up-but-uninstalled module must survive a load
             world: {
                 brokenWalls: [...this.worldManager.brokenWalls],
@@ -2798,6 +2974,7 @@ export class GameEngine {
         Object.assign(this.state.upgrades, fresh.upgrades, d.upgrades || {});
         this.state.biteTopicsHeard = d.biteTopicsHeard || 0;
         this.deathCode = d.deathCode || '';
+        this.mapPins = d.mapPins ? { ...d.mapPins } : {};
         if (d.world) {
             this.worldManager.brokenWalls = new Set(d.world.brokenWalls || []);
             this.worldManager.wallDamage = d.world.wallDamage || {};
@@ -2821,8 +2998,8 @@ export class GameEngine {
         this.moduleLoad = null; this.bursts = [];
         this.state.isSuspended = false; this.onUnpauseCallback = null; // never load INTO a Gate suspension
         this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
-        this.purge = null; this._coilNear = null; this._diedSinceCheckpoint = false;
-        this._auditionLayer = null;
+        this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
+        this._auditionLayer = null; this._wardUsedThisRoom = false;
         this.audio.setDuck(1);
         // The checkpoint door's state is derived from flags, not stored: reset the ROM
         // seals to baseline, then re-derive — committed = unsealed; once-breached =
@@ -2939,11 +3116,13 @@ export class GameEngine {
         this.speed = this.baseSpeed; // deaths would otherwise respawn you mid-gear)
         this._wallBonking = false;
         // Battle transients die with you: stamps, the stamp trail, Gate's override (and
-        // its gear cap), the coil's held breath.
+        // its gear cap), the coil's held breath, Scale Mods' per-room absorb.
         this.stamps = [];
         this._trailPrev = null;
         this._stampStun = 0;
         this._ovr = null;
+        this._wardUsedThisRoom = false;
+        this.heur = null;
         this._coilNear = null;
         this.audio.setDuck(1);
         if (toCheckpoint) {
@@ -3067,10 +3246,14 @@ export class GameEngine {
         this.state.reduceMotion = this.settings.reduceMotion; // Renderer dampens pulses/blinks
         this.state.options = this.optionsOpen ? { index: this.optionsIndex, settings: this.settings } : null;
         this.state.encore = (this.state.gameState === 'ENCORE' && this.encore) ? this.getEncoreRenderState() : null;
-        this.state.purge = (this.state.gameState === 'PURGE' && this.purge) ? this.getPurgeRenderState() : null;
+        this.state.heur = this.heur ? this.getHeurRenderState() : null;
+        this.state.headCell = { x: this.snake.head.x, y: this.snake.head.y }; // Heur read-head warning outline
         this.state.stamps = this.stamps;           // Denny's DENIED stamps
         this.state.coilNear = this._coilNear;      // the coil approach (deaf-legible dim + readout)
         this.state.citation = this._citationLabel(); // Gate's active override banner ({5,-3})
+        this.state.mapPins = this.mapPins;         // Map-Pins annotations for the minimap
+        this.state.roomX = this.worldManager.currentRoomX; // sector readout + pin-on-current-room
+        this.state.roomY = this.worldManager.currentRoomY;
         // Directional data for the Renderer's Cadenza wall-pulse (the visible half of
         // her beacon). Null unless her homing signal is live.
         const cp = this.cadenzaProximity();

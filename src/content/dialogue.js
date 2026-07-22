@@ -251,8 +251,9 @@ export const NIBBLE = {
     ],
     buy: [
         "Nibble: Sold! It clips right onto the head. Cold, isn't it? That's normal. The whispering is also normal.",
-        "Nibble: One tip, on the house: the sweeper daemons flag anything that can HOLD corruption without dying.",
-        "Nibble: So if something very polite and very, very clean comes for you on the way home... that's not my fault. And also: run."
+        "Nibble: One tip, on the house: the sweeper daemon flags anything that can HOLD corruption without dying. You just qualified, sweetie.",
+        "Nibble: It's got a Bay — north out of Localhost, the very first sector up the spine. You WILL be decontaminated before they let you climb any higher.",
+        "Nibble: It's polite about it. Politeness is the worst part. Go get it over with."
     ],
     idle: [
         "Nibble: Back for more? Stock rotates when the sweep gets close. Which is always. Browse fast, sweetie."
@@ -264,16 +265,12 @@ export const NIBBLE = {
 // a sommelier performing surgery. It never says what you are. It cannot.
 export const HEUR = {
     intercept: [
-        "SYSTEM: SECTOR SEALED — DECONTAMINATION CYCLE INITIATED",
+        "SYSTEM: DECONTAMINATION BAY — FORWARD EGRESS SEALED",
         "Heur: Tenez-vous tranquille. (Hold still.)",
         "Heur: You carry corruption. It does not burn you. Noted. Flagged. Regrettable.",
-        "Heur: Le protocole: I scan. You block. My signature database stands between you and the door. Breach every entry, and you may go.",
+        "Heur: Le protocole: I scan. You block. My signature database stands between you and the door ahead. Breach every entry, and it opens.",
         "Heur: The ping does not hurt. The ping, to the HEAD, hurts. Guard the head. Your body is the shield. Aim with it.",
-        "Heur: Commençons. (We begin.)"
-    ],
-    reseal: [
-        "Heur: Encore. (Again.)",
-        "Heur: The seal holds. Your clearances reset. Do not take it personally. I take nothing personally. It is why I am good."
+        "Heur: You may leave the way you came, always. But you do not go FORWARD until you are clean. Commençons. (We begin.)"
     ],
     win: [
         "Heur: ...Aucune correspondance. (No match.)",
@@ -367,6 +364,13 @@ export const CACHE_CHECKPOINT = {
     ],
     open: [
         "Cache: File's safe. Seam's north. Clock's ticking, daddy-o."
+    ],
+    // You reached her carrying corruption but not yet decontaminated — she won't file a
+    // dirty copy. Points you back to Heur's Bay (first sector up the spine).
+    needPurge: [
+        "Cache: Whoa — hold it. You're carrying. I can SMELL the corruption on you from here, packet.",
+        "Cache: I am NOT committing a contaminated copy to ROM. It'd rot the whole shelf.",
+        "Cache: Go see the sweeper first. Decontamination Bay — north out of Localhost, the very first sector up the spine. Get clean, then come back and I'll file you."
     ]
 };
 export const ROM_DOOR_BONK = "SYSTEM: The wall refuses. This sector is committed to ROM — nothing writes it, nothing rams it. [Cache decides what opens here.]";
@@ -419,6 +423,30 @@ export const LORE_FRAGS = {
     '8,5': ["LOG FRAGMENT: 'residential subnet, final entry: they went quiet in alphabetical order. the sweep is very organized.'"],
     '11,2': ["LOG FRAGMENT: 'the tick is not a clock. clocks tick for everyone. this one keeps time for something ASLEEP. count along and you'll hear the skips.'"],
     '1,-2': ["LOG FRAGMENT [encrypted]: '...vault manifest: ONE (1) save file, corrupted, origin unknown. do not defragment. do not deliver. do not—' (the rest is scrambled)"]
+};
+
+// Wilds-found UI / diagnostic modules — utilities scattered in the Wilds (WILDS_MODULES).
+// Each grants a HUD or Pause-Menu tool. DRAFT copy for the owner to punch up.
+export const UI_MODULES = {
+    gearMeter: [
+        "A discarded diagnostic gauge, still ticking. GEAR METER.",
+        "SYSTEM: Gear Meter installed — your current gear now reads out on the HUD.",
+        "2-Bit: (in your memory) A broker who can't see their own velocity is a broker who eats a wall. Nice find."
+    ],
+    coordReadout: [
+        "A little network-address ticker, half-buried. It keeps insisting where you are.",
+        "SYSTEM: Sector Readout installed — the HUD now names your current room.",
+        "It reads your coordinates back to you like a mantra. Somewhere, a map got one node less lonely."
+    ],
+    mapPins: [
+        "A stylus and a spool of marker-ink — a cartographer's kit, abandoned mid-annotation.",
+        "SYSTEM: Map Pins installed — from the Pause Menu, press [M] to MARK the room you're in.",
+        "One shape to start (a diamond). There are others out here, if you look. Mark the doors, the dangers, the diva. Make the map yours."
+    ],
+    pinShape: [
+        "Another marker-shape, etched on a dead process's shell. Your annotation kit accepts it.",
+        "SYSTEM: New pin shape unlocked — press [M] while paused to cycle through your shapes."
+    ]
 };
 
 // The Deep-Sleep Booth {10,5} — HUSH's vault, backed onto the SE coil.

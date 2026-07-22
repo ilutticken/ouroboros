@@ -58,7 +58,14 @@ export class StateManager {
             checkpointOpen: false,     // Cache committed your save and unsealed the door north (also = checkpoint respawn armed)
             finaleDoorFound: false,    // the hidden Scanner door out of Cold Storage has been breached at least once
             finaleDone: false,         // Beat 8: the Port 0 paradox fired — Act I is over
-            era16: false               // the forced reboot's 16-bit graphics upgrade (set with finaleDone)
+            era16: false,              // the forced reboot's 16-bit graphics upgrade (set with finaleDone)
+            // Wilds-found UI / Pause-Menu utilities (each a diagnostic module you pick up
+            // out in the Wilds — see WILDS_MODULES / npcUiModule).
+            gearMeter: false,          // HUD tachometer showing your current gear
+            coordReadout: false,       // HUD sector-address readout (which room you're in)
+            mapPinsTool: false,        // the Pause-Menu annotation tool (mark rooms on your map)
+            pinShapes: 0,              // how many pin SHAPES you've unlocked (the tool grants the first)
+            modulesFound: []           // 'x,y' room keys of Wilds UI modules already picked up (no respawn)
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data
@@ -66,7 +73,9 @@ export class StateManager {
             pivot: false,             // press SHIFT for a safe 180 reversal
             scanner: false,           // sweep a wall to reveal its hidden weak points
             crumpleLevel: 0,          // survive hits by shedding+folding (0 = none, die on hit); higher = shed less
-            corruptHandler: false     // Nibble's Glitch Shunt: your head PUSHES corruption instead of biting into it
+            corruptHandler: false,    // Nibble's Glitch Shunt: your head PUSHES corruption instead of biting into it
+            salvage: false,           // Nibble's Salvage Claws: shed segments drop as re-collectible Data motes
+            glitchWard: false         // Nibble's Scale Mods: absorb the FIRST Glitch bite in each room for free
         };
     }
     

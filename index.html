@@ -15,46 +15,10 @@
     </div>
     
     <div id="game-wrapper">
-        <!-- Bite's Shop (Centered over game) -->
+        <!-- Vendor shop overlay (2-Bit or Nibble — populated by ShopManager) -->
         <div id="shop-overlay" class="hidden">
-            <h2>Bite's Node Shop</h2>
-            <div class="shop-items">
-                <div class="shop-item">
-                    <div class="shop-item-text">
-                        <span>Pivot Override (10 Data)</span>
-                        <small>Press SHIFT for a safe 180 — reverse without eating your own tail.</small>
-                    </div>
-                    <button id="btn-buy-pivot">[1] Buy</button>
-                </div>
-                <div class="shop-item">
-                    <div class="shop-item-text">
-                        <span>Data Compression (15 Data)</span>
-                        <small>Apples give +2 Data instead of +1.</small>
-                    </div>
-                    <button id="btn-buy-compression">[2] Buy</button>
-                </div>
-                <div class="shop-item">
-                    <div class="shop-item-text">
-                        <span>Reinforced Segments (25 Data)</span>
-                        <small>Hitting a Glitch costs 1 segment instead of 3.</small>
-                    </div>
-                    <button id="btn-buy-armor">[3] Buy</button>
-                </div>
-                <div class="shop-item">
-                    <div class="shop-item-text">
-                        <span>Topology Scanner (40 Data)</span>
-                        <small>Sweep your body along a wall to reveal hidden doors. Longer sweeps light them longer.</small>
-                    </div>
-                    <button id="btn-buy-scanner">[4] Buy</button>
-                </div>
-                <div class="shop-item">
-                    <div class="shop-item-text">
-                        <span>Crumple Buffer (20 Data)</span>
-                        <small>Survive a crash: shed some data and crumple, instead of dying. (Without it, a hit sends you back to the start.)</small>
-                    </div>
-                    <button id="btn-buy-crumple">[5] Buy</button>
-                </div>
-            </div>
+            <h2 id="shop-title">Node Shop</h2>
+            <div class="shop-items" id="shop-items"></div>
             <button id="btn-close-shop" style="margin-top: 1rem;">[ESC] Leave Shop</button>
         </div>
         

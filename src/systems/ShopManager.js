@@ -3,28 +3,61 @@ export class ShopManager {
         this.state = stateManager;
         this.audio = audio;
         this.overlay = document.getElementById('shop-overlay');
+        this.titleEl = document.getElementById('shop-title');
+        this.itemsEl = document.getElementById('shop-items');
 
-        // Each entry: element id, hotkey, price, and a can-buy / apply pair. Kept as
-        // data so the shop is one list to edit, and every lookup is null-safe (a
-        // trimmed test fixture or a future layout change can drop a button without
-        // crashing the GameEngine constructor).
-        this.items = [
-            { id: 'btn-buy-pivot',       key: '1', price: 10, owned: () => this.state.upgrades.pivot,             buy: () => { this.state.upgrades.pivot = true; } },
-            { id: 'btn-buy-compression', key: '2', price: 15, owned: () => this.state.upgrades.dataCompression,    buy: () => { this.state.upgrades.dataCompression = true; } },
-            { id: 'btn-buy-armor',       key: '3', price: 25, owned: () => this.state.upgrades.reinforcedSegments, buy: () => { this.state.upgrades.reinforcedSegments = true; } },
-            { id: 'btn-buy-scanner',     key: '4', price: 40, owned: () => this.state.upgrades.scanner,            buy: () => { this.state.upgrades.scanner = true; } },
-            // Crumple Buffer: without it a hit KILLS you; with it you survive by
-            // shedding+folding. Tier 1 only for now (a one-time buy); a leveled version
-            // that sheds less is a fast follow.
-            { id: 'btn-buy-crumple',     key: '5', price: 20, owned: () => this.state.upgrades.crumpleLevel > 0,  buy: () => { this.state.upgrades.crumpleLevel = 1; } },
-        ];
-        for (const it of this.items) it.el = document.getElementById(it.id);
+        // Vendors. Each has a title, an optional CSS class (Nibble's black-market skin),
+        // and a data-driven item list — {key, name, price, desc, owned(), buy()}. The
+        // rows are built into #shop-items on open(), so one overlay hosts both stalls and
+        // adding an item is one entry here. Every lookup stays null-safe (a trimmed test
+        // fixture can omit the container without crashing the GameEngine constructor).
+        this.vendors = {
+            bite: {
+                title: "2-Bit's Node Shop",
+                cls: null,
+                items: [
+                    { key: '1', name: 'Pivot Override', price: 10, desc: 'Press SHIFT for a safe 180 — reverse without eating your own tail.',
+                      owned: () => this.state.upgrades.pivot, buy: () => { this.state.upgrades.pivot = true; } },
+                    { key: '2', name: 'Data Compression', price: 15, desc: 'Apples give +2 Data instead of +1.',
+                      owned: () => this.state.upgrades.dataCompression, buy: () => { this.state.upgrades.dataCompression = true; } },
+                    { key: '3', name: 'Reinforced Segments', price: 25, desc: 'Hitting a Glitch costs 1 segment instead of 3.',
+                      owned: () => this.state.upgrades.reinforcedSegments, buy: () => { this.state.upgrades.reinforcedSegments = true; } },
+                    { key: '4', name: 'Topology Scanner', price: 40, desc: 'Sweep your body along a wall to reveal hidden doors. Longer sweeps light them longer.',
+                      owned: () => this.state.upgrades.scanner, buy: () => { this.state.upgrades.scanner = true; } },
+                    { key: '5', name: 'Crumple Buffer', price: 20, desc: 'Survive a crash: shed some data and crumple, instead of dying. (Without it, a hit sends you back to the start.)',
+                      owned: () => this.state.upgrades.crumpleLevel > 0, buy: () => { this.state.upgrades.crumpleLevel = 1; } },
+                ],
+            },
+            // Nibble's Black Market — cursed bargains. Everything here bends corruption
+            // to your advantage; buying the Glitch Shunt is what flags you for Heur's
+            // decontamination (telegraphed in her patter). DRAFT copy for the owner.
+            nibble: {
+                title: "Nibble's Black Market",
+                cls: 'nibble',
+                items: [
+                    { key: '1', name: 'Glitch Shunt', price: 20, desc: "Your head PUSHES corruption instead of biting it. Shove a Glitch, herd it, park it somewhere load-bearing.",
+                      owned: () => this.state.upgrades.corruptHandler, buy: () => { this.state.upgrades.corruptHandler = true; } },
+                    { key: '2', name: 'Salvage Claws', price: 25, desc: "When corruption sheds your segments, some drop as re-collectible Data — scoop your own spilled mass back up.",
+                      owned: () => this.state.upgrades.salvage, buy: () => { this.state.upgrades.salvage = true; } },
+                    { key: '3', name: 'Scale Mods', price: 30, desc: "Cursed plating eats the FIRST Glitch bite in each room for free. One bite. Then it's hungry again.",
+                      owned: () => this.state.upgrades.glitchWard, buy: () => { this.state.upgrades.glitchWard = true; } },
+                ],
+            },
+        };
 
         this.btnClose = document.getElementById('btn-close-shop');
         this.onClose = null;
-        this.onSpend = null; // Data = segments: set by Game to shrink the body when you spend
+        this.onSpend = null;   // Data = segments: set by Game to shrink the body when you spend
+        this.activeVendor = 'bite';
+        this.rows = [];        // live {item, el, btn} for the open vendor
 
         this.bindEvents();
+    }
+
+    get items() {
+        // Back-compat: the currently-active vendor's item list (the dev cheat / tests
+        // call updateUI against "the shop").
+        return this.vendors[this.activeVendor] ? this.vendors[this.activeVendor].items : [];
     }
 
     purchase(it) {
@@ -37,9 +70,6 @@ export class ShopManager {
     }
 
     bindEvents() {
-        for (const it of this.items) {
-            if (it.el) it.el.addEventListener('click', () => this.purchase(it));
-        }
         if (this.btnClose) this.btnClose.addEventListener('click', () => this.close());
 
         window.addEventListener('keydown', (e) => {
@@ -54,8 +84,41 @@ export class ShopManager {
         });
     }
 
-    open(onCloseCallback) {
+    // Build the vendor's item rows into #shop-items (clearing any prior vendor's).
+    _renderRows() {
+        this.rows = [];
+        if (!this.itemsEl) return;
+        this.itemsEl.innerHTML = '';
+        for (const item of this.items) {
+            const row = document.createElement('div');
+            row.className = 'shop-item';
+            const text = document.createElement('div');
+            text.className = 'shop-item-text';
+            const name = document.createElement('span');
+            name.innerText = `${item.name} (${item.price} Data)`;
+            const desc = document.createElement('small');
+            desc.innerText = item.desc;
+            text.appendChild(name); text.appendChild(desc);
+            const btn = document.createElement('button');
+            btn.innerText = `[${item.key}] Buy`;
+            btn.addEventListener('click', () => this.purchase(item));
+            row.appendChild(text); row.appendChild(btn);
+            this.itemsEl.appendChild(row);
+            this.rows.push({ item, btn });
+        }
+    }
+
+    // open(vendorId, onClose) — vendorId defaults to 'bite' for back-compat.
+    open(vendorId, onCloseCallback) {
+        if (typeof vendorId === 'function') { onCloseCallback = vendorId; vendorId = 'bite'; }
+        this.activeVendor = this.vendors[vendorId] ? vendorId : 'bite';
+        const v = this.vendors[this.activeVendor];
         this.onClose = onCloseCallback;
+        if (this.titleEl) this.titleEl.innerText = v.title;
+        if (this.overlay) {
+            this.overlay.classList.toggle('nibble', v.cls === 'nibble');
+        }
+        this._renderRows();
         this.updateUI();
         if (this.overlay) this.overlay.classList.remove('hidden');
     }
@@ -76,15 +139,16 @@ export class ShopManager {
         const scoreEl = document.getElementById('score-value');
         if (scoreEl) scoreEl.innerText = this.state.score.toString();
 
-        for (const it of this.items) {
-            if (!it.el) continue;
-            if (it.owned()) {
-                it.el.innerText = 'OWNED';
-                it.el.disabled = true;
-                it.el.style.opacity = 0.5;
+        for (const { item, btn } of this.rows) {
+            if (!btn) continue;
+            if (item.owned()) {
+                btn.innerText = 'OWNED';
+                btn.disabled = true;
+                btn.style.opacity = 0.5;
             } else {
-                it.el.disabled = this.state.score < it.price;
-                it.el.style.opacity = this.state.score < it.price ? 0.6 : 1;
+                btn.innerText = `[${item.key}] Buy`;
+                btn.disabled = this.state.score < item.price;
+                btn.style.opacity = this.state.score < item.price ? 0.6 : 1;
             }
         }
     }

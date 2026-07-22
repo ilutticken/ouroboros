@@ -21,11 +21,8 @@ function mountDom() {
         </div>
         <div id="game-wrapper">
             <div id="shop-overlay" class="hidden">
-                <button id="btn-buy-pivot">Buy</button>
-                <button id="btn-buy-compression">Buy</button>
-                <button id="btn-buy-armor">Buy</button>
-                <button id="btn-buy-scanner">Buy</button>
-                <button id="btn-buy-crumple">Buy</button>
+                <h2 id="shop-title"></h2>
+                <div class="shop-items" id="shop-items"></div>
                 <button id="btn-close-shop">Leave</button>
             </div>
         </div>
@@ -182,9 +179,9 @@ describe('Wall-friction glide', () => {
         game.state.unlocked.borders = true;
         game.glitches = [];
         game.apple = { x: 200, y: 200 };
-        game.snake.body = [{ x: 0, y: 100 }]; // pinned to the left wall
+        game.snake.body = [{ x: 20, y: 100 }]; // col 1 — the interior cell against the left wall
 
-        step(game, { x: 0, y: -20 }); // glide up along the left wall -> (0,80)
+        step(game, { x: 0, y: -20 }); // glide up along the left wall -> (20,80)
 
         expect(game.audio.playGlide).toHaveBeenCalledTimes(1);
     });
@@ -214,11 +211,11 @@ describe('Wall-friction glide', () => {
     });
 
     it('scrapes along the RIGHT wall too', () => {
-        const game = newGame(); // 400x400, rightmost cell = 380 = width - g
+        const game = newGame(); // 400x400: the interior cell against the right wall is col 18 = x360
         game.state.unlocked.borders = true;
         game.glitches = [];
         game.apple = { x: 200, y: 200 };
-        game.snake.body = [{ x: 380, y: 100 }];
+        game.snake.body = [{ x: game.ringRight - 20, y: 100 }];
 
         step(game, { x: 0, y: -20 }); // glide up along the right wall
 
@@ -230,23 +227,22 @@ describe('Wall-friction glide', () => {
         game.state.unlocked.borders = true;
         game.glitches = [];
         game.apple = { x: 200, y: 200 };
-        game.snake.body = [{ x: 100, y: 0 }];
+        game.snake.body = [{ x: 100, y: 20 }]; // row 1 — against the top wall
 
         step(game, { x: 20, y: 0 }); // glide right along the top edge
 
         expect(game.audio.playGlide).toHaveBeenCalledTimes(1);
     });
 
-    it('detects a far-wall glide on a canvas NOT aligned to the grid (pins >= vs ===)', () => {
-        // 410px wide: rightmost reachable cell is x=400, but width - g = 390.
-        // `atRight === head.x === width - g` would MISS this; `>=` catches it.
+    it('detects a far-wall glide on a canvas NOT aligned to the grid', () => {
+        // 410px wide: the interior cell against the right wall is derived from the ring.
         const game = newGame(410, 410);
         game.state.unlocked.borders = true;
         game.glitches = [];
         game.apple = { x: 200, y: 200 };
-        game.snake.body = [{ x: 400, y: 100 }];
+        game.snake.body = [{ x: game.ringRight - 20, y: 100 }];
 
-        step(game, { x: 0, y: -20 }); // (400,80): 400 >= 410 - 20
+        step(game, { x: 0, y: -20 });
 
         expect(game.audio.playGlide).toHaveBeenCalledTimes(1);
     });
@@ -256,7 +252,7 @@ describe('Wall-friction glide', () => {
         game.state.unlocked.borders = true;
         game.glitches = [];
         game.apple = { x: 200, y: 200 };
-        game.snake.body = [{ x: 0, y: 100 }];
+        game.snake.body = [{ x: 20, y: 100 }];
         game.gear = 2; // not clobbered: changeGear only fires from an input callback
 
         step(game, { x: 0, y: -20 });
@@ -570,10 +566,10 @@ describe('Ambient audio cross-cutting behavior', () => {
         const game = newGame();
         game.state.unlocked.borders = true;
         game.apple = { x: 300, y: 300 };
-        game.snake.body = [{ x: 0, y: 100 }];
-        game.glitches = [new Glitch(0, 40, 20)]; // 2 tiles from the head's landing
+        game.snake.body = [{ x: 20, y: 100 }]; // col 1 — against the left wall
+        game.glitches = [new Glitch(20, 40, 20)]; // 2 tiles from the head's landing
 
-        step(game, { x: 0, y: -20 }); // head -> (0,80): left-wall glide + glitch nearby
+        step(game, { x: 0, y: -20 }); // head -> (20,80): left-wall glide + glitch nearby
 
         expect(game.audio.playGlide).toHaveBeenCalledTimes(1);
         expect(game.audio.playWub).toHaveBeenCalledTimes(1);
@@ -1387,7 +1383,7 @@ describe('Topology Scanner — hidden doors revealed by sweeping', () => {
 
         const hit = findHiddenWeakPoint(game.worldManager, 'right');
         game.worldManager.currentRoomX = hit.rx; game.worldManager.currentRoomY = hit.ry;
-        const g = game.gridSize, right = game.canvas.width - g;
+        const g = game.gridSize, right = game.ringRight - g; // col 18 — the interior cell against the right wall
         game.snake.body = [
             { x: right, y: hit.wp.start },
             { x: right, y: hit.wp.start + g },

@@ -6,11 +6,26 @@ import { HUSH_LABELS } from '../content/dialogue.js';
 const PAL8 = { bg: '#050505', wall: '#00ffcc', obstacle: '#00ffcc', apple: '#ff0055', body: '#ff0055', head: '#ffffff', glitch: '#ff00ff', glow: 15 };
 const PAL16 = { bg: '#0a0618', wall: '#3af5cf', obstacle: '#2fd6a8', apple: '#ff2e7e', body: '#ff4d94', head: '#ffffff', glitch: '#d84cff', glow: 20 };
 
+// The quarantine wall's drawn thickness (px). The playable interior is inset by a full
+// 1-cell ring (the snake can't enter it — see GameEngine._ringGuard), so this band reads
+// as a real barrier the worm stays clear of; entities live in the interior and never
+// overlap it. Kept a little under a full cell so a clean gap shows between wall and worm.
+const WALL = 14;
+
 export class Renderer {
     constructor(canvas, gridSize) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d');
         this.gridSize = gridSize;
+    }
+
+    // The drawn rect for a cell entity. Since the playable interior now excludes the
+    // whole wall ring (GameEngine._ringGuard keeps every entity a clear cell inside the
+    // wall), no wall-clamp is needed — the old clamp only ever bit the HEAD while it
+    // transited a doorway ring cell, pinching it to a sliver. `pad` is the in-cell inset.
+    _cellRect(x, y, pad) {
+        const g = this.gridSize;
+        return [x + pad, y + pad, g - 2 * pad, g - 2 * pad];
     }
 
     draw(state, snake, apple, npcs, glitches, worldManager, obstacles) {
@@ -28,9 +43,10 @@ export class Renderer {
         this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
         
         if (state.unlocked.borders) {
-            // Walls are drawn a little THICKER for legibility (a11y). Inset by half the
-            // thickness so the stroke stays fully on-canvas.
-            const wallThickness = 6;
+            // The quarantine wall — a THICK neon band (WALL px). Drawn as a wide stroke,
+            // inset by half its width so it stays on-canvas; entities are kept out of the
+            // band by _cellRect, so the snake stays a clear gap away when scanning.
+            const wallThickness = WALL;
             const inset = wallThickness / 2;
             this.ctx.strokeStyle = P.wall;
             this.ctx.lineWidth = wallThickness;
@@ -146,11 +162,12 @@ export class Renderer {
         }
         
         // Draw Obstacles (Solid Green)
+        const bordersOn = !!state.unlocked.borders;
         if (obstacles) {
             this.ctx.fillStyle = P.obstacle;
             this.ctx.shadowColor = P.obstacle;
             for (const obs of obstacles) {
-                this.ctx.fillRect(obs.x + 1, obs.y + 1, this.gridSize - 2, this.gridSize - 2);
+                this.ctx.fillRect(...this._cellRect(obs.x, obs.y, 1, bordersOn));
             }
         }
 
@@ -186,24 +203,27 @@ export class Renderer {
         if (glitches) {
             const gg = this.gridSize;
             for (const g of glitches) {
+                const [bx, by, bw, bh] = this._cellRect(g.x, g.y, 2, bordersOn);
                 this.ctx.fillStyle = P.glitch;
                 this.ctx.shadowColor = P.glitch;
                 this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
-                this.ctx.fillRect(g.x + 2, g.y + 2, gg - 4, gg - 4);
+                this.ctx.fillRect(bx, by, bw, bh);
                 this.ctx.shadowBlur = 0;
                 this.ctx.strokeStyle = '#2a002a';
                 this.ctx.lineWidth = 2;
                 this.ctx.beginPath();
-                this.ctx.moveTo(g.x + 5, g.y + 5);
-                this.ctx.lineTo(g.x + gg - 5, g.y + gg - 5);
-                this.ctx.moveTo(g.x + gg - 5, g.y + 5);
-                this.ctx.lineTo(g.x + 5, g.y + gg - 5);
+                this.ctx.moveTo(bx + 3, by + 3);
+                this.ctx.lineTo(bx + bw - 3, by + bh - 3);
+                this.ctx.moveTo(bx + bw - 3, by + 3);
+                this.ctx.lineTo(bx + 3, by + bh - 3);
                 this.ctx.stroke();
                 if (g._m) {
-                    // the drift notch: a solid wedge on the edge it will step through
+                    // the drift notch: a solid wedge on the edge it will step through —
+                    // anchored to the CLAMPED body square (bx/by/bw/bh) so in an edge
+                    // cell it stays on the visible glitch, never floating onto the wall.
                     this.ctx.fillStyle = '#2a002a';
-                    const cx = g.x + gg / 2, cy = g.y + gg / 2;
-                    const nx = cx + g._m.dx * (gg / 2 - 3), ny = cy + g._m.dy * (gg / 2 - 3);
+                    const cx = bx + bw / 2, cy = by + bh / 2;
+                    const nx = cx + g._m.dx * Math.max(0, bw / 2 - 3), ny = cy + g._m.dy * Math.max(0, bh / 2 - 3);
                     this.ctx.beginPath();
                     if (g._m.dx !== 0) {
                         this.ctx.moveTo(nx, ny - 4); this.ctx.lineTo(nx, ny + 4); this.ctx.lineTo(nx + g._m.dx * 4, ny);
@@ -224,7 +244,7 @@ export class Renderer {
         // Draw Apple (Red Data)
         this.ctx.fillStyle = P.apple;
         this.ctx.shadowColor = P.apple;
-        this.ctx.fillRect(apple.x + 2, apple.y + 2, this.gridSize - 4, this.gridSize - 4);
+        this.ctx.fillRect(...this._cellRect(apple.x, apple.y, 2, bordersOn));
 
         // Cache's spare-data motes (Hub only): small Data pips with a cold archival glow,
         // so they read as HERS and as smaller than the main apple.
@@ -232,10 +252,12 @@ export class Renderer {
             const g = this.gridSize;
             const pulse = rm ? 0.8 : 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 300));
             for (const m of state.dataMotes) {
-                this.ctx.fillStyle = '#ff2f6b';
-                this.ctx.shadowColor = '#cfd8ff';
+                // Salvage Claws' reclaimed mass reads as plain red Data; Cache's spare
+                // bytes keep their cold archival blue glow.
+                this.ctx.fillStyle = m.salvage ? P.apple : '#ff2f6b';
+                this.ctx.shadowColor = m.salvage ? P.apple : '#cfd8ff';
                 this.ctx.shadowBlur = 6 * pulse;
-                this.ctx.fillRect(m.x + 6, m.y + 6, g - 12, g - 12);
+                this.ctx.fillRect(...this._cellRect(m.x, m.y, 6, bordersOn));
             }
             this.ctx.shadowBlur = 0;
         }
@@ -265,6 +287,9 @@ export class Renderer {
                 } else if (npc.id === 'datacache') {
                     this.ctx.fillStyle = '#ffd24d'; // a mass payout — gold crate
                     this.ctx.shadowColor = '#ffd24d';
+                } else if (npc.id === 'uimodule') {
+                    this.ctx.fillStyle = '#00e0d0'; // a diagnostic MODULE — cyan chip, not a face
+                    this.ctx.shadowColor = '#00e0d0';
                 } else if (npc.id === 'lorefrag') {
                     this.ctx.fillStyle = '#9adfff'; // a scannable log fragment — pale archival ice
                     this.ctx.shadowColor = '#9adfff';
@@ -290,7 +315,7 @@ export class Renderer {
                     this.ctx.fillStyle = '#00ff00';
                     this.ctx.shadowColor = '#00ff00';
                 }
-                this.ctx.fillRect(npc.x + 2, npc.y + 2, this.gridSize - 4, this.gridSize - 4);
+                this.ctx.fillRect(...this._cellRect(npc.x, npc.y, 2, bordersOn));
                 this.drawNpcFeatures(npc, state); // little 8-bit face/glyph so they aren't plain dots
                 this.ctx.globalAlpha = 1; // reset after a possibly-faded apparition
             }
@@ -316,7 +341,7 @@ export class Renderer {
                 this.ctx.fillStyle = i === 0 ? P.head : P.body;
                 this.ctx.shadowBlur = 0;
             }
-            this.ctx.fillRect(segment.x + 1, segment.y + 1, this.gridSize - 2, this.gridSize - 2);
+            this.ctx.fillRect(...this._cellRect(segment.x, segment.y, 1, bordersOn));
             // The worm's head has no eyes (it's not a packet); 2-Bit, who IS a packet
             // riding the tail, keeps his.
             if (isBite) this.drawEyes(segment.x, segment.y, '#003b00');
@@ -350,6 +375,11 @@ export class Renderer {
         // Reset shadow for performance
         this.ctx.shadowBlur = 0;
 
+        // Heur's decontamination — Breakout played IN the sealed room: the signature
+        // database (bricks), the scan-ping, and a clearance/goal banner, drawn over the
+        // live snake so you can read the ball and your body-as-paddle together.
+        if (state.heur) this.drawHeur(state, bordersOn);
+
         // THE COIL'S HELD BREATH (deaf-legible twin of the audio duck): approaching the
         // Kernel's body dims the room from the coil side and prints a signal readout —
         // the whole approach reads with the sound off.
@@ -378,6 +408,9 @@ export class Renderer {
         // 2-Bit's route map (extra feature) — dropped below the citation strip when one
         // is posted, so the banner and the map never fight over the top edge.
         this.drawMinimap(worldManager, state);
+
+        // Wilds-found HUD utilities: the gear meter (tachometer) and the sector readout.
+        this.drawFoundHud(state);
 
         // Module install animation (in flight, on top)
         this.drawModuleLoad(state);
@@ -418,6 +451,14 @@ export class Renderer {
                 this.ctx.fillStyle = '#00ffcc';
                 this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.fillText(state.saveFlash, this.canvas.width / 2, this.canvas.height / 2 + 76);
+            }
+            // Map Pins tool: mark the current room (shows the current room's pin state).
+            if (state.gameState === 'PAUSED' && !state.isSuspended && state.unlocked && state.unlocked.mapPinsTool) {
+                const cur = state.mapPins ? state.mapPins[`${state.roomX},${state.roomY}`] : undefined;
+                const tag = cur === undefined ? 'unmarked' : `shape ${cur + 1}`;
+                this.ctx.fillStyle = '#ffd24d';
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.fillText(`[M] MARK ROOM  (${tag})`, this.canvas.width / 2, this.canvas.height / 2 + 112);
             }
 
             this.ctx.fillStyle = '#00ff00';
@@ -492,9 +533,6 @@ export class Renderer {
         // Cadenza's DA CAPO Encore — the ring + call/progress banner, over the live room.
         if (state.gameState === 'ENCORE' && state.encore) this.drawEncore(state);
 
-        // Heur's Purge Cycle — the sealed Decontamination Bay overlays the whole sector.
-        if (state.gameState === 'PURGE' && state.purge) this.drawPurge(state);
-
         // Accessibility / Options overlay — drawn last, on top of everything.
         if (state.options) this.drawOptions(state);
     }
@@ -508,7 +546,7 @@ export class Renderer {
         const g = this.gridSize, W = this.canvas.width, H = this.canvas.height;
         const horizontal = (dir === 'up' || dir === 'down');
         const span = horizontal ? W : H;
-        const thick = 8;
+        const thick = WALL; // match the quarantine wall band, so the coil fully covers it
         const seg = Math.round(g * 1.6), gap = 4, pitch = seg + gap;
         const creep = rm ? 0 : Math.floor((Date.now() / 120) % pitch); // ~8px/s crawl
         this.ctx.save();
@@ -616,77 +654,48 @@ export class Renderer {
         this.ctx.restore();
     }
 
-    // Heur's Purge Cycle — the Body-Breakout overlay. The bay seals the whole sector:
-    // paddle (your body; LEFT END is the flagged read-head), the scan-ping (notched with
-    // its heading), the signature database (the weak-wall grammar: solid -> perforated ->
-    // gone), falling brick-Data, and a ≥16px clearance meter. Reduce-motion-safe: every
-    // mover steps discretely; the head warning is a steady outline, not a strobe.
-    drawPurge(state) {
-        const p = state.purge;
+    // Heur's decontamination — Breakout played IN the sealed room, over the live snake.
+    // Draws the signature database (bricks — Heur's own wears its name and is unbreakable
+    // until last), the scan-ping (a diamond notched with its heading), the far-door goal
+    // tint, a read-head warning outline, and a ≥16px clearance/goal banner. The player's
+    // BODY is the paddle (drawn by the normal snake pass). Reduce-motion holds glows steady.
+    drawHeur(state, bordersOn) {
+        const h = state.heur;
         const g = this.gridSize;
         const W = this.canvas.width, H = this.canvas.height;
         const rm = !!state.reduceMotion;
         this.ctx.save();
         this.ctx.shadowBlur = 0;
 
-        // the seal
-        this.ctx.fillStyle = 'rgba(2, 8, 12, 0.96)';
-        this.ctx.fillRect(0, 0, W, H);
-        this.ctx.strokeStyle = '#bfe9ff';
-        this.ctx.lineWidth = 3;
-        this.ctx.strokeRect(6, 6, W - 12, H - 12);
-
-        // the signature database (bricks): solid, then perforated (the weak-wall hatch),
-        // then gone. Heur's own signature is the pale one wearing its name.
-        for (const b of p.bricks) {
-            const bx = b.c * g, by = b.r * g, bw = b.w * g;
+        // the signature database bricks
+        for (const b of h.bricks) {
+            const [bx, by, bw, bh] = this._cellRect(b.c * g, b.r * g, 1, bordersOn);
             if (b.heur) {
                 this.ctx.fillStyle = '#e8f4ff';
-                this.ctx.fillRect(bx + 1, by + 1, bw - 2, g - 2);
+                this.ctx.fillRect(bx, by, bw, bh);
                 this.ctx.fillStyle = '#26404d';
-                this.ctx.font = 'bold ' + Math.max(8, Math.floor(g * 0.45)) + 'px "Press Start 2P", monospace';
-                this.ctx.fillText('HEUR', bx + bw / 2, by + g * 0.68);
+                this.ctx.font = 'bold ' + Math.max(7, Math.floor(g * 0.32)) + 'px "Press Start 2P", monospace';
+                this.ctx.textAlign = 'center';
+                this.ctx.fillText('H', b.c * g + g / 2, b.r * g + g * 0.66);
             } else {
-                this.ctx.fillStyle = b.hp >= 2 ? '#7fd4ff' : '#4d90b3';
-                this.ctx.fillRect(bx + 1, by + 1, bw - 2, g - 2);
-                if (b.hp === 1) {
-                    // perforated — the same texture cue as a cracked weak wall
-                    this.ctx.fillStyle = 'rgba(2, 8, 12, 0.9)';
-                    for (let x = bx + 3; x < bx + bw - 2; x += 6) this.ctx.fillRect(x, by + 2, 2, g - 4);
-                }
+                this.ctx.fillStyle = '#7fd4ff';
+                this.ctx.fillRect(bx, by, bw, bh);
+                // perforated texture (a11y: the same broken-wall cue as a cracked door)
+                this.ctx.fillStyle = 'rgba(2, 8, 12, 0.85)';
+                for (let x = bx + 3; x < bx + bw - 2; x += 6) this.ctx.fillRect(x, by + 1, 2, bh - 2);
             }
         }
 
-        // falling brick-Data
-        this.ctx.fillStyle = '#ffd24d';
-        for (const m of p.motes) {
-            this.ctx.fillRect(m.c * g + 5, m.r * g + 5, g - 10, g - 10);
-        }
-
-        // the band guides (three faint aim rows)
-        this.ctx.strokeStyle = 'rgba(191, 233, 255, 0.18)';
-        this.ctx.lineWidth = 1;
-        for (let r = 0; r < 3; r++) {
-            const y = (p.bandTop + r) * g;
-            this.ctx.strokeRect(2, y, W - 4, g);
-        }
-
-        // the paddle — your body, flattened. Interior cells are the shield; the LEFT
-        // END is the read-head (white, warning-ringed when the ping closes in).
-        const padY = (p.bandTop + p.paddle.row) * g;
-        for (let i = 0; i < p.paddle.len; i++) {
-            const x = (p.paddle.c + i) * g;
-            this.ctx.fillStyle = i === 0 ? '#ffffff' : '#ff0055';
-            this.ctx.fillRect(x + 1, padY + 1, g - 2, g - 2);
-        }
-        if (p.warnHead) {
-            this.ctx.strokeStyle = '#ff3b3b';
-            this.ctx.lineWidth = 3;
-            this.ctx.strokeRect(p.paddle.c * g - 2, padY - 2, g + 4, g + 4);
-        }
+        // the far-door goal seam glows faintly on the far wall (you'll leave there on a win)
+        this.ctx.fillStyle = 'rgba(127, 212, 255, 0.10)';
+        const band = g;
+        if (h.far === 'right') this.ctx.fillRect(W - band, 0, band, H);
+        else if (h.far === 'left') this.ctx.fillRect(0, 0, band, H);
+        else if (h.far === 'down') this.ctx.fillRect(0, H - band, W, band);
+        else this.ctx.fillRect(0, 0, W, band);
 
         // the scan-ping: a diamond wearing its heading as a notch (discrete steps only)
-        const px = p.ping.c * g + g / 2, py = p.ping.r * g + g / 2;
+        const px = h.ping.c * g + g / 2, py = h.ping.r * g + g / 2;
         this.ctx.fillStyle = '#d84cff';
         this.ctx.shadowColor = '#d84cff';
         this.ctx.shadowBlur = rm ? 0 : 10;
@@ -702,23 +711,26 @@ export class Renderer {
         this.ctx.lineWidth = 2;
         this.ctx.beginPath();
         this.ctx.moveTo(px, py);
-        this.ctx.lineTo(px + p.ping.dc * g * 0.4, py + p.ping.dr * g * 0.4);
+        this.ctx.lineTo(px + h.ping.dc * g * 0.4, py + h.ping.dr * g * 0.4);
         this.ctx.stroke();
 
-        // banner + clearances + message — the HUD paints LAST so the database rows can
-        // never bury the clearance meter (≥16px, the a11y floor).
-        this.ctx.shadowBlur = 0;
+        // read-head warning: a steady red outline on your head when the ping is closing in
+        if (h.warnHead) {
+            this.ctx.strokeStyle = '#ff3b3b';
+            this.ctx.lineWidth = 3;
+            this.ctx.strokeRect(state.headCell.x - 2, state.headCell.y - 2, g + 4, g + 4);
+        }
+
+        // banner: the objective + how much of the database is left (≥16px). No fail state —
+        // break the database to open the far door, or retreat the way you came.
         this.ctx.textAlign = 'center';
         this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.fillStyle = 'rgba(2, 8, 12, 0.8)';
+        this.ctx.fillRect(0, 0, W, 52);
         this.ctx.fillStyle = '#bfe9ff';
-        this.ctx.fillText('DECONTAMINATION — GUARD THE HEAD', W / 2, 26);
-        const meter = '[' + '#'.repeat(Math.max(0, p.clearances)) + '-'.repeat(Math.max(0, 5 - p.clearances)) + ']';
-        this.ctx.fillStyle = p.clearances <= 2 ? '#ff8a8a' : '#7fd4ff';
-        this.ctx.fillText('CLEARANCES ' + meter, W / 2, 48);
-        if (p.msg) {
-            this.ctx.fillStyle = '#ff8a8a';
-            this.ctx.fillText(p.msg, W / 2, 70);
-        }
+        this.ctx.fillText('DECONTAMINATION — GUARD THE HEAD', W / 2, 20);
+        this.ctx.fillStyle = '#7fd4ff';
+        this.ctx.fillText('SIGNATURES LEFT: ' + h.bricksLeft, W / 2, 42);
 
         this.ctx.restore();
     }
@@ -770,6 +782,79 @@ export class Renderer {
         this.ctx.fillText('up/down select    left/right adjust', midX, H - H * 0.17);
         this.ctx.fillStyle = '#00885f';
         this.ctx.fillText('[O] or [ESC] close', midX, H - H * 0.10);
+        this.ctx.restore();
+    }
+
+    // Wilds-found HUD utilities. Both are found modules (see WILDS_MODULES): the GEAR
+    // METER (a tachometer — brake/0..3 as pips) bottom-right, and the SECTOR READOUT (the
+    // current room's network address) top-left. Only drawn once found, and only in play
+    // (not on menus/dialog overlays that own the screen).
+    drawFoundHud(state) {
+        if (state.gameState !== 'PLAYING' && state.gameState !== 'ENCORE') return;
+        const u = state.unlocked || {};
+        const W = this.canvas.width, H = this.canvas.height;
+        this.ctx.save();
+        this.ctx.shadowBlur = 0;
+
+        if (u.coordReadout) {
+            // top-left address readout, e.g. "SECTOR 5,-3" — clear of the top-right minimap
+            // and top-centre banners; nudged below any citation strip. Drawn on a small
+            // dark plate in a soft amber (NOT the wall's cyan) so it stays legible against
+            // the cyan wall band + its max-speed glow.
+            const txt = `SECTOR ${state.roomX},${state.roomY}`;
+            const yy = state.citation ? 74 : 26;
+            this.ctx.textAlign = 'left';
+            this.ctx.font = '16px "Press Start 2P", monospace';
+            const w = this.ctx.measureText(txt).width;
+            this.ctx.fillStyle = 'rgba(3, 8, 6, 0.75)';
+            this.ctx.fillRect(12, yy - 15, w + 8, 20);
+            this.ctx.fillStyle = '#ffc234';
+            this.ctx.fillText(txt, 16, yy);
+        }
+
+        if (u.gearMeter) {
+            // bottom-right tachometer: 3 pips filled to the current gear (1-3); gear 0 = no
+            // pips, brake shows a BRK label. Max gear is 3, so 3 boxes (no dead box).
+            const gear = state.gear || 0;
+            const pip = 12, gap = 4, n = 3; // gears 1..3
+            const totalW = n * (pip + gap);
+            const bx = W - totalW - 14, by = H - 26;
+            this.ctx.textAlign = 'right';
+            this.ctx.font = '16px "Press Start 2P", monospace';
+            this.ctx.fillStyle = gear < 0 ? '#ff8a3d' : (this.pal || PAL8).wall;
+            this.ctx.fillText(gear < 0 ? 'BRK' : 'GEAR', bx - 8, by + pip);
+            for (let i = 0; i < n; i++) {
+                const full = gear >= i + 1;
+                const x = bx + i * (pip + gap);
+                this.ctx.strokeStyle = (this.pal || PAL8).wall;
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(x, by, pip, pip);
+                if (full) {
+                    this.ctx.fillStyle = i >= 2 ? '#ff8a3d' : (this.pal || PAL8).wall; // top gear glows orange
+                    this.ctx.fillRect(x + 2, by + 2, pip - 4, pip - 4);
+                }
+            }
+        }
+        this.ctx.restore();
+    }
+
+    // Draw a map-pin glyph (shape index -> shape) centred at (cx,cy) on the minimap.
+    _drawPinGlyph(cx, cy, shape, color) {
+        const r = 4;
+        this.ctx.save();
+        this.ctx.strokeStyle = color; this.ctx.fillStyle = color;
+        this.ctx.lineWidth = 1.5;
+        this.ctx.shadowBlur = 0;
+        this.ctx.beginPath();
+        if (shape === 0) { // diamond
+            this.ctx.moveTo(cx, cy - r); this.ctx.lineTo(cx + r, cy); this.ctx.lineTo(cx, cy + r); this.ctx.lineTo(cx - r, cy); this.ctx.closePath(); this.ctx.fill();
+        } else if (shape === 1) { // cross
+            this.ctx.moveTo(cx - r, cy - r); this.ctx.lineTo(cx + r, cy + r); this.ctx.moveTo(cx + r, cy - r); this.ctx.lineTo(cx - r, cy + r); this.ctx.stroke();
+        } else if (shape === 2) { // triangle
+            this.ctx.moveTo(cx, cy - r); this.ctx.lineTo(cx + r, cy + r); this.ctx.lineTo(cx - r, cy + r); this.ctx.closePath(); this.ctx.fill();
+        } else { // ring
+            this.ctx.arc(cx, cy, r, 0, Math.PI * 2); this.ctx.stroke();
+        }
         this.ctx.restore();
     }
 
@@ -899,6 +984,30 @@ export class Renderer {
             this.ctx.fillStyle = '#5a3a00';
             this.ctx.fillRect(x + g / 2 - 1, y + 5, 3, g - 10);
             this.ctx.fillRect(x + 5, y + g / 2 - 1, g - 10, 3);
+        } else if (npc.id === 'uimodule') {
+            // a diagnostic MODULE — a chip with contact pins + a tool glyph keyed to what
+            // it grants (tachometer arc / address dots / map pins). NO eyes: it's hardware,
+            // not a character.
+            this.ctx.fillStyle = '#04302e';
+            // chip contact pins along top & bottom
+            for (let px = x + 5; px < x + g - 4; px += 4) {
+                this.ctx.fillRect(px, y + 3, 2, 2);
+                this.ctx.fillRect(px, y + g - 5, 2, 2);
+            }
+            const cxp = x + g / 2, cyp = y + g / 2;
+            if (npc.grant === 'gearMeter') {
+                // a tachometer needle in a dial
+                this.ctx.strokeStyle = '#04302e'; this.ctx.lineWidth = 2;
+                this.ctx.beginPath(); this.ctx.arc(cxp, cyp + 2, g * 0.28, Math.PI, 0); this.ctx.stroke();
+                this.ctx.beginPath(); this.ctx.moveTo(cxp, cyp + 2); this.ctx.lineTo(cxp + g * 0.18, cyp - g * 0.14); this.ctx.stroke();
+            } else if (npc.grant === 'coordReadout') {
+                // an address ticker: three dots
+                for (let i = -1; i <= 1; i++) this.ctx.fillRect(cxp + i * 5 - 1, cyp - 1, 3, 3);
+            } else {
+                // map pins: a pin + a dot
+                this.ctx.fillRect(cxp - 1, cyp - g * 0.22, 2, g * 0.32);
+                this.ctx.beginPath(); this.ctx.arc(cxp, cyp + g * 0.16, 2.5, 0, Math.PI * 2); this.ctx.fill();
+            }
         } else if (npc.id === 'lorefrag') {
             // a '?' — a fragment worth reading
             this.ctx.fillStyle = '#123a4d';
@@ -1092,6 +1201,16 @@ export class Renderer {
         this.ctx.lineWidth = 1;
         const ring = dot + 6; // larger than the gold safe-zone node so it truly encircles
         this.ctx.strokeRect(px - ring / 2, py - ring / 2, ring, ring);
+
+        // Map-Pins annotations — the player's own marks on visited rooms (Map-Pins tool).
+        // Only pinned rooms that are on the minimap (visited/in-bounds) are drawn.
+        if (state.mapPins) {
+            for (const key of Object.keys(state.mapPins)) {
+                if (!visited.has(key)) continue;
+                const [pxr, pyr] = key.split(',').map(Number);
+                this._drawPinGlyph(gx(pxr), gy(pyr) - dot - 3, state.mapPins[key], '#ffd24d');
+            }
+        }
 
         // Cache's marked sector — a blinking archival-blue pip with a small 'C' tag, even
         // if you haven't been there yet. "You have a place for her in your notes."

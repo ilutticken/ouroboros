@@ -9,6 +9,17 @@ import { DENNY_INTRO, LOCALHOST_SIGN, LOCALHOST_CITIZENS, GATE_INTRO, CADENZA_SC
 // and gear-3 breaches). Lore fragments and wandering clue-givers populate the deep Wilds.
 const GROWTH_CACHE_ROOMS = new Set(['7,-3', '9,1', '3,5', '11,-1']);
 
+// Wilds-found UI / Pause-Menu utility modules, keyed by 'x,y' room. Each grants a HUD or
+// annotation tool (see Game.npcUiModule). Suppressed once picked up (its room key is in
+// unlocked.modulesFound), so it never respawns.
+const WILDS_MODULES = {
+    '2,2':  'gearMeter',    // HUD tachometer
+    '8,2':  'coordReadout', // HUD sector-address readout
+    '3,-3': 'mapPins',      // the Pause-Menu annotation tool + the first pin shape
+    '2,-4': 'pinShape',     // an extra pin shape
+    '7,4':  'pinShape',     // an extra pin shape
+};
+
 export class RoomGenerator {
     constructor(gridSize, canvas) {
         this.gridSize = gridSize;
@@ -134,6 +145,15 @@ export class RoomGenerator {
             // and a growth cache; the room the guardian was guarding.
             npcs.push(new NPC(cx, cy - 2 * this.gridSize, this.gridSize, 'lorefrag', BOOTH_LORE));
             npcs.push(new NPC(cx, cy + 2 * this.gridSize, this.gridSize, 'datacache', []));
+        } else if (WILDS_MODULES[`${roomX},${roomY}`]
+                   && !((stateUnlocked && stateUnlocked.modulesFound) || []).includes(`${roomX},${roomY}`)) {
+            // A found UI/diagnostic module — off-centre so you have to explore to it.
+            const mx = Math.floor(this.cols * 0.4) * this.gridSize;
+            const my = Math.floor(this.rows * 0.45) * this.gridSize;
+            const npc = new NPC(mx, my, this.gridSize, 'uimodule', []);
+            npc.grant = WILDS_MODULES[`${roomX},${roomY}`];
+            npc.roomKey = `${roomX},${roomY}`;
+            npcs.push(npc);
         } else if (GROWTH_CACHE_ROOMS.has(`${roomX},${roomY}`)) {
             // A growth cache — one-bite mass payout, off the spine. Exploration = length.
             const gx = Math.floor(this.cols * 0.65) * this.gridSize;
@@ -224,9 +244,11 @@ export class RoomGenerator {
                 // "Glitch Minefield" reliably generated ZERO glitches. Keyed now on
                 // biteProgress, matching spawnApple's own glitch gate.)
                 if (stateUnlocked && stateUnlocked.biteProgress > 0) {
+                    const cHi = Math.max(1, this.cols - 2), rHi = Math.max(1, this.rows - 2);
                     for (let k = 0; k < 5; k++) {
-                        let gx = Math.floor(Math.random() * this.cols) * this.gridSize;
-                        let gy = Math.floor(Math.random() * this.rows) * this.gridSize;
+                        // interior only — never in the outer wall ring
+                        let gx = (1 + Math.floor(Math.random() * cHi)) * this.gridSize;
+                        let gy = (1 + Math.floor(Math.random() * rHi)) * this.gridSize;
                         glitches.push(new Glitch(gx, gy, this.gridSize));
                     }
                 }
@@ -253,10 +275,11 @@ export class RoomGenerator {
         return { apple, glitches, npcs, obstacles };
     }
     
-    // Find a free cell. `extraOccupied` lets callers exclude the snake body (and the
-    // current apple) so nothing spawns invisibly under the worm. Random-first keeps
-    // placement varied; a bounded scan fallback means a nearly-full room can't spin
-    // this loop forever.
+    // Find a free cell WITHIN THE PLAYABLE INTERIOR — cells [1, cols-2] x [1, rows-2],
+    // never the outer 1-cell WALL RING (so nothing spawns "inside the wall"). `extraOccupied`
+    // lets callers exclude the snake body (and the current apple) so nothing spawns invisibly
+    // under the worm. Random-first keeps placement varied; a bounded scan fallback means a
+    // nearly-full room can't spin this loop forever.
     spawnValidApple(obstacles = [], glitches = [], npcs = [], extraOccupied = []) {
         const occupied = new Set();
         const mark = (o) => { if (o) occupied.add(`${o.x},${o.y}`); };
@@ -265,17 +288,19 @@ export class RoomGenerator {
         npcs.forEach(mark);
         extraOccupied.forEach(mark);
 
+        const cLo = 1, cHi = Math.max(1, this.cols - 2), rLo = 1, rHi = Math.max(1, this.rows - 2);
         for (let attempt = 0; attempt < 400; attempt++) {
-            const x = Math.floor(Math.random() * this.cols) * this.gridSize;
-            const y = Math.floor(Math.random() * this.rows) * this.gridSize;
+            const c = cLo + Math.floor(Math.random() * (cHi - cLo + 1));
+            const r = rLo + Math.floor(Math.random() * (rHi - rLo + 1));
+            const x = c * this.gridSize, y = r * this.gridSize;
             if (!occupied.has(`${x},${y}`)) return { x, y };
         }
-        for (let r = 0; r < this.rows; r++) {
-            for (let c = 0; c < this.cols; c++) {
+        for (let r = rLo; r <= rHi; r++) {
+            for (let c = cLo; c <= cHi; c++) {
                 const x = c * this.gridSize, y = r * this.gridSize;
                 if (!occupied.has(`${x},${y}`)) return { x, y };
             }
         }
-        return { x: 0, y: 0 }; // pathological: every cell occupied
+        return { x: this.gridSize, y: this.gridSize }; // pathological: every interior cell occupied
     }
 }

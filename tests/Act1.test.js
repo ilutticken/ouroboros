@@ -19,11 +19,8 @@ function mountDom() {
         </div>
         <div id="game-wrapper">
             <div id="shop-overlay" class="hidden">
-                <button id="btn-buy-pivot">Buy</button>
-                <button id="btn-buy-compression">Buy</button>
-                <button id="btn-buy-armor">Buy</button>
-                <button id="btn-buy-scanner">Buy</button>
-                <button id="btn-buy-crumple">Buy</button>
+                <h2 id="shop-title"></h2>
+                <div class="shop-items" id="shop-items"></div>
                 <button id="btn-close-shop">Leave</button>
             </div>
         </div>
@@ -58,6 +55,108 @@ function finishDialog(game) {
     let guard = 0;
     while (game.dialogManager.currentDialog && guard++ < 200) game.dialogManager.advance();
 }
+
+// ---------------------------------------------------------------------------------
+describe('The wall ring actually blocks (playtest fix)', () => {
+    beforeEach(mountDom);
+
+    it('a solid wall stops the worm ONE CELL OUT — it never enters the wall ring', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 4; game.worldManager.currentRoomY = 2;
+        game.apple = { x: 200, y: 200 }; game.glitches = []; game.npcs = []; game.obstacles = [];
+        // find a solid (no-weak-point) stretch of the left wall
+        const wp = game.worldManager.getWeakPoint(4, 2, 'left');
+        const solidY = wp ? (wp.start === 20 ? wp.end + 40 : 20) : 100;
+        game.snake.body = [{ x: 20, y: solidY }]; // col 1, against the left wall, off any door
+        step(game, { x: -20, y: 0 }); // drive into the wall
+        expect(game.state.gameState).toBe('DEAD'); // died at the wall, not inside it
+        // the head never occupied the wall-ring cell (x=0)
+        expect(game.snake.body.every(s => s.x >= 20)).toBe(true);
+    });
+
+    it('a doorway lets the worm step INTO the ring (then cross), not die', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 4; game.worldManager.currentRoomY = 2;
+        game.apple = { x: 200, y: 200 }; game.glitches = []; game.npcs = []; game.obstacles = [];
+        const wp = game.worldManager.getWeakPoint(4, 2, 'left');
+        if (!wp) return; // (defensive: this room's left wall is solid — skip)
+        game.snake.body = [{ x: 20, y: wp.start }]; // col 1, aligned with the door
+        step(game, { x: -20, y: 0 }); // step toward the door
+        expect(game.state.gameState).not.toBe('DEAD'); // stepped into the doorway, alive
+    });
+
+    it('spawns never land in the outer wall ring', () => {
+        const game = newGame();
+        const rg = game.worldManager.roomGenerator;
+        const cols = rg.cols, rows = rg.rows, g = game.gridSize;
+        for (let i = 0; i < 50; i++) {
+            const p = rg.spawnValidApple([], [], []);
+            const c = p.x / g, r = p.y / g;
+            expect(c >= 1 && c <= cols - 2 && r >= 1 && r <= rows - 2).toBe(true);
+        }
+    });
+
+    it('autonomous movers are blocked from the wall ring', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        expect(game._moverBlocked(0, 100)).toBe(true);              // left ring
+        expect(game._moverBlocked(game.ringRight, 100)).toBe(true); // right ring
+        expect(game._moverBlocked(100, 0)).toBe(true);              // top ring
+        expect(game._moverBlocked(40, 100)).toBe(false);            // interior (nothing there)
+    });
+
+    it('ramming a solid wall while ferrying 2-Bit TUGS BACK (non-lethal) — the ring guard delegates', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.state.unlocked.tailRider = true;
+        game.worldManager.currentRoomX = 4; game.worldManager.currentRoomY = 2;
+        game.apple = { x: 200, y: 200 }; game.glitches = []; game.obstacles = [];
+        game.npcs = [new NPC(300, 300, 20, 'bite', [])]; // 2-Bit still aboard (on the grid)
+        const wp = game.worldManager.getWeakPoint(4, 2, 'left');
+        const solidY = wp ? (wp.start === 20 ? wp.end + 40 : 20) : 100; // off any door
+        game.snake.body = [{ x: 20, y: solidY }, { x: 40, y: solidY }];
+        game.state.score = 12;
+        game.input.direction = { x: -20, y: 0 };
+        step(game, { x: -20, y: 0 }); // drive into the solid wall
+        expect(game.state.gameState).toBe('PLAYING'); // NOT dead — 2-Bit tugged you back
+        expect(game.state.score).toBe(12);            // no reset
+        expect(game.input.direction.x).toBe(20);      // reversed
+    });
+
+    it('driving into Port 0\'s aperture is a BONK, not a death, via the ring guard', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -5;
+        game.apple = { x: 40, y: 340 }; game.glitches = []; game.npcs = []; game.obstacles = [];
+        const g = game.gridSize;
+        const mid = Math.floor(game.canvas.width / 2 / g) * g; // aperture centre column
+        game.snake.body = [{ x: mid, y: 20 }]; // row 1, aligned with the aperture, facing north
+        game.input.direction = { x: 0, y: -20 };
+        step(game, { x: 0, y: -20 }); // drive up into the sealed port
+        expect(game.state.gameState).toBe('PLAYING'); // a bonk, never a death
+        expect(game.audio.playDenied).toHaveBeenCalled();
+        expect(game.snake.head.y).toBe(20); // didn't move into the ring
+    });
+
+    it('crossing a broken door still transitions to the next room (2-step doorway walk)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 4; game.worldManager.currentRoomY = 2;
+        game.apple = { x: 200, y: 200 }; game.glitches = []; game.npcs = []; game.obstacles = [];
+        // guarantee a broken left door and align the head with it
+        const wp = game.worldManager.getWeakPoint(4, 2, 'left') || { start: 100 };
+        game.worldManager.breakWall(4, 2, 'left');
+        game.snake.body = [{ x: 20, y: wp.start }]; // col 1, at the door
+        step(game, { x: -20, y: 0 }); // step into the doorway (col 0)
+        expect(game.worldManager.currentRoomX).toBe(4); // not crossed yet — in the doorway
+        step(game, { x: -20, y: 0 }); // off-canvas -> transition to {3,2}
+        expect(game.worldManager.currentRoomX).toBe(3);
+        expect(game.worldManager.currentRoomY).toBe(2);
+        expect(game.state.gameState).not.toBe('DEAD');
+    });
+});
 
 // ---------------------------------------------------------------------------------
 describe('The finite Wilds — the Kernel\'s coil', () => {
@@ -355,32 +454,89 @@ describe('HUSH — the House Silence', () => {
 describe('Nibble\'s black market & the Glitch Shunt', () => {
     beforeEach(mountDom);
 
-    it('intro on first bump; the pitch IS the purchase (house consent gag); price comes off the body', () => {
+    it('first bump plays her intro, then opens her REAL shop (like 2-Bit)', () => {
         const game = newGame();
-        game.state.score = 25;
-        game.growSnake(25); // Data = segments: 26 cells incl. head
         const nib = new NPC(200, 200, 20, 'nibble', []);
         game.npcs = [nib];
         game.npcNibble(nib);
         expect(game.state.unlocked.nibbleMet).toBe(true);
-        finishDialog(game);
-        expect(game.state.upgrades.corruptHandler).toBe(false); // intro only
-        game.npcNibble(nib);
-        finishDialog(game); // finishing the pitch buys it, then her buy patter plays out
-        expect(game.state.upgrades.corruptHandler).toBe(true);
-        expect(game.state.score).toBe(5);
-        expect(game.snake.body.length).toBe(6); // 26 - 20 spent
+        expect(game.state.gameState).toBe('DIALOG'); // intro first
+        finishDialog(game); // intro's onComplete opens the shop
+        expect(game.state.gameState).toBe('SHOP');
+        expect(game.shopManager.activeVendor).toBe('nibble');
+        expect(game.shopManager.items.some(i => i.name === 'Glitch Shunt')).toBe(true);
     });
 
-    it('under 20 Data she sends you away heavier-hearted, not lighter', () => {
+    it('buying the Glitch Shunt spends Data off the body; price = 20', () => {
         const game = newGame();
+        game.state.unlocked.nibbleMet = true;
+        game.state.score = 25;
+        game.growSnake(25); // Data = segments: 26 cells incl. head
+        const nib = new NPC(200, 200, 20, 'nibble', []);
+        game.npcs = [nib];
+        game.npcNibble(nib); // straight to shop (already met)
+        expect(game.state.gameState).toBe('SHOP');
+        const shunt = game.shopManager.items.find(i => i.name === 'Glitch Shunt');
+        game.shopManager.purchase(shunt);
+        expect(game.state.upgrades.corruptHandler).toBe(true);
+        expect(game.state.score).toBe(5);
+        expect(game.snake.body.length).toBe(6); // 26 - 20 spent (Data = segments)
+    });
+
+    it('under 20 Data the Shunt button is disabled, and nothing is spent', () => {
+        const game = newGame();
+        game.state.unlocked.nibbleMet = true;
         game.state.score = 10;
         const nib = new NPC(200, 200, 20, 'nibble', []);
-        game.state.unlocked.nibbleMet = true;
         game.npcNibble(nib);
-        finishDialog(game);
+        const shunt = game.shopManager.items.find(i => i.name === 'Glitch Shunt');
+        game.shopManager.purchase(shunt); // refused: can't afford
         expect(game.state.upgrades.corruptHandler).toBe(false);
         expect(game.state.score).toBe(10);
+    });
+
+    it('Scale Mods absorb the first Glitch bite per room, then it bites again', () => {
+        const game = newGame();
+        game.state.upgrades.glitchWard = true;
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 }; game.npcs = []; game.obstacles = [];
+        game.state.score = 10; game.growSnake(10); // 11 cells
+        game._wardUsedThisRoom = false;
+        game.glitches = [new Glitch(120, 100, 20)];
+        game.snake.body = [{ x: 100, y: 100 }, ...Array.from({ length: 10 }, (_, i) => ({ x: 80 - i * 20, y: 100 }))];
+        step(game, { x: 20, y: 0 }); // first bite: absorbed
+        expect(game.state.score).toBe(10); // no drain
+        expect(game._wardUsedThisRoom).toBe(true);
+        game.glitches = [new Glitch(140, 100, 20)];
+        step(game, { x: 20, y: 0 }); // second bite: real
+        expect(game.state.score).toBeLessThan(10);
+    });
+
+    it('Salvage Claws drop re-collectible Data when corruption sheds you', () => {
+        const game = newGame();
+        game.state.upgrades.salvage = true;
+        game.state.unlocked.borders = false;
+        game.apple = { x: 300, y: 300 }; game.npcs = []; game.obstacles = [];
+        game.state.score = 10; game.growSnake(10);
+        // tail trails DOWN the screen (on-canvas) so shed cells are valid drop sites
+        game.snake.body = [{ x: 100, y: 100 }, ...Array.from({ length: 10 }, (_, i) => ({ x: 100, y: 120 + i * 20 }))];
+        game.glitches = [new Glitch(120, 100, 20)];
+        step(game, { x: 20, y: 0 }); // 3-segment bite -> salvage drops ~2 motes
+        expect(game.dataMotes.some(m => m.salvage)).toBe(true);
+    });
+
+    it('Salvage Claws also drop on a Crumple bounce (post-fold, so the shed cells are free)', () => {
+        const game = newGame();
+        game.state.upgrades.salvage = true;
+        game.state.upgrades.crumpleLevel = 1;
+        game.state.unlocked.borders = false;
+        game.apple = { x: 340, y: 20 }; game.npcs = []; game.obstacles = [];
+        game.state.score = 20; game.growSnake(20);
+        // a long on-canvas body so shedAmount(10) has room and the shed cells are valid
+        game.snake.body = [{ x: 200, y: 20 }, ...Array.from({ length: 18 }, (_, i) => ({ x: 200, y: 40 + i * 20 }))];
+        game.input.direction = { x: 20, y: 0 };
+        game.bounce();
+        expect(game.dataMotes.some(m => m.salvage)).toBe(true); // motes dropped at vacated cells
     });
 
     it('the Shunt pushes a Glitch along your heading instead of biting', () => {
@@ -416,177 +572,211 @@ describe('Nibble\'s black market & the Glitch Shunt', () => {
 });
 
 // ---------------------------------------------------------------------------------
-describe('Heur\'s Purge Cycle — the Body-Breakout', () => {
+describe('Heur\'s Decontamination — in-room Breakout', () => {
     beforeEach(mountDom);
 
-    it('the intercept seizes the next open sector once you carry the module', () => {
+    it('fires only in the DEDICATED Bay {5,-1}, entered while flagged; you stay in PLAYING', () => {
         const game = newGame();
         game.state.upgrades.corruptHandler = true;
         game.state.unlocked.borders = true;
-        game.worldManager.currentRoomX = 7;
-        game.worldManager.currentRoomY = 1;
-        game.shiftScreen(1, 0); // into open Wilds {8,1}
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = 0; // Localhost
+        game.shiftScreen(0, -1); // heading NORTH up the spine into the Bay {5,-1}
         expect(game.state.gameState).toBe('DIALOG');
         expect(game.dialogManager.currentDialog).toBe(HEUR.intercept);
         finishDialog(game);
-        expect(game.state.gameState).toBe('PURGE');
-        expect(game.state.unlocked.bayRoom).toEqual({ x: 8, y: 1 });
+        expect(game.state.gameState).toBe('PLAYING'); // the fight is played IN the room
+        expect(game.heur).toBeTruthy();
+        expect(game.heur.far).toBe('up'); // you were heading north
+        expect(game.state.unlocked.bayRoom).toEqual({ x: 5, y: -1 });
+        expect(game.glitches.length).toBe(0); // the bay is swept clean
+        expect(game.obstacles.length).toBe(0);
     });
 
-    it('never inside a Safe Zone, the Hub, or a story room', () => {
+    it('the daemon never ambushes elsewhere — only the Bay triggers it', () => {
         const game = newGame();
         game.state.upgrades.corruptHandler = true;
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        expect(game._heurInterceptHere(1, 0)).toBe(false); // a random open sector
         game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = 0;
-        expect(game._purgeInterceptHere()).toBe(false); // Localhost
-        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 3;
-        expect(game._purgeInterceptHere()).toBe(false); // Cadenza
-        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -2;
-        expect(game._purgeInterceptHere()).toBe(false); // the Ascent
+        expect(game._heurInterceptHere(0, -1)).toBe(false); // Localhost
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -1;
+        expect(game._heurInterceptHere(0, -1)).toBe(true);  // the Bay
+        // and never again once decontaminated
+        game.state.unlocked.purgeComplete = true;
+        expect(game._heurInterceptHere(0, -1)).toBe(false);
     });
 
-    it('paddle width is your length, with the hard 3-cell floor', () => {
+    it('the ping ADVANCES on a wall-bonk tick (no free pressure by parking on a wall)', () => {
         const game = newGame();
-        game.growSnake(9); // 10 cells
-        game.startPurge();
-        expect(game.paddleLen).toBe(10);
-        game.purge.virtual = 1;
-        expect(game.paddleLen).toBe(3);
+        game.state.unlocked.borders = true;
+        game.state.unlocked.tailRider = true; // gear system on
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right'); // far=right, retreat=left
+        // hold into the FAR (sealed, non-retreat) wall — a bonk every tick
+        game.snake.body = [{ x: game.ringRight - 20, y: 200 }];
+        game.input.direction = { x: 20, y: 0 };
+        game.input.nextDirection = { x: 20, y: 0 };
+        const before = { c: game.heur.ping.c, r: game.heur.ping.r };
+        game.update(1000); // one move-tick: the head bonks, but the ping must still step
+        expect(game.heur).toBeTruthy(); // NOT a retreat — the fight is still live
+        const after = { c: game.heur.ping.c, r: game.heur.ping.r };
+        expect(after.c === before.c && after.r === before.r).toBe(false); // ping moved
     });
 
-    it('a ping to the READ-HEAD docks 2 segments and 2 Data; the shield blocks clean', () => {
+    it('the Bay {5,-1} is an interior spine room — its far door (up) is never coil', () => {
+        const wm = newGame().worldManager;
+        expect(wm.isCoilWall(5, -1, 'up')).toBe(false);   // north to the rematches
+        expect(wm.isCoilWall(5, -1, 'down')).toBe(false); // south back to Localhost (retreat)
+    });
+
+    it('the room is SEALED (a bonk, not a death) except the retreat door', () => {
         const game = newGame();
-        game.state.score = 10;
-        game.growSnake(10);
-        game.startPurge();
-        const p = game.purge;
-        // aim the ping to land on the head cell (paddle left end)
-        p.paddle.row = 0;
-        const padY = p.bandTop + 0;
-        p.ping = { c: p.paddle.c, r: padY - 1, dc: 0, dr: 1, speed: 1 };
-        game._purgePingStep();
-        expect(p.virtual).toBe(9);  // 11 - 2
-        expect(game.state.score).toBe(8);
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right'); // far=right, retreat=left
+        game.gear = 3;
+        const r = game.crossBorder(400, 200); // ram the far (right) wall — sealed
+        expect(r.stop).toBe(true);
+        expect(game.state.gameState).toBe('PLAYING'); // no death
+        expect(game.heur).toBeTruthy();               // fight still live
+        expect(game.audio.playDenied).toHaveBeenCalled();
+        // but the retreat (left, the way you came) is NOT sealed — the fight ENDS
+        // (the seal lifts) and the crossing falls through to the normal boundary logic.
+        game.crossBorder(-20, 200);
+        expect(game.heur).toBeNull(); // retreated: fight over, no restart, no penalty
+    });
+
+    it('the ping reads the HEAD for 2 segments + 2 Data (coupled), and deflects off the body', () => {
+        const game = newGame();
+        game.state.score = 10; game.growSnake(10);
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right');
+        game.heur.bricks = []; // isolate: no accidental win
+        const g = game.gridSize;
+        // a length-5 body so the head-read can shed the full 2
+        game.snake.body = [{ x: 5 * g, y: 5 * g }, { x: 6 * g, y: 5 * g }, { x: 7 * g, y: 5 * g }, { x: 8 * g, y: 5 * g }, { x: 9 * g, y: 5 * g }];
+        game.heur.ping = { c: 4, r: 5, dc: 1, dr: 0 }; // about to step onto the head cell
+        game._heurPingStep();
+        expect(game.state.score).toBe(8); // -2 (coupled)
+        expect(game.snake.body.length).toBe(3); // 5 -> 3
         expect(game.audio.playCorruptHit).toHaveBeenCalled();
-        // now the shield
-        p.ping = { c: p.paddle.c + 2, r: padY - 1, dc: 0, dr: 1, speed: 1 };
-        game._purgePingStep();
-        expect(p.virtual).toBe(9); // unchanged
-        expect(game.audio.playDoot).toHaveBeenCalled();
     });
 
-    it('the three band rows are three discrete rebound angles', () => {
+    it('Heur\'s own signature is unbreakable until every other brick is gone', () => {
         const game = newGame();
-        game.growSnake(6);
-        game.startPurge();
-        const p = game.purge;
-        // middle row: straight up
-        p.paddle.row = 1;
-        p.ping = { c: p.paddle.c + 1, r: p.bandTop + 1 - 1, dc: 1, dr: 1, speed: 1 };
-        game._purgePingStep();
-        expect(p.ping.dc).toBe(0);
-        expect(p.ping.dr).toBe(-1);
-        // bottom row: reversed
-        p.paddle.row = 2;
-        p.ping = { c: p.paddle.c + 1, r: p.bandTop + 2 - 1, dc: 1, dr: 1, speed: 1 };
-        game._purgePingStep();
-        expect(p.ping.dc).toBe(-1);
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right');
+        const heur = game.heur.bricks.find(b => b.heur);
+        game.snake.body = [{ x: 0, y: 0 }]; // keep the body out of the way
+        // aim the ping into the heur brick from the left
+        game.heur.ping = { c: heur.c - 1, r: heur.r, dc: 1, dr: 0 };
+        game._heurPingStep();
+        expect(game.heur.bricks.some(b => b.heur)).toBe(true); // still there
     });
 
-    it('Heur\'s own signature stays clean until every other entry is breached', () => {
+    it('the ping is CONTAINED — it bounces off every wall (no pass, no restart)', () => {
         const game = newGame();
-        game.growSnake(6);
-        game.startPurge();
-        const p = game.purge;
-        const heur = p.bricks.find(b => b.heur);
-        p.ping = { c: heur.c, r: heur.r + 1, dc: 0, dr: -1, speed: 1 };
-        game._purgePingStep();
-        expect(p.bricks.find(b => b.heur).hp).toBe(1); // untouched: it reflected
-        expect(game.audio.playCrack).not.toHaveBeenCalled();
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right'); // far=right, retreat=left
+        game.snake.body = [{ x: 0, y: 0 }]; // body out of the way
+        game.heur.bricks = [game.heur.bricks.find(b => b.heur)]; // isolate: no accidental win
+        // drive the ping into the LEFT wall (the retreat side) — it must reflect, not leave
+        game.heur.ping = { c: 0, r: 5, dc: -1, dr: 0 };
+        game._heurPingStep();
+        expect(game.heur).toBeTruthy();          // still fighting (no reseal, no restart)
+        expect(game.heur.ping.dc).toBe(1);       // reflected back into the room
+        expect(game.heur.ping.c).toBeGreaterThanOrEqual(0); // never left the bay
     });
 
-    it('losing all clearances reseals: entry length + banked motes, and the cycle restarts', () => {
+    it('breaking the whole database WINS: the far door opens, the seal lifts, the Ascent arms', () => {
         const game = newGame();
-        game.state.score = 8;
-        game.growSnake(8); // 9 cells
-        game.startPurge();
-        const p = game.purge;
-        p.motesEaten = 2;
-        p.clearances = 1;
-        p.ping = { c: 5, r: p.rows - 1, dc: 0, dr: 1, speed: 1 };
-        game._purgePingStep(); // past the band: the last clearance goes
-        expect(game.state.gameState).toBe('DIALOG');
-        expect(game.state.score).toBe(10); // entry 8 + 2 banked
-        finishDialog(game);
-        expect(game.state.gameState).toBe('PURGE'); // encore. (again.)
-        expect(game.purge.virtual).toBe(11); // 9 body + 2 banked
-    });
-
-    it('a mote caught at the right wall grows the paddle without pushing it out of the room', () => {
-        const game = newGame();
-        game.growSnake(6);
-        game.startPurge();
-        const p = game.purge;
-        p.paddle.c = p.cols - game.paddleLen; // flush right
-        p.paddle.row = 1;
-        p.tick = 1; // odd tick: no drift this cycle — the mote sits on the row already
-        p.motes = [{ c: p.cols - 1, r: p.bandTop + 1 }];
-        game.updatePurge(1000);
-        expect(p.paddle.c + game.paddleLen).toBeLessThanOrEqual(p.cols); // never past the wall
-    });
-
-    it('the ping can never freeze between the ceiling and Heur\'s clean signature', () => {
-        const game = newGame();
-        game.growSnake(6);
-        game.startPurge();
-        const p = game.purge;
-        const heur = p.bricks.find(b => b.heur);
-        // park the ping at row 0 heading down into the clean signature — the old freeze
-        p.ping = { c: heur.c, r: 0, dc: 0, dr: 1, speed: 1 };
-        const positions = new Set();
-        for (let i = 0; i < 12; i++) {
-            game._purgePingStep();
-            positions.add(p.ping.c + ',' + p.ping.r + ',' + p.ping.dc + ',' + p.ping.dr);
-        }
-        expect(positions.size).toBeGreaterThan(1); // it moved on — no perpetual corner
-    });
-
-    it('a from-above brick hit reflects the ping up instead of grinding through', () => {
-        const game = newGame();
-        game.growSnake(6);
-        game.startPurge();
-        const p = game.purge;
-        const brick = p.bricks.find(b => !b.heur);
-        p.ping = { c: brick.c, r: brick.r - 1, dc: 0, dr: 1, speed: 1 }; // above it, descending
-        game._purgePingStep();
-        expect(brick.hp).toBe(1);
-        expect(p.ping.dr).toBe(-1); // bounced back up — no tunnel
-    });
-
-    it('paddle mode steers reversals directly (no snake 180-guard, no gear routing)', () => {
-        const game = newGame();
-        game.state.gameState = 'PURGE';
-        game.input.direction = { x: 20, y: 0 }; // sliding right
-        game.input.handleKeyDown({ key: 'ArrowLeft' }, null, null, null, () => { throw new Error('gear routed'); });
-        expect(game.input.nextDirection).toEqual({ x: -20, y: 0 }); // the reversal took
-    });
-
-    it('breaching the whole database wins: fold-out return, the Ascent arms', () => {
-        const game = newGame();
-        game.state.score = 6;
-        game.growSnake(6);
-        game.startPurge();
-        const p = game.purge;
-        p.bricks = [p.bricks.find(b => b.heur)]; // only his own signature left
-        const heur = p.bricks[0];
-        p.ping = { c: heur.c, r: heur.r + 1, dc: 0, dr: -1, speed: 1 };
-        game._purgePingStep();
+        game.state.unlocked.borders = true;
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right'); // far = right door
+        game.snake.body = [{ x: 0, y: 0 }];
+        const heur = game.heur.bricks.find(b => b.heur);
+        game.heur.bricks = [heur]; // only his signature remains
+        game.heur.ping = { c: heur.c - 1, r: heur.r, dc: 1, dr: 0 };
+        game._heurPingStep();
+        expect(game.heur).toBeNull(); // seal lifted
         expect(game.state.unlocked.purgeComplete).toBe(true);
+        expect(game.worldManager.isWallBroken(8, 1, 'right')).toBe(true); // far door opened
         expect(game.state.gameState).toBe('DIALOG');
-        expect(game.snake.body.length).toBe(1); // folded at the entry cell
-        expect(game.pendingUnfold).toBe(6);     // 7-cell worm extrudes as you drive off
-        expect(game.worldManager.isWeakPointRevealed(5, 0, 'up')).toBe(true); // the spine lit
         finishDialog(game);
         expect(game.state.gameState).toBe('PLAYING');
+        // and now you can actually leave through the far door
+        expect(game.worldManager.getWeakPoint(8, 1, 'right')).toBeTruthy();
+    });
+
+    it('the ping never freezes in a corner against the locked signature', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right');
+        game.snake.body = [{ x: 0, y: 0 }];
+        const positions = new Set();
+        for (let i = 0; i < 40; i++) {
+            if (!game.heur) break;
+            game._heurPingStep();
+            if (game.heur) positions.add(game.heur.ping.c + ',' + game.heur.ping.r);
+        }
+        expect(positions.size).toBeGreaterThan(3); // it keeps travelling
+    });
+
+    it('for EVERY far direction the ping stays in-bounds, keeps moving, never tunnels bricks', () => {
+        for (const far of ['right', 'left', 'up', 'down']) {
+            const game = newGame();
+            game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+            game.startHeurFight(far);
+            game.snake.body = [{ x: 0, y: 0 }]; // body out of the way
+            const H = game.heur;
+            const seen = new Set();
+            let steps = 0;
+            const goal = H.goal;
+            while (game.heur && steps < 600) {
+                const p = game.heur.ping;
+                // the ping must never sit inside a NON-goal out-of-bounds cell (a leak)
+                const oobBad =
+                    (p.c < 0 && goal !== 'left') || (p.c >= H.cols && goal !== 'right') ||
+                    (p.r < 0 && goal !== 'up') || (p.r >= H.rows && goal !== 'down');
+                expect(oobBad).toBe(false);
+                seen.add(p.c + ',' + p.r);
+                game._heurPingStep();
+                steps++;
+            }
+            // it should have visited many cells (not frozen) and terminated (win or a
+            // reseal opening a dialog) within the budget — never an infinite loop.
+            expect(seen.size).toBeGreaterThan(8);
+        }
+    });
+
+    it('a win on a far wall the hash left SOLID still opens a usable door (no soft-lock)', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        // pick a room+dir where getWeakPoint is null pre-win
+        let room = null;
+        outer:
+        for (let x = 2; x <= 10; x++) for (let y = -4; y <= 4; y++) {
+            for (const dir of ['right', 'left', 'up', 'down']) {
+                if (!game.worldManager.isCoilWall(x, y, dir) && !game.worldManager.getWeakPoint(x, y, dir)) { room = { x, y, dir }; break outer; }
+            }
+        }
+        expect(room).toBeTruthy();
+        game.worldManager.currentRoomX = room.x; game.worldManager.currentRoomY = room.y;
+        game.startHeurFight(room.dir);
+        game.snake.body = [{ x: 0, y: 0 }];
+        game.heur.bricks = [game.heur.bricks.find(b => b.heur)];
+        const hb = game.heur.bricks[0];
+        // deliver the ping onto the last brick
+        game.heur.ping = { c: hb.c - 1, r: hb.r, dc: 1, dr: 0 };
+        // some far dirs need a different approach vector; brute-force a hit
+        for (let i = 0; i < 400 && game.heur; i++) {
+            game.snake.body = [{ x: 0, y: 0 }];
+            game._heurPingStep();
+        }
+        expect(game.heur).toBeNull();
+        expect(game.worldManager.getWeakPoint(room.x, room.y, room.dir)).toBeTruthy(); // door forced into being
+        expect(game.worldManager.isWallBroken(room.x, room.y, room.dir)).toBe(true);   // and opened
     });
 });
 
@@ -901,17 +1091,18 @@ describe('Port 0 — the rigidity funnel and the reboot', () => {
         expect(game.worldManager.isWallBroken(5, -5, 'down')).toBe(true); // still open
     });
 
-    it("the finale's corrupted cell cannot be eaten or shunt-bitten away", () => {
+    it("the finale's corrupted cell cannot be eaten, bitten, OR shunt-SHOVED away", () => {
         const game = finaleGame();
         game.npcs = []; game.stamps = [];
-        game.state.upgrades.corruptHandler = true;
-        game.obstacles = [{ x: 240, y: 100 }]; // block the push
+        game.state.upgrades.corruptHandler = true; // the Shunt would normally shove it
+        game.obstacles = [];
         game.glitches = [new Glitch(220, 100, 20)];
         game.snake.body = [{ x: 200, y: 100 }, { x: 180, y: 100 }];
         game.state.score = 1;
-        step(game, { x: 20, y: 0 }); // head onto the glitch, push blocked
-        expect(game.glitches.length).toBe(1); // indestructible while the fight is live
-        expect(game.state.score).toBe(1);     // and it doesn't bite either — a bonk
+        step(game, { x: 20, y: 0 }); // head onto the glitch — the finale guard runs BEFORE the shove
+        expect(game.glitches.length).toBe(1);       // still there
+        expect(game.glitches[0].x).toBe(220);       // and NOT shoved off position
+        expect(game.state.score).toBe(1);           // a harmless bonk
         expect(game.snake.body.length).toBe(2);
     });
 });
@@ -950,6 +1141,70 @@ describe('Wilds discovery', () => {
         }
         const total = (b.maxX - b.minX + 1) * (b.maxY - b.minY + 1);
         expect(reached.size).toBe(total); // no room is sealed out of every playthrough
+    });
+
+    it('Wilds UI modules are found by bump, grant their tool, and never respawn', () => {
+        const game = newGame();
+        const gm = new NPC(80, 80, 20, 'uimodule', []);
+        gm.grant = 'gearMeter'; gm.roomKey = '2,2';
+        game.npcs = [gm];
+        game.npcUiModule(gm);
+        expect(game.state.unlocked.gearMeter).toBe(true);
+        expect(game.state.unlocked.modulesFound).toContain('2,2');
+        expect(game.npcs.length).toBe(0);
+        // RoomGenerator suppresses an already-found module room
+        const room = game.worldManager.roomGenerator.generateRoom(2, 2, game.state.unlocked, game.worldManager);
+        expect(room.npcs.some(n => n.id === 'uimodule')).toBe(false);
+    });
+
+    it('the map-pins tool grants a shape and cycles the current room pin (persisted)', () => {
+        const game = newGame();
+        const tool = new NPC(80, 80, 20, 'uimodule', []);
+        tool.grant = 'mapPins'; tool.roomKey = '3,-3';
+        game.npcUiModule(tool);
+        expect(game.state.unlocked.mapPinsTool).toBe(true);
+        expect(game.state.unlocked.pinShapes).toBe(1);
+        game.worldManager.currentRoomX = 4; game.worldManager.currentRoomY = 1;
+        game.cycleMapPin();
+        expect(game.mapPins['4,1']).toBe(0); // first shape
+        game.cycleMapPin();
+        expect(game.mapPins['4,1']).toBeUndefined(); // one shape -> cycles straight back to none
+        // an extra shape module raises the cycle length
+        const extra = new NPC(80, 80, 20, 'uimodule', []);
+        extra.grant = 'pinShape'; extra.roomKey = '2,-4';
+        game.npcUiModule(extra);
+        expect(game.state.unlocked.pinShapes).toBe(2);
+        game.cycleMapPin(); expect(game.mapPins['4,1']).toBe(0);
+        game.cycleMapPin(); expect(game.mapPins['4,1']).toBe(1);
+        game.cycleMapPin(); expect(game.mapPins['4,1']).toBeUndefined();
+    });
+
+    it('pin-shape count is order-independent: extras-first then the tool = 2 shapes', () => {
+        const game = newGame();
+        const extra = new NPC(0, 0, 20, 'uimodule', []); extra.grant = 'pinShape'; extra.roomKey = '2,-4';
+        game.npcUiModule(extra); finishDialog(game);
+        expect(game.state.unlocked.pinShapes).toBe(1); // the extra
+        const tool = new NPC(0, 0, 20, 'uimodule', []); tool.grant = 'mapPins'; tool.roomKey = '3,-3';
+        game.npcUiModule(tool); finishDialog(game);
+        expect(game.state.unlocked.mapPinsTool).toBe(true);
+        expect(game.state.unlocked.pinShapes).toBe(2); // the tool ADDS its own shape (not clamped to 1)
+    });
+
+    it('found UI modules and pins survive a save/load round-trip', () => {
+        const game = newGame();
+        game.state.unlocked.gearMeter = true;
+        game.state.unlocked.coordReadout = true;
+        game.state.unlocked.mapPinsTool = true;
+        game.state.unlocked.pinShapes = 2;
+        game.state.unlocked.modulesFound = ['2,2', '8,2'];
+        game.mapPins = { '5,0': 1, '8,3': 0 };
+        const d = game.serialize();
+        const g2 = newGame();
+        expect(g2.applySave(d)).toBe(true);
+        expect(g2.state.unlocked.gearMeter).toBe(true);
+        expect(g2.state.unlocked.pinShapes).toBe(2);
+        expect(g2.state.unlocked.modulesFound).toEqual(['2,2', '8,2']);
+        expect(g2.mapPins).toEqual({ '5,0': 1, '8,3': 0 });
     });
 
     it('the discovery rooms exist where the Topology Scan says they do', () => {

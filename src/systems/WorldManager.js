@@ -129,6 +129,17 @@ export class WorldManager {
         if (key) this.romSealed.delete(key);
     }
 
+    // Open a scripted doorway on demand (Heur's far door on a win): guarantee a real,
+    // centred, visible weak point on that wall (scriptedDoors) and breach it, so the
+    // player walks straight out — even on a wall the hash had left solid.
+    openScriptedDoor(roomX, roomY, direction) {
+        const key = this.boundaryKey(roomX, roomY, direction);
+        if (!key) return;
+        if (this.isCoilWall(roomX, roomY, direction)) return; // never punch the Kernel's coil
+        this.scriptedDoors.add(key);
+        this.brokenWalls.add(key);
+    }
+
     // Can this boundary be opened by adding it to mainPath? (getWeakPoint checks the
     // Hub seal, the coil, forcedSolid, and romSealed BEFORE mainPath — carving any of
     // those would silently do nothing.)

@@ -150,6 +150,28 @@ button:hover {
     text-shadow: 0 0 10px #00ff00;
 }
 
+/* Nibble's Black Market — the warm-but-dangerous variant (heat-lamp amber over deep
+   plum), so her stall reads as a different place than 2-Bit's cool green node shop. */
+#shop-overlay.nibble {
+    background: rgba(26, 8, 18, 0.96);
+    border-color: #ff9e3d;
+    color: #ffb765;
+    box-shadow: 0 0 22px #b1355f;
+}
+#shop-overlay.nibble h2 { text-shadow: 0 0 10px #ff9e3d; }
+#shop-overlay.nibble .shop-item { border-bottom-color: #b1355f; }
+#shop-overlay.nibble .shop-item-text small { color: #e79a6a; }
+#shop-overlay.nibble button {
+    background: rgba(255, 158, 61, 0.12);
+    border-color: #ff9e3d;
+    color: #ffb765;
+    box-shadow: 0 0 5px rgba(177, 53, 95, 0.6);
+}
+#shop-overlay.nibble button:hover {
+    background: rgba(255, 158, 61, 0.28);
+    box-shadow: 0 0 15px rgba(255, 158, 61, 0.8);
+}
+
 .shop-item {
     display: flex;
     justify-content: space-between;
