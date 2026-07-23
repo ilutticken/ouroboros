@@ -365,13 +365,46 @@ describe('Motion Carried — the world moves on your tick', () => {
 
     it('the flip fires on the SECOND Gate run-in (clearing the Override)', () => {
         const game = motionGame();
-        game.state.unlocked.purgeComplete = true;
+        game.state.unlocked.ascentArmed = true; // the EARLY climb, armed at Localhost
         expect(game.state.unlocked.motionCarried).toBe(false);
         game.worldManager.currentRoomX = 5;
         game.worldManager.currentRoomY = -3;
         game.shiftScreen(0, -1); // breach north out of the Override
         expect(game.state.unlocked.gateRematchDone).toBe(true);
         expect(game.state.unlocked.motionCarried).toBe(true);
+    });
+
+    // The midpoint retiming: the rematches must NOT be chained behind the
+    // decontamination any more, or Motion Carried lands two rooms before the act ends.
+    it('the Override is climbable WITHOUT the purge (the early climb)', () => {
+        const game = motionGame();
+        game.state.unlocked.ascentArmed = true;
+        game.state.unlocked.purgeComplete = false; // never went to Nibble/Heur
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = -3;
+        game.shiftScreen(0, -1);
+        expect(game.state.unlocked.gateRematchDone).toBe(true);
+        expect(game.state.unlocked.motionCarried).toBe(true);
+    });
+
+    it('reaching Localhost after Gate arrests you arms the early climb', () => {
+        const game = motionGame();
+        game.state.unlocked.ascentArmed = false;
+        game.state.unlocked.pauseMenu = true; // Gate's Thread Suspension rescue happened
+        game.worldManager.currentRoomX = 4;
+        game.worldManager.currentRoomY = 0;
+        game.shiftScreen(1, 0); // step east into Localhost {5,0}
+        expect(game.state.unlocked.ascentArmed).toBe(true);
+    });
+
+    it('does NOT arm before Gate has been met (no Pause Menu yet)', () => {
+        const game = motionGame();
+        game.state.unlocked.ascentArmed = false;
+        game.state.unlocked.pauseMenu = false; // slipped past Gate somehow
+        game.worldManager.currentRoomX = 4;
+        game.worldManager.currentRoomY = 0;
+        game.shiftScreen(1, 0);
+        expect(game.state.unlocked.ascentArmed).toBe(false);
     });
 
     it('bumping a talkative NPC chirps; combat contacts keep their own sounds', () => {

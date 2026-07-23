@@ -10,7 +10,7 @@ import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
-import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, LOST_VERSE, CADENZA_TITLE,
+import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, CADENZA_SCENE, LOST_VERSE, CADENZA_TITLE,
          NIBBLE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH, GATE_OVERRIDE,
          CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING, UI_MODULES } from '../content/dialogue.js';
 
@@ -97,25 +97,27 @@ export class GameEngine {
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
         
-        const btnPlaytest = document.getElementById('btn-playtest');
-        if (btnPlaytest) {
-            const devAction = () => {
-                this.audio.init(); // the dev cheat may be the first interaction
-                // Only while actually playing or shopping — firing mid-dialog/transition
-                // used to jump score past one-shot beats and desync the sim.
-                if (this.state.gameState !== 'PLAYING' && this.state.gameState !== 'SHOP') return;
-                this.state.addScore(10);
-                this.growSnake(10); // Data = segments: the cheat grows you too
-                this.audio.playBeep();
-                this.checkUnlocks();
-                if (this.state.gameState === 'SHOP') this.shopManager.updateUI();
-                this.refreshScore();
-            };
-            btnPlaytest.addEventListener('click', devAction);
-            window.addEventListener('keydown', (e) => {
-                if (e.key === 'p' || e.key === 'P') devAction();
-            });
-        }
+        // DEV CHEAT (+10 Data) — playtest tool, SHIPS-REMOVED. The on-screen [DEV] button
+        // is gone (it was the last non-diegetic control on the ribbon); the 'P' hotkey
+        // stays so the owner can fast-forward a run. Registered OUTSIDE any element guard
+        // on purpose: the listener used to live inside `if (btnPlaytest)`, so deleting the
+        // button would have silently killed 'P' along with it. At release, delete this
+        // whole block — nothing else references devAction.
+        const devAction = () => {
+            this.audio.init(); // the dev cheat may be the first interaction
+            // Only while actually playing or shopping — firing mid-dialog/transition
+            // used to jump score past one-shot beats and desync the sim.
+            if (this.state.gameState !== 'PLAYING' && this.state.gameState !== 'SHOP') return;
+            this.state.addScore(10);
+            this.growSnake(10); // Data = segments: the cheat grows you too
+            this.audio.playBeep();
+            this.checkUnlocks();
+            if (this.state.gameState === 'SHOP') this.shopManager.updateUI();
+            this.refreshScore();
+        };
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'p' || e.key === 'P') devAction();
+        });
         
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape' && this.state.unlocked.pauseMenu) {
@@ -192,6 +194,7 @@ export class GameEngine {
         this.moveTimer = 0;
         this._wallBonking = false; // throttles repeated wall-bonk feedback
         this._tick = 0;            // move-tick counter (Denny slow-tracks on evens)
+        this._gearTick = -1;       // last move-tick a gear step landed (one step per tick)
         this._guided = new Set();  // sectors the Architect has already "guided" you to
         this.carriedModule = null; // a picked-up module riding your tail (e.g. 'map')
         this.moduleLoad = null;    // active install animation ({phase, t, fromX, fromY})
@@ -283,7 +286,13 @@ export class GameEngine {
             // reading a log would silently accumulate max speed (the F15 bug).
             if (this.state.gameState === 'PLAYING' && this.state.unlocked.tailRider
                 && !(this.narrative && this.narrative.isPrinting) && !this.moduleLoad) {
+                // ONE gear step per move-tick. Every "tap the way you're already facing"
+                // is an upshift, so a habitual Snake double-tap could apply two steps in a
+                // single frame and jump 0->2 before the meter ever drew a pip — an unseen
+                // change to a state that kills you. Braking shares the gate on purpose.
+                if (this._tick === this._gearTick) return;
                 this.changeGear(delta);
+                this._gearTick = this._tick;
             }
         }, () => (this.state.gameState === 'PLAYING' || this.state.gameState === 'ENCORE') && !this.moduleLoad);
         // ^ canSteer gates ONLY on PLAYING (+ no install). It deliberately does NOT
@@ -543,7 +552,7 @@ export class GameEngine {
 
         // The Ascent's clears: breaching NORTH out of an armed rematch room resolves it.
         let clearedDialog = null;
-        if (dy === -1 && this.state.unlocked.purgeComplete) {
+        if (dy === -1 && this.state.unlocked.ascentArmed) {
             if (fromX === 5 && fromY === -2 && !this.state.unlocked.dennyRematchDone) {
                 this.state.unlocked.dennyRematchDone = true;
                 clearedDialog = DENNY_REMATCH.cleared;
@@ -608,6 +617,18 @@ export class GameEngine {
             if (!this.state.unlocked.finaleDone) {
                 this.worldManager.brokenWalls.delete(this.worldManager.boundaryKey(5, -5, 'down'));
             }
+        }
+
+        // THE EARLY CLIMB ARMS. Reaching Localhost having already been arrested by Gate
+        // (pauseMenu is his Thread Suspension rescue, so it can't arm before you've met
+        // him) mans the two rematch posts north of town. That makes the SECOND Gate run-in
+        // — and Motion Carried with it — reachable straight out of Localhost, at the act
+        // MIDPOINT, instead of being chained behind the Nibble/Heur detour.
+        if (!this.state.unlocked.ascentArmed
+            && this.state.unlocked.pauseMenu
+            && this.worldManager.currentRoomX === 5
+            && this.worldManager.currentRoomY === 0) {
+            this.state.unlocked.ascentArmed = true;
         }
 
         // Reaching Cadenza's sealed sector resolves her homing beacon — you've located
@@ -692,8 +713,8 @@ export class GameEngine {
         const u = this.state.unlocked;
         if (rx !== 5) return;
         const stale =
-            (ry === -2 && u.purgeComplete && !u.dennyRematchDone) ||
-            (ry === -3 && u.purgeComplete && !u.gateRematchDone) ||
+            (ry === -2 && u.ascentArmed && !u.dennyRematchDone) ||
+            (ry === -3 && u.ascentArmed && !u.gateRematchDone) ||
             (ry === -5 && !u.finaleDone);
         if (stale) delete this.worldManager.rooms[this.worldManager.getRoomKey(rx, ry)];
     }
@@ -723,8 +744,8 @@ export class GameEngine {
         const u = this.state.unlocked;
         if (rx !== 5) return false;
         let lines = null, flag = null;
-        if (ry === -2 && u.purgeComplete && !u.dennyRematchDone && !u.dennyRematchIntroSeen) { lines = DENNY_REMATCH.enter; flag = 'dennyRematchIntroSeen'; }
-        else if (ry === -3 && u.purgeComplete && !u.gateRematchDone && !u.gateOverrideIntroSeen) { lines = GATE_OVERRIDE.enter; flag = 'gateOverrideIntroSeen'; }
+        if (ry === -2 && u.ascentArmed && !u.dennyRematchDone && !u.dennyRematchIntroSeen) { lines = DENNY_REMATCH.enter; flag = 'dennyRematchIntroSeen'; }
+        else if (ry === -3 && u.ascentArmed && !u.gateRematchDone && !u.gateOverrideIntroSeen) { lines = GATE_OVERRIDE.enter; flag = 'gateOverrideIntroSeen'; }
         else if (ry === -5 && !u.finaleDone && !u.finaleIntroSeen) { lines = GATE_FINALE.enter; flag = 'finaleIntroSeen'; }
         if (!lines) return false;
         u[flag] = true;
@@ -1631,6 +1652,11 @@ export class GameEngine {
                     // is complying. No separate confirm.
                     this.state.unlocked.biteProgress = 3;
                     this.state.unlocked.tailRider = true;
+                    // §2.6: driving is LETHAL and gear was invisible until you happened to
+                    // find the {2,2} module out in the Wilds. 2-Bit hooks into your system
+                    // here, so he fits the tach at the same moment he hands you the gearbox
+                    // — the gauge now always exists wherever the danger does.
+                    this.state.unlocked.gearMeter = true;
                     this.npcs = this.npcs.filter(n => n.id !== 'bite');
                     this.snake.body.push({ x: npc.x, y: npc.y });
                     this.state.gameState = 'DIALOG';
@@ -1730,9 +1756,23 @@ export class GameEngine {
     // her the Lost Verse from out in the Wilds — so the finale is gated on a real find.
 
     npcCadenza(npc) {
-        if (this.state.unlocked.encoreComplete) { this.npcSign(npc); return; } // show's over; she holds court
-        const intro = this.state.unlocked.lostVerseFound ? CADENZA_ENCORE.intro : CADENZA_ENCORE.introHole;
+        // ORDER: 1) show's over  ->  2) FIRST CONTACT  ->  3) RETURN visits.
+        // 1) The encore is done: she holds court, no more performances.
+        if (this.state.unlocked.encoreComplete) { this.npcSign(npc); return; }
         this.state.gameState = 'DIALOG';
+        // 2) FIRST CONTACT — the written meeting scene, THEN the performance. Both encore
+        //    intros open on "You came BACK", so without this a first-time visitor was
+        //    greeted as a returnee, and CADENZA_SCENE (already written, and the dialog her
+        //    NPC actually carries) was dead code that could never play. Her scene ends on
+        //    "you found me — that was always the hard part" and a hum, which leads straight
+        //    into the encore.
+        if (!this.state.unlocked.cadenzaMet) {
+            this.state.unlocked.cadenzaMet = true;
+            this.dialogManager.start(CADENZA_SCENE, () => this.startEncore());
+            return;
+        }
+        // 3) RETURN visit — the encore intro, with or without the healed dead note.
+        const intro = this.state.unlocked.lostVerseFound ? CADENZA_ENCORE.intro : CADENZA_ENCORE.introHole;
         this.dialogManager.start(intro, () => this.startEncore());
     }
 
@@ -2635,58 +2675,68 @@ export class GameEngine {
     talkToCacheHome(npc) {
         const u = this.state.unlocked;
         let lines;
-        // THE CHECKPOINT (armed once the purge is survived): Cold Storage is read-only —
-        // sanctuary — and Cache will not open the one-way door north until you're FILED.
-        // The reboot beyond flushes volatile memory; only a ROM save carries you across.
-        // Committing the save (Pause -> S, in this room) is what breaches the door: see
-        // saveGame(). Always satisfiable — she installs Save on the spot if you lack it.
-        // Contaminated (carrying the Shunt, not yet decontaminated): she refuses to file
-        // a dirty copy and points you to Heur's Bay. This is what keeps the finale behind
-        // the mandatory decontamination even if you reached her via the fight-free bypass.
-        if (this.state.upgrades.corruptHandler && !u.purgeComplete && (u.saveFunction || u.pauseMenu)) {
-            u.cacheFound = true;
-            if (u.cacheStage < 3) u.cacheStage = 3;
-            this.dialogManager.start(CACHE_CHECKPOINT.needPurge, () => { this.state.gameState = 'PLAYING'; });
-            return;
-        }
-        if (u.purgeComplete) {
-            if (u.checkpointOpen) {
-                u.cacheFound = true;
-                lines = this._diedSinceCheckpoint ? CACHE_CHECKPOINT.reopen : CACHE_CHECKPOINT.open;
-                this._diedSinceCheckpoint = false;
-            } else if (u.saveFunction) {
-                u.cacheFound = true;
-                if (u.cacheStage < 3) u.cacheStage = 3;
-                lines = CACHE_CHECKPOINT.demand;
-            } else if (u.pauseMenu) {
-                u.saveFunction = true;
-                u.startScreenUnlocked = true;
-                u.cacheFound = true;
-                u.cacheStage = 3;
-                lines = [...CACHE.home.install, ...CACHE_CHECKPOINT.demand];
-            } else {
-                lines = CACHE.home.brushOff;
+
+        // ORDER MATTERS — the branches below are numbered in the sequence a player meets
+        // them. Teaching Save (2) MUST outrank the contamination refusal (3a): she is the
+        // only source of the Save Function, so nothing may stand between a first-time
+        // visitor and learning to save.
+
+        // 1+2) NO SAVE YET — the first meeting. She is the ONLY source of the Save
+        //    Function, so this whole block outranks the contamination refusal below.
+        if (!u.saveFunction) {
+            // 1) No Pause Menu -> nowhere to file a Save. Turn you away and change NOTHING
+            //    (the Hub puzzle stays intact); come back with a Diagnostic Module.
+            if (!u.pauseMenu) {
+                this.dialogManager.start(CACHE.home.brushOff, () => { this.state.gameState = 'PLAYING'; });
+                return;
             }
-            this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
-            return;
-        }
-        if (u.saveFunction) {
-            // Already saved-enabled (Hub grant or a prior visit): a calmer at-home chat.
-            u.cacheFound = true;
-            if (u.cacheStage < 3) u.cacheStage = 3;
-            lines = CACHE.home.haveSave;
-        } else if (u.pauseMenu) {
-            // Reached her without ever getting Save (skipped/never solved the Hub puzzle) —
-            // she installs it right here. This also settles her whole questline (stage 3).
+            // 2) She installs the Save Function on the spot. NEVER blocked: not by
+            //    corruption, not by anything. (This used to sit BELOW the needPurge
+            //    refusal, so a contaminated player who reached her by the fight-free x=4
+            //    bypass was bounced to Heur's Bay and could never be taught to save at
+            //    all.) Settles her questline (stage 3). If the purge is already done she
+            //    rolls straight on into the checkpoint demand, exactly as before.
             u.saveFunction = true;
             u.startScreenUnlocked = true;
             u.cacheFound = true;
             u.cacheStage = 3;
-            lines = CACHE.home.install;
+            lines = u.purgeComplete
+                ? [...CACHE.home.install, ...CACHE_CHECKPOINT.demand]
+                : CACHE.home.install;
+            this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
+
+        // 3) She has already taught you to save — from here the CHECKPOINT rules apply.
+        //    (Reachable with or without a Pause Menu: Save can also come from the Hub
+        //    CACHE puzzle, and that player still deserves the warm chat, not a brush-off.)
+        u.cacheFound = true;
+        if (u.cacheStage < 3) u.cacheStage = 3;
+
+        // 3a) CONTAMINATED (carrying the Shunt, not yet decontaminated): she refuses to
+        //     file a dirty copy and points you at Heur's Bay. This is what keeps the finale
+        //     behind the mandatory decontamination even via the bypass. saveGame()
+        //     independently re-checks purgeComplete, so a dirty player who now HAS Save
+        //     still cannot commit the checkpoint — the finale gate holds either way.
+        if (this.state.upgrades.corruptHandler && !u.purgeComplete) {
+            this.dialogManager.start(CACHE_CHECKPOINT.needPurge, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
+
+        // 3b) THE CHECKPOINT (armed once the purge is survived): Cold Storage is read-only
+        //     — sanctuary — and Cache will not open the one-way door north until you're
+        //     FILED. The reboot beyond flushes volatile memory; only a ROM save carries you
+        //     across. Committing the save (Pause -> S, in this room) breaches the door.
+        if (u.purgeComplete) {
+            if (u.checkpointOpen) {
+                lines = this._diedSinceCheckpoint ? CACHE_CHECKPOINT.reopen : CACHE_CHECKPOINT.open;
+                this._diedSinceCheckpoint = false;
+            } else {
+                lines = CACHE_CHECKPOINT.demand;
+            }
         } else {
-            // No Pause Menu -> nowhere to file a Save. Turn you away, change NOTHING (the
-            // Hub puzzle stays intact); come back with a Diagnostic Module.
-            lines = CACHE.home.brushOff;
+            // 3c) Clean and pre-purge: a calmer at-home chat.
+            lines = CACHE.home.haveSave;
         }
         this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
     }

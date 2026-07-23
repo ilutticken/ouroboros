@@ -1275,6 +1275,28 @@ describe('Night-audit regression fixes', () => {
         expect(g2.cadenzaProximity()).toBe(0);            // ...silenced for good
     });
 
+    // Both encore intros open on "You came BACK" — so a first-time visitor must get her
+    // written meeting scene instead, or she greets a stranger as a returnee (and
+    // CADENZA_SCENE, the dialog her NPC actually carries, never plays at all).
+    it('greets a FIRST-time visitor with the meeting scene, not "you came back"', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        let captured = null;
+        game.dialogManager.start = (lines) => { captured = lines; };
+        game.startEncore = () => {};                       // don't launch the minigame here
+
+        expect(game.state.unlocked.cadenzaMet).toBe(false);
+        game.npcCadenza({ id: 'cadenza', x: 100, y: 100 });
+        expect(game.state.unlocked.cadenzaMet).toBe(true);
+        expect(captured.join(' ')).not.toMatch(/came BACK/i);
+        expect(captured.join(' ')).toContain('An audience');  // CADENZA_SCENE's opener
+
+        // ...and a RETURN visit gets the encore intro as before.
+        captured = null;
+        game.npcCadenza({ id: 'cadenza', x: 100, y: 100 });
+        expect(captured.join(' ')).toMatch(/came BACK/i);
+    });
+
     it('Denny\'s map drops in-bounds even when he\'s on the bottom row (F05)', () => {
         const game = newGame(); // 400x400
         game.state.unlocked.borders = false;
@@ -2249,6 +2271,33 @@ describe('Cache at home in Cold Storage', () => {
         const lines = reachHome(game);
         expect(lines.join(' ')).not.toContain('Save Function acquired');
         expect(game.state.unlocked.cacheStage).toBe(3);
+    });
+
+    // NOTHING may stand between a first-time visitor and learning to Save. Arriving dirty
+    // (Shunt bought, not yet decontaminated) via the fight-free x=4 bypass used to hit the
+    // needPurge refusal FIRST, which bounced you to Heur's Bay with no Save Function — and
+    // since she is its only source, the finale's mandatory save was unreachable.
+    it('still teaches Save on a FIRST meeting even while contaminated', () => {
+        const game = newGame();
+        game.state.unlocked.pauseMenu = true;
+        game.state.unlocked.saveFunction = false;
+        game.state.upgrades.corruptHandler = true;  // carrying Nibble's Glitch Shunt
+        game.state.unlocked.purgeComplete = false;  // never went through Heur's Bay
+        const lines = reachHome(game);
+        expect(game.state.unlocked.saveFunction).toBe(true);
+        expect(lines.join(' ')).toContain('Save Function');
+    });
+
+    // ...but the finale gate still holds: once she HAS taught you, a dirty copy is refused.
+    it('refuses to file a contaminated copy once you already have Save', () => {
+        const game = newGame();
+        game.state.unlocked.pauseMenu = true;
+        game.state.unlocked.saveFunction = true;    // she taught you on an earlier visit
+        game.state.upgrades.corruptHandler = true;
+        game.state.unlocked.purgeComplete = false;
+        const lines = reachHome(game);
+        expect(game.state.unlocked.checkpointOpen).toBe(false);
+        expect(lines.join(' ').toLowerCase()).toMatch(/heur|bay|clean|contamin|purge|scrub/);
     });
 
     it('brushes you off with NO state change if you lack a Pause Menu (puzzle stays intact)', () => {

@@ -207,7 +207,20 @@ export const TWO_BIT = {
         "2-Bit: I'm not walking out of here!"
     ],
     // Drip-fed gossip topics at his stall — one per visit, clustered around missing villagers.
+    // ORDER IS LOAD-BEARING (openBiteShop serves biteTopics[heard] in sequence):
+    //   [0] CACHE  — first, so the death-screen ARG ("call out her NAME") is telegraphed on
+    //                the player's FIRST shop visit, while the pre-Crumple death window when
+    //                the puzzle is solvable is still wide open.
+    //   [1] CADENZA / [2] NIBBLE — the two landmark leads. With Localhost emptied of its
+    //                citizens (the refugee funnel), 2-Bit and the signpost are now the only
+    //                first-time source of these directions, so they must stay early.
+    //   [3] the emptied Wilds — atmosphere, and the setup for finding refugees out there.
     gossip: [
+        [
+            "2-Bit: There was one called Cache. Remembered everything — every deleted file, every rollback. Reclamation took her sector whole.",
+            "2-Bit: Well, everything but her, I think. They say that to this day any time a file gets deleted you can still hear her performing a back-up.",
+            "2-Bit: But that's probably just creepypasta! No way she's just watching you die over and over again, waiting for you to call out her NAME!"
+        ],
         [
             "2-Bit: That singing southeast? Cadenza. Ran audio for the whole system, back when it had one. Sealed in now — still performing to nobody.",
             "2-Bit: Anyone remembers what this place was before the Architect, it's her. Follow the sound."
@@ -219,11 +232,6 @@ export const TWO_BIT = {
         [
             "2-Bit: You clocked how EMPTY the Wilds are? Quarantine Zones went up and everything inside just... stopped resolving.",
             "2-Bit: Every face you find still out there is one they didn't get."
-        ],
-        [
-            "2-Bit: There was one called Cache. Remembered everything — every deleted file, every rollback. Reclamation took her sector whole.",
-            "2-Bit: Well, everything but her, I think. They say that to this day any time a file gets deleted you can still hear her performing a back-up.",
-            "2-Bit: But that's probably just creepypasta! No way she's just watching you die over and over again, waiting for you to call out her NAME!"
         ]
     ]
 };

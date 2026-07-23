@@ -177,11 +177,11 @@ export class RoomGenerator {
             // will live here when that chain is built.
             npcs.push(new NPC(cx, cy - 2 * this.gridSize, this.gridSize, 'lorefrag', ROM_VAULT));
             npcs.push(new NPC(cx, cy + 2 * this.gridSize, this.gridSize, 'datacache', []));
-        } else if (roomX === 5 && roomY === -2 && stateUnlocked && stateUnlocked.purgeComplete && !stateUnlocked.dennyRematchDone) {
+        } else if (roomX === 5 && roomY === -2 && stateUnlocked && stateUnlocked.ascentArmed && !stateUnlocked.dennyRematchDone) {
             // THE FALL-THROUGH — Denny's rematch. Open floor: the maze is the one HE
             // stamps onto your own trail, one beat late.
             npcs.push(new NPC(cx, cy, this.gridSize, 'denny2', []));
-        } else if (roomX === 5 && roomY === -3 && stateUnlocked && stateUnlocked.purgeComplete && !stateUnlocked.gateRematchDone) {
+        } else if (roomX === 5 && roomY === -3 && stateUnlocked && stateUnlocked.ascentArmed && !stateUnlocked.gateRematchDone) {
             // THE OVERRIDE — Gate's rematch. He guards the north egress and rewrites the
             // rules, one override at a time. A couple of pillars for cover.
             npcs.push(new NPC(cx, 2 * this.gridSize, this.gridSize, 'gate3', []));

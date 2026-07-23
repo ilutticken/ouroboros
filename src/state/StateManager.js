@@ -24,6 +24,9 @@ export class StateManager {
             dennyMapDropped: false,  // Denny has dropped his map item
             subSmashRevealed: false, // the Architect's sub-smash gloat has fired
             cadenzaFound: false, // set once Cadenza's sector is reached — silences her homing beacon
+            cadenzaMet: false,   // she has actually been SPOKEN to (first-contact scene played).
+                                 // Distinct from cadenzaFound (arrival/beacon): the beacon
+                                 // resolves on entering the room, this gates her dialogue.
             cacheFound: false,  // set once you've spelled CACHE across death screens — she manifests in the Hub
             saveFunction: false, // Cache grants this (if you have the pause menu) — unlocks Save/Load
             // Cache's staged Hub conversation: 0 = not yet helped, 1 = Save Function granted,
@@ -48,8 +51,18 @@ export class StateManager {
             // you as an infection vector; the daemon intercepts you in the next open sector.
             purgeComplete: false,      // the mandatory decontamination has been survived
             bayRoom: null,             // {x,y} where Heur caught you — remembered as the Bay (Act 2 rematch site)
-            // The Ascent to Cold Storage (armed once the purge is survived — the Architect
-            // escalates) and the Act I -> II finale chain up the north spine.
+            // The north spine is climbed TWICE, on the same rooms, armed by two different
+            // flags:
+            //   EARLY CLIMB (ascentArmed) — the Denny rematch {5,-2} and the Gate Override
+            //   {5,-3}. Armed just by reaching Localhost having met Gate, so the SECOND
+            //   Gate run-in (and Motion Carried with it) lands at the ACT MIDPOINT, before
+            //   the outer-Wilds detour. Previously these were gated on purgeComplete,
+            //   which chained them behind Nibble + Heur and pushed the world's one
+            //   world-wakes-up beat to two rooms before the act ended.
+            //   LATE CLIMB (purgeComplete) — Heur's Bay {5,-1}, Cache's checkpoint {5,-4}
+            //   and the Port 0 finale {5,-5}. Unchanged: the finale still requires the
+            //   mandatory decontamination.
+            ascentArmed: false,        // the early climb is live (rematch posts manned)
             dennyRematchIntroSeen: false, // one-shot intro-dialog guards for the Ascent's set-piece rooms
             gateOverrideIntroSeen: false,
             finaleIntroSeen: false,
