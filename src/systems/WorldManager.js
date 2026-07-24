@@ -16,6 +16,7 @@ export class WorldManager {
         this.wallDamage = {};             // partial crack damage per boundary (persists)
         this.wallBreakThreshold = 3;      // damage to break; one max-gear (gear 3) hit
         this.scannerReveals = {};         // boundaryKey -> remaining ms a scanner sweep keeps a HIDDEN weak point visible
+        this.scannerBeyond = {};          // 'x,y:dir' -> {kind, ms} — the sweep's category echo of the next room over
 
         // THE FINITE WILDS. The Void is bounded: a playable interior wrapped by the
         // Kernel's coil — an unbreakable, lethal ring of deep-red, slowly-creeping
@@ -54,6 +55,11 @@ export class WorldManager {
             this.boundaryKey(9, 4, 'right'), // HUSH's post -> the Booth corridor
             this.boundaryKey(10, 4, 'down'), // corridor -> the Booth
             this.boundaryKey(1, -5, 'down'), // the ROM Vault's one door (from {1,-4})
+            // Upgrade pockets (decision: the Scanner reveals doors with PRIZES, not just
+            // the finale key). Hash-positioned (forcedWeak, NOT scriptedDoors) so a blind
+            // ram at the wrong cell hits solid wall — sweep first, then breach.
+            this.boundaryKey(0, 5, 'up'),    // SW corner pocket ({0,4} -> {0,5}): a pin-shape module
+            this.boundaryKey(8, -5, 'down'), // N-edge pocket ({8,-4} -> {8,-5}): the smuggler's hoard
         ]);
         // Pocket architecture: force these walls SOLID so the Booth is only enterable
         // through HUSH's post ({9,4} -> {10,4} -> {10,5}) and the Vault only from the
@@ -65,11 +71,17 @@ export class WorldManager {
             this.boundaryKey(10, 4, 'right'), // {10,4}-{11,4}
             this.boundaryKey(1, -5, 'left'),  // {0,-5}-{1,-5}
             this.boundaryKey(1, -5, 'right'), // {1,-5}-{2,-5}
+            // The two new scanner pockets: seal every non-coil wall except the hidden door.
+            this.boundaryKey(0, 5, 'right'),  // {0,5}-{1,5} (left+down are coil)
+            this.boundaryKey(8, -5, 'left'),  // {7,-5}-{8,-5} (up is coil)
+            this.boundaryKey(8, -5, 'right'), // {8,-5}-{9,-5}
         ]);
         this.forcedWeak = new Set([
             this.boundaryKey(9, 4, 'right'),  // HUSH's post -> the pocket corridor
             this.boundaryKey(10, 4, 'down'),  // corridor -> the Booth
             this.boundaryKey(1, -5, 'down'),  // the Vault's south door
+            this.boundaryKey(0, 5, 'up'),     // the SW pocket's one (hidden) door
+            this.boundaryKey(8, -5, 'down'),  // the N-edge pocket's one (hidden) door
         ]);
 
         // 1) The guided spine: Hub -> Localhost, the first Safe Zone.
@@ -88,6 +100,7 @@ export class WorldManager {
             lostverse: { x: 10, y: 1 }, // a shard of Cadenza's fanfare, out in the Wilds (heals her dead note)
             nibble: { x: 11, y: -4 },   // the black-market stall, deep-east Wilds (freed heap, on the coil edge)
             hush: { x: 9, y: 4 },       // the feral feedback-suppressor, SE past Cadenza (guards the Booth)
+            quantcy: { x: 7, y: -2 },   // the Wilds bank — deliberately OUT there (the walk is the risk)
         };
         for (const [name, room] of Object.entries(this.landmarks)) {
             if (name === 'cache') continue; // carved via BOTH routes below
@@ -394,12 +407,30 @@ export class WorldManager {
         return key ? (this.scannerReveals[key] || 0) : 0;
     }
 
-    // Count down active scanner reveals; call once per frame with dt (ms).
+    // Count down active scanner reveals (doors AND beyond-peeks); once per frame (ms).
     tickReveals(dt) {
         for (const key of Object.keys(this.scannerReveals)) {
             const left = this.scannerReveals[key] - dt;
             if (left <= 0) delete this.scannerReveals[key];
             else this.scannerReveals[key] = left;
         }
+        for (const key of Object.keys(this.scannerBeyond)) {
+            const left = this.scannerBeyond[key].ms - dt;
+            if (left <= 0) delete this.scannerBeyond[key];
+            else this.scannerBeyond[key].ms = left;
+        }
+    }
+
+    // --- The Scanner's BEYOND read (a category echo of the neighbouring sector) --------
+    // Keyed per (room, wall) — direction matters here (unlike a shared boundary door),
+    // because the echo is what THIS side hears. Category only ('module' | 'cache' |
+    // 'lore' | 'someone' | 'landmark'): the peek sells the sweep without spoiling the find.
+    revealBeyond(roomX, roomY, direction, kind, ms) {
+        const key = `${roomX},${roomY}:${direction}`;
+        const cur = this.scannerBeyond[key];
+        this.scannerBeyond[key] = { kind, ms: Math.max(cur ? cur.ms : 0, ms) };
+    }
+    beyondFor(roomX, roomY, direction) {
+        return this.scannerBeyond[`${roomX},${roomY}:${direction}`] || null;
     }
 }

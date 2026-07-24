@@ -12,7 +12,10 @@ import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
 import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, CADENZA_SCENE, LOST_VERSE, CADENZA_TITLE,
          NIBBLE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH, GATE_OVERRIDE,
-         CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING, UI_MODULES } from '../content/dialogue.js';
+         CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING, UI_MODULES,
+         QUANTCY, REFUGEE_ATTACH, REFUGEE_BUSY, INTAKE, LOCALHOST_CITIZENS,
+         HYDRATIA_CATCH, HYDRATIA_STALL, HYDRATIA_DEATH } from '../content/dialogue.js';
+import { classifyRoomBeyond } from '../systems/RoomGenerator.js';
 
 export class GameEngine {
     constructor(canvas) {
@@ -62,6 +65,7 @@ export class GameEngine {
         });
         this.shopManager = new ShopManager(this.state, this.audio);
         this.shopManager.onSpend = (price) => this.spendData(price); // Data = segments: buying shrinks you
+        this.shopManager.onQuantcyWithdraw = () => this.quantcyWithdraw(); // the vault empties into his room as motes
         this.worldManager = new WorldManager(canvas, this.gridSize);
         this.saveManager = new SaveManager();
         this._saveFlash = 0; // ms remaining on a "SAVED"/"LOADED" pause-menu toast
@@ -116,7 +120,14 @@ export class GameEngine {
             this.refreshScore();
         };
         window.addEventListener('keydown', (e) => {
-            if (e.key === 'p' || e.key === 'P') devAction();
+            // Gated on the states where the cheat can actually fire, and swallowed there
+            // — so a 'P' during the bounce ARG window can't ALSO be recorded into the
+            // CACHE code buffer by the listener registered below.
+            if ((e.key === 'p' || e.key === 'P')
+                && (this.state.gameState === 'PLAYING' || this.state.gameState === 'SHOP')) {
+                devAction();
+                e.stopImmediatePropagation();
+            }
         });
         
         window.addEventListener('keydown', (e) => {
@@ -148,8 +159,27 @@ export class GameEngine {
         // (one per respawn, since the first key flips DEAD->PLAYING). Spell CACHE across
         // five deaths and she remembers you back. Registered BEFORE InputHandler so this
         // records the key while gameState is still DEAD.
+        // BOUNCE EXTENSION: a Crumple bounce skips the DEAD screen — which used to close
+        // the ARG for every Buffer owner. A bounce is a "little death": it opens a short
+        // listen window (_argListenMs) during which letter keys feed the same buffer.
+        // ADVANCE-ONLY in the window: WASD are also STEERING keys here (unlike the death
+        // screen), so the daemon only writes a letter that continues the word — the next
+        // letter of CACHE from your current progress, or a fresh 'C'. Steering noise
+        // ('w'/'s'/'d', an off-word 'a') passes through untouched; a partial code can
+        // never be wrecked mid-drive. Named keys are ignored entirely.
         window.addEventListener('keydown', (e) => {
-            if (this.state.gameState === 'DEAD') this.recordDeathKey(e.key);
+            if (this.state.gameState === 'DEAD') { this.recordContinueKey(e.key); return; }
+            if (this._argListenMs > 0 && this.state.gameState === 'PLAYING'
+                && e.key.length === 1 && /[a-z]/i.test(e.key)) {
+                const ch = e.key.toUpperCase();
+                const WORD = 'CACHE';
+                // longest k where the buffer already ends with CACHE's first k letters
+                let prog = 0;
+                for (let k = Math.min(4, this.deathCode.length); k > 0; k--) {
+                    if (this.deathCode.endsWith(WORD.slice(0, k))) { prog = k; break; }
+                }
+                if (ch === WORD[prog] || ch === 'C') this.recordContinueKey(ch);
+            }
         });
 
         // Cache's Save Function: from the PAUSE menu, S saves and L loads. Gated on the
@@ -182,6 +212,26 @@ export class GameEngine {
                 e.stopImmediatePropagation();
                 return;
             }
+            // HYDRATIA, REACHABLE: Space reaches out (her catch dialog takes the screen,
+            // riding the cameo modal path); any other menu key and she bolts — but the
+            // approach counter holds at 4, so she's reachable again next boot.
+            if (this._hydratia && this._hydratia.catchable) {
+                if (e.key === ' ' || e.key === 'Enter') {
+                    this._hydratia = null;
+                    this.startCameoActive = true;
+                    this.dialogManager.start(HYDRATIA_CATCH, () => {
+                        this.startCameoActive = false;
+                        this.saveManager.markHydratiaCaught();
+                        this.state.unlocked.hydratiaFound = true;
+                        // Her stall seats itself in Localhost on the next room build; if a
+                        // cached Localhost exists this session, rebuild it with her in it.
+                        delete this.worldManager.rooms[this.worldManager.getRoomKey(5, 0)];
+                    });
+                    e.stopImmediatePropagation();
+                    return;
+                }
+                this._hydratia = null; // she bolts (stage stays 4 in storage)
+            }
             this.startMenuHandleKey(e.key);
             e.stopImmediatePropagation();
         });
@@ -212,6 +262,10 @@ export class GameEngine {
         this._ovr = null;          // Gate's active permission override in {5,-3} ({mode, t})
         this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
+        this._argListenMs = 0;     // ms left on the bounce "listening" window (the ARG's little death)
+        this.carriedRefugee = null; // origin room key of the refugee riding your tail (null = none)
+        this._deathReceipt = null;  // Hydratia's DEAD-overlay receipt (computed per death)
+        this._hydratia = null;      // her boot-screen glimpse state ({stage, catchable})
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
         // carries as a sonar beacon (updateCadenzaBeacon) so the sector is findable.
@@ -249,17 +303,32 @@ export class GameEngine {
             gatefinal: (npc) => this.npcGateScuffle(npc),
             dennyfinal: (npc) => this.npcDennyFinal(npc),
             dennyafter: (npc) => this.npcDennyFinal(npc),
+            // The refugee economy + the two Localhost intake stations.
+            refugee: (npc) => this.npcRefugee(npc),
+            commons: (npc) => this.npcCommons(npc),
+            minegate: (npc) => this.npcMinegate(npc),
+            // The Wilds bank and Hydratia's save-upgrade stall.
+            quantcy: (npc) => this.npcQuantcy(npc),
+            hydratia: () => this.openHydratiaShop(),
         };
         // NPC bumps that already carry their own contact sound (a clamp, a scuffle, a
         // pickup beep) skip the generic handshake chirp.
         this._silentBumps = new Set(['hush', 'datacache', 'gate3', 'gatefinal', 'mapitem', 'lostverse']);
         
         // Initialize Input
-        this.input.init(this.gridSize, () => {
+        this.input.init(this.gridSize, (consumed) => {
             this.audio.init();
             this.audio.setMusicLayer(this.state.unlocked.musicLayer || 0); // sync the soundtrack to the current layer (0 halts it)
-            if (this.narrative) this.narrative.requestSkip(); // a key fast-forwards a log
+            // A key fast-forwards a TYPING log — unless this very press just released the
+            // latch (consumed): releasing pumps the queue, and the same Space must not
+            // also insta-complete the NEXT log it just started (a one-press skip-through).
+            if (this.narrative && !consumed) this.narrative.requestSkip();
             if (this.state.gameState === 'DEAD') {
+                // 'PRESS ANY KEY TO CONTINUE' means ANY key: the wake-press also clears a
+                // pending release latch (the death gloat), or the respawn would land in an
+                // invisibly frozen sim that only Space could thaw. release() no-ops when
+                // there's nothing latched.
+                if (this.narrative && this.narrative.awaitingRelease) this.narrative.release();
                 this.state.gameState = 'PLAYING'; // respawn wake-press
             } else if (this.state.gameState === 'START' && !this.startMenuActive()) {
                 // Bare-void cold open (no save files yet): any key starts the first run.
@@ -270,8 +339,17 @@ export class GameEngine {
         }, () => {
             // Advance a dialog. Returns true when it handled one, so InputHandler knows
             // to CONSUME the keypress and not also fire the action below on the same press.
+            // ORDER IS LOAD-BEARING: an OPEN DIALOG BOX wins over the terminal latch. The
+            // typewriter keeps typing during DIALOG, so at the Override clear / Port 0
+            // (a dialog on screen AND queued logs) the latch would otherwise eat every
+            // Space and the visible dialog would read as unresponsive. The latch only
+            // claims Space when nothing modal is above it.
             if (this.state.gameState === 'DIALOG') {
                 this.dialogManager.advance();
+                return true;
+            }
+            if (this.narrative && this.narrative.awaitingRelease) {
+                this.narrative.release();
                 return true;
             }
             return false;
@@ -323,6 +401,19 @@ export class GameEngine {
     // 2-Bit physically rides the tail only until he sets up shop in Localhost. The
     // driving/gear module (tailRider) stays yours; the packet gets off.
     get hasBiteSegment() { return this.state.unlocked.tailRider && !this.state.unlocked.biteDroppedOff; }
+
+    // Everyone currently riding the tail (2-Bit mid-ferry, a carried refugee). Their
+    // segments are PASSENGERS, not Data — shrinks and spends must never eat them, so
+    // every mass-loss path protects the tail while anyone is aboard and the spend floor
+    // rises by one per rider.
+    get riderCount() { return (this.hasBiteSegment ? 1 : 0) + (this.carriedRefugee ? 1 : 0); }
+    get hasRiderSegment() { return this.riderCount > 0; }
+
+    // One source of truth for what an apple/mote is worth (Data Compression tiers).
+    // Vault/mine motes are EXEMPT (always exactly 1): they are stored Data being
+    // re-embodied, and letting Compression multiply a withdrawal would mint free Data
+    // out of a deposit loop.
+    get appleGain() { return this.state.upgrades.dataCompression2 ? 3 : this.state.upgrades.dataCompression ? 2 : 1; }
 
     changeGear(delta) {
         // Max gear scales with score:
@@ -497,19 +588,32 @@ export class GameEngine {
         ];
 
         for (const wall of walls) {
-            const wp = this.worldManager.getWeakPoint(rx, ry, wall.dir);
-            if (!wp) continue;
-            if (this.worldManager.isWallBroken(rx, ry, wall.dir)) continue;
             const draped = body.filter(wall.adj);
             if (!draped.length) continue;
-            const overDoor = draped.some(s => { const c = wall.cross(s); return c >= wp.start && c <= wp.end; });
-            if (!overDoor) continue;
-
             // Geometric growth with sweep length (segments draped on this wall).
             const ms = Math.min(6000, 350 * Math.pow(1.35, draped.length));
-            const alreadyKnown = this.worldManager.isWeakPointRevealed(rx, ry, wall.dir);
-            this.worldManager.revealWeakPoint(rx, ry, wall.dir, ms);
-            if (!alreadyKnown) this.audio.playScannerPing(); // ping only on a FRESH find
+
+            // (a) Hidden-door reveal — needs a live weak point under the sweep.
+            const wp = this.worldManager.getWeakPoint(rx, ry, wall.dir);
+            if (wp && !this.worldManager.isWallBroken(rx, ry, wall.dir)) {
+                const overDoor = draped.some(s => { const c = wall.cross(s); return c >= wp.start && c <= wp.end; });
+                if (overDoor) {
+                    const alreadyKnown = this.worldManager.isWeakPointRevealed(rx, ry, wall.dir);
+                    this.worldManager.revealWeakPoint(rx, ry, wall.dir, ms);
+                    if (!alreadyKnown) this.audio.playScannerPing(); // ping only on a FRESH find
+                }
+            }
+
+            // (b) The BEYOND read — the sweep verb works on EVERY wall, solid or not: a
+            // category-only echo of what the neighbouring sector holds (module / cache /
+            // lore / someone / landmark), so the Scanner is an exploration tool in all
+            // ~130 rooms, not a key for four doors. Never fires into the coil.
+            const nx = rx + (wall.dir === 'left' ? -1 : wall.dir === 'right' ? 1 : 0);
+            const ny = ry + (wall.dir === 'up' ? -1 : wall.dir === 'down' ? 1 : 0);
+            if (!this.worldManager.isCoilWall(rx, ry, wall.dir)) {
+                const kind = classifyRoomBeyond(nx, ny, this.worldManager, this.state.unlocked, this.carriedRefugee);
+                if (kind) this.worldManager.revealBeyond(rx, ry, wall.dir, kind, ms);
+            }
         }
     }
 
@@ -561,11 +665,14 @@ export class GameEngine {
                 clearedDialog = GATE_OVERRIDE.cleared;
                 // MOTION CARRIED — the SECOND Gate run-in is the moment the Architect's
                 // white-knuckle grip on the world's clock slips. One-way; from here the
-                // Wilds move on your tick. The committee memo doubles as the telegraph.
+                // Wilds move on your tick. The committee memo doubles as the telegraph
+                // (one merged log — one Space). And the Override clear is the LAST moment
+                // Gate still forwards him reports, so the 'can it READ?' fuse from the
+                // Hub breach pays off here, before the severance.
                 if (!this.state.unlocked.motionCarried) {
                     this.state.unlocked.motionCarried = true;
                     this.narrative.printMessage(ARCHITECT.motionCarried);
-                    this.narrative.printMessage(ARCHITECT.motionDrift);
+                    this.narrative.printMessage(ARCHITECT.canRead);
                 }
             }
         }
@@ -638,6 +745,26 @@ export class GameEngine {
             && this.worldManager.currentRoomY === this.cadenzaRoom.y) {
             this.state.unlocked.cadenzaFound = true;
         }
+
+        // QUANTCY'S COMPOUNDING — the vault grows per sector CROSSED (banking is paced by
+        // active play, not wall-clock). Yield accrues on principal+yield at 3%/sector
+        // (+0.5pp per freed refugee — the freed boost the light-side economy) and halts
+        // when yield matches principal: a full vault forces a withdrawal run.
+        {
+            const uq = this.state.unlocked;
+            if ((uq.quantcyPrincipal || 0) > 0 && (uq.quantcyYield || 0) < uq.quantcyPrincipal) {
+                const rate = 0.03 + 0.005 * (uq.refugeesFreed || 0);
+                uq.quantcyYield = Math.min(uq.quantcyPrincipal,
+                    (uq.quantcyYield || 0) + ((uq.quantcyPrincipal + (uq.quantcyYield || 0)) * rate));
+            }
+        }
+
+        // HYDRATIA'S AUTO-COMMIT — her bought autosaves fire on the room grain: every
+        // cross (Frequent Commit) or on entering a safe zone (Auto-Commit). Writes the
+        // shadow buffer only; never the manual file.
+        if (this.state.unlocked.autosaveEvery) this.autoCommit();
+        else if (this.state.unlocked.autosaveSafe
+            && this.worldManager.isSafeZone(this.worldManager.currentRoomX, this.worldManager.currentRoomY)) this.autoCommit();
 
         // Place the room's dynamic (never-saved) occupants: Cache's Hub apparition and
         // her spare-data motes. Also clears any motes when leaving the Hub.
@@ -1159,7 +1286,7 @@ export class GameEngine {
             && this.snake.head.x === n.x && this.snake.head.y === n.y);
         if (lv) {
             this.npcs = this.npcs.filter(n => n !== lv);
-            const gain = this.state.upgrades.dataCompression ? 2 : 1;
+            const gain = this.appleGain;
             this.state.addScore(gain);
             if (gain > 1) this.growSnake(gain - 1); // Data = segments (the pickup already gave +1)
             this.state.unlocked.lostVerseFound = true;
@@ -1186,7 +1313,7 @@ export class GameEngine {
             }
         } else if (this.snake.checkAppleCollision(this.apple)) {
             this.snake.grow(); // growth = not shrinking this tick
-            const gain = this.state.upgrades.dataCompression ? 2 : 1;
+            const gain = this.appleGain;
             this.state.addScore(gain);
             if (gain > 1) this.growSnake(gain - 1); // Data = segments (the eat already gave +1)
             this.audio.playBeep();
@@ -1195,14 +1322,25 @@ export class GameEngine {
             grew = true;
         }
 
-        // Cache's spare-data motes (Hub only): each is Data — grows + scores like an apple,
-        // it just doesn't respawn when eaten.
+        // Data motes: Cache's spare pile, Salvage drops, Quantcy's vault payout, and the
+        // Mine's stockpile — each grows + scores like an apple, none respawn when eaten.
+        // VAULT/MINE motes are exactly 1 Data (no Compression multiplier): they are stored
+        // Data being re-embodied, and multiplying a withdrawal would mint free Data out of
+        // a deposit-withdraw loop. Their counters decrement here so the reserve drains
+        // exactly as fast as it lands on your body.
         if (this.dataMotes && this.dataMotes.length) {
             const mi = this.dataMotes.findIndex(m => this.snake.head.x === m.x && this.snake.head.y === m.y);
             if (mi !== -1) {
+                const mote = this.dataMotes[mi];
                 this.dataMotes.splice(mi, 1);
                 this.snake.grow();
-                const gain = this.state.upgrades.dataCompression ? 2 : 1;
+                let gain = this.appleGain;
+                if (mote.vault) { gain = 1; this.state.unlocked.quantcyPayout = Math.max(0, (this.state.unlocked.quantcyPayout || 0) - 1); }
+                else if (mote.mine) { gain = 1; this.state.unlocked.mineStockpile = Math.max(0, (this.state.unlocked.mineStockpile || 0) - 1); }
+                // Salvage motes are ALSO your own shed Data being re-embodied — letting
+                // Compression multiply them minted Data out of thin air (crumple -6, drop
+                // 3 salvage, re-eat at x3 = +9: a +3/bounce perpetual-motion machine).
+                else if (mote.salvage) { gain = 1; }
                 this.state.addScore(gain);
                 if (gain > 1) this.growSnake(gain - 1); // Data = segments (the eat already gave +1)
                 this.audio.playBeep();
@@ -1257,18 +1395,22 @@ export class GameEngine {
                 const damage = this.state.upgrades.reinforcedSegments ? 1 : 3;
                 const shed = []; // cells the corruption tears off (for Salvage Claws)
                 for (let d = 0; d < damage; d++) {
-                    if (this.snake.body.length > 1) {
-                        shed.push({ ...this.snake.body[this.snake.body.length - 1] });
-                        this.snake.shrink(this.hasBiteSegment); // never eat 2-Bit's protected segment
-                    } else {
+                    const tail = this.snake.body[this.snake.body.length - 1];
+                    if (this.snake.shrink(this.riderCount)) {
+                        shed.push({ ...tail }); // a real pop — never a passenger's seat
+                    } else if (this.snake.body.length <= 1) {
                         // Drained to nothing: consume the killer FIRST so die()'s saveRoom
                         // doesn't bake it into the cell to camp respawns.
                         this.glitches.splice(i, 1);
                         this.die();
                         return true;
+                    } else {
+                        break; // the floor is passengers, not Data — the bite stops there
                     }
                 }
-                this.state.score = Math.max(0, this.state.score - damage);
+                // Data docks by what ACTUALLY popped (score and length can't desync at
+                // the rider floor — a bite that only found passenger seats costs nothing).
+                this.state.score = Math.max(0, this.state.score - shed.length);
                 this.refreshScore();  // HUD must reflect the drain now, not at the next apple
                 this.changeGear(0);   // re-clamp gear to the lowered score's cap (no ghost max speed)
                 this.audio.playCorruptHit(); // corruption bites in — not a death
@@ -1334,6 +1476,17 @@ export class GameEngine {
     // hard (a death) so the caller can skip trailing per-tick work. Its internal returns
     // simply stop this tick (the sim resumes next frame).
     _moveTick() {
+        // THE DATA MINES' DRIP — miners produce while you play (per move-tick, so idling
+        // in a menu earns nothing). Capped: a full ore buffer waits for collection at the
+        // minegate. >=2 miners double the buffer (Deep Vein); >=5 run 50% hotter (Refinery).
+        {
+            const um = this.state.unlocked;
+            if ((um.refugeesMined || 0) > 0) {
+                const rate = 0.01 * um.refugeesMined * (um.refugeesMined >= 5 ? 1.5 : 1);
+                const cap = 20 * (um.refugeesMined >= 2 ? 2 : 1);
+                um.mineStockpile = Math.min(cap, (um.mineStockpile || 0) + rate);
+            }
+        }
         this.updateGate();
         this.updateDenny();
         this.updateHush();          // the feedback-suppressor's turn-locked pursuit (its room only)
@@ -1393,7 +1546,7 @@ export class GameEngine {
                     this.snake.body[i].x -= dx * w;
                     this.snake.body[i].y -= dy * h;
                 }
-                this.snake.shrink(this.hasBiteSegment);
+                this.snake.shrink(this.riderCount);
                 return false;
             }
 
@@ -1459,8 +1612,9 @@ export class GameEngine {
         if (onHazard && this.snake.body.length > 1) this.snake.body.shift();
 
         // Shed `shedAmount`, in BOTH length and Data. Burst the shed segments' cells.
+        // PASSENGER seats are never shed (they aren't Data): the fold keeps 1 + riders.
         const total = this.snake.body.length;
-        const shed = Math.min(this.shedAmount, total - 1);
+        const shed = Math.max(0, Math.min(this.shedAmount, total - 1 - this.riderCount));
         const shedCells = shed > 0 ? this.snake.body.slice(total - shed) : [];
         if (shed > 0) this.spawnBurst(shedCells);
         this.state.score = Math.max(0, this.state.score - this.shedAmount);
@@ -1492,13 +1646,18 @@ export class GameEngine {
         else { this.gear = 0; this.speed = this.baseSpeed; }
         this._wallBonking = false;
         this.audio.playCrack(); // an impact, not the death drone
+        // A bounce is a "little death" — Cache's back-up daemon leans in for a moment.
+        // Letter keys pressed in this window feed the death-code buffer (the ARG stays
+        // solvable for Crumple owners). §2.6: the Renderer shows a text cue while open;
+        // playCrack above is its audio twin.
+        this._argListenMs = 2000;
     }
 
     // Locomotion tail handling: while the body is UN-FOLDING after a bounce, each move
     // extrudes one stored block (keep the tail) instead of the usual shrink.
     shrinkOrUnfold() {
         if (this.pendingUnfold > 0) { this.pendingUnfold--; return; }
-        this.snake.shrink(this.hasBiteSegment);
+        this.snake.shrink(this.riderCount);
     }
 
     // Spawn a short-lived burst of particles from each shed segment's cell.
@@ -1537,8 +1696,7 @@ export class GameEngine {
     // Spend n Data by shedding n segments off the tail (they burst off — the mass spent on
     // the upgrade). Never sheds below the min length / 2-Bit's protected segment.
     spendData(n) {
-        const shed = [];
-        const floor = this.hasBiteSegment ? 2 : 1;
+        const shed = []; // (the floor — head + every passenger seat — is enforced by shrink)
         let remaining = n;
         // Spend any folded (post-bounce, not-yet-unfolded) mass FIRST — it's Data you own,
         // just collapsed — so the paid amount always comes off the LOGICAL length and can't
@@ -1548,19 +1706,21 @@ export class GameEngine {
             this.pendingUnfold -= fromFold;
             remaining -= fromFold;
         }
-        for (let i = 0; i < remaining && this.snake.body.length > floor; i++) {
-            shed.push({ ...this.snake.body[this.snake.body.length - 1] });
-            this.snake.shrink(this.hasBiteSegment);
+        for (let i = 0; i < remaining; i++) {
+            const tail = this.snake.body[this.snake.body.length - 1];
+            if (!this.snake.shrink(this.riderCount)) break;
+            shed.push({ ...tail });
         }
         if (shed.length) this.spawnBurst(shed);
         this.changeGear(0); // re-clamp gear to the lowered Data cap (no ghost max speed)
         this.refreshScore();
     }
 
-    // Record one "continue" key on the death screen into the rolling last-5 buffer, and
-    // summon Cache if it now spells her name. (Named keys — Space/arrows — record as '·'
-    // so they can't spell it.)
-    recordDeathKey(key) {
+    // Record one "continue" key (a death-screen continue OR a bounce-window letter) into
+    // the rolling last-5 buffer, and summon Cache if it now spells her name. (Named keys
+    // — Space/arrows — record as '·' on the death screen so they can't spell it; the
+    // bounce window filters to letters before calling.)
+    recordContinueKey(key) {
         const ch = key.length === 1 ? key.toUpperCase() : '·';
         this.deathCode = (this.deathCode + ch).slice(-5);
         if (this.deathCode === 'CACHE') this.summonCache();
@@ -1573,10 +1733,13 @@ export class GameEngine {
     // window — re-spell CACHE (or visit Cold Storage {5,-4}) to see her again.
     summonCache() {
         if (this.state.unlocked.cacheStage >= 3) return; // she's said her piece; never again
-        // The ARG assumes "a real death warps you to the Hub" — but the checkpoint
-        // respawn lands in Cold Storage, where the resident archivist already IS.
-        // Her Hub apparition only ever manifests in the Hub.
-        if (this.worldManager.currentRoomX !== 0 || this.worldManager.currentRoomY !== 0) return;
+        // A code completed OUTSIDE the Hub (a bounce out in the Wilds, or a checkpoint
+        // respawn) can't manifest her here — her apparition is Hub-only. LATCH it: the
+        // next Hub entry consumes cachePending and she appears (refreshDynamicRoomContent).
+        if (this.worldManager.currentRoomX !== 0 || this.worldManager.currentRoomY !== 0) {
+            this.state.unlocked.cachePending = true;
+            return;
+        }
         const already = this.npcs.some(n => n.id === 'cache');
         this.state.unlocked.cacheFound = true; // mark discovered (clue-gating / records)
         this.spawnCacheNpc();
@@ -2100,7 +2263,7 @@ export class GameEngine {
         if (!onBody) return;
         let clamped = 0;
         for (let d = 0; d < 2; d++) {
-            if (this.snake.body.length > 1) { this.snake.shrink(this.hasBiteSegment); clamped++; }
+            if (this.snake.shrink(this.riderCount)) clamped++;
         }
         if (clamped > 0) {
             this.state.score = Math.max(0, this.state.score - clamped);
@@ -2176,6 +2339,13 @@ export class GameEngine {
         else if (npc.grant === 'coordReadout') { u.coordReadout = true; lines = UI_MODULES.coordReadout; }
         else if (npc.grant === 'mapPins') { u.mapPinsTool = true; u.pinShapes = (u.pinShapes || 0) + 1; lines = UI_MODULES.mapPins; }
         else if (npc.grant === 'pinShape') { u.pinShapes = (u.pinShapes || 0) + 1; lines = UI_MODULES.pinShape; }
+        else if (npc.grant === 'redline') { u.redline = true; lines = UI_MODULES.redline; }
+        else if (npc.grant === 'crumple2') {
+            // The ROM Vault's prize: Crumple tier 2 (shed 6, not 10). Never DOWNGRADES a
+            // player who somehow reaches tier 2+ first.
+            this.state.upgrades.crumpleLevel = Math.max(this.state.upgrades.crumpleLevel, 2);
+            lines = UI_MODULES.crumple2;
+        }
         if (!u.modulesFound) u.modulesFound = [];
         u.modulesFound.push(key);
         this.npcs = this.npcs.filter(n => n !== npc);
@@ -2352,10 +2522,10 @@ export class GameEngine {
             return;
         }
         if (cell.head) {
-            // the ping reads your flagged read-head: 2 segments + 2 Data (coupled), floored.
-            const floor = this.hasBiteSegment ? 2 : 1;
+            // the ping reads your flagged read-head: 2 segments + 2 Data (coupled),
+            // floored at head + passenger seats (enforced by shrink itself).
             let docked = 0;
-            for (let i = 0; i < 2 && this.snake.body.length > floor; i++) { this.snake.shrink(this.hasBiteSegment); docked++; }
+            for (let i = 0; i < 2; i++) { if (this.snake.shrink(this.riderCount)) docked++; }
             if (docked) {
                 this.state.score = Math.max(0, this.state.score - docked);
                 this.refreshScore();
@@ -2425,8 +2595,8 @@ export class GameEngine {
     // three Data (coupled), he's knocked back along your heading and stalls a beat.
     // The pressure valve: you can always fight through him, at a price.
     npcGateScuffle(npc) {
-        const shed = Math.min(3, Math.max(0, this.snake.body.length - 1));
-        for (let i = 0; i < shed; i++) this.snake.shrink(this.hasBiteSegment);
+        let shed = 0;
+        for (let i = 0; i < 3; i++) { if (this.snake.shrink(this.riderCount)) shed++; }
         this.state.score = Math.max(0, this.state.score - shed);
         this.refreshScore();
         this.changeGear(0);
@@ -2607,6 +2777,10 @@ export class GameEngine {
             }
             if ((u.musicLayer || 0) < 2) u.musicLayer = 2;
             this.audio.setMusicLayer(u.musicLayer); // the bassline has an owner
+            // The Architect's last word — a half-line the era-16 snap cuts off. Explains
+            // his absence from his own act's climax (Gate stopped forwarding; the reboot
+            // takes his channel).
+            this.narrative.printMessage(ARCHITECT.finaleCut);
             // The way home re-opens — the stacks heard the crash.
             this.worldManager.brokenWalls.add(this.worldManager.boundaryKey(5, -5, 'down'));
             const denny = this.npcs.find(n => n.id === 'dennyfinal');
@@ -2621,6 +2795,192 @@ export class GameEngine {
         this.state.gameState = 'DIALOG';
         const lines = this.state.unlocked.finaleDone ? GATE_FINALE.after : GATE_FINALE.dennyBusy;
         this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // --- THE REFUGEE ECONOMY: carry the scattered home; choose their fate ---------------
+    // Localhost starts empty. Refugees wait in fixed Wilds rooms; bumping one takes them
+    // aboard (they ride your tail exactly as 2-Bit did — a passenger segment, protected
+    // from every shrink). At Localhost, bump THE COMMONS to free them (they repopulate
+    // the town and boost Quantcy) or THE DATA MINE to put them to work (passive income,
+    // the dark tally). The Freed/Mined counters are durable and feed the Act II ending.
+
+    npcRefugee(npc) {
+        this.state.gameState = 'DIALOG';
+        if (this.carriedRefugee) {
+            this.dialogManager.start(REFUGEE_BUSY, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
+        const key = npc.roomKey || `${this.worldManager.currentRoomX},${this.worldManager.currentRoomY}`;
+        this.dialogManager.start([...(npc.dialog || []), ...REFUGEE_ATTACH], () => {
+            this.carriedRefugee = key;
+            this.npcs = this.npcs.filter(n => n !== npc);
+            this.snake.body.push({ x: npc.x, y: npc.y }); // aboard — same ride as 2-Bit's
+            this.audio.playBeep();
+            this.state.gameState = 'PLAYING';
+        });
+    }
+
+    npcCommons(npc) {
+        this.state.gameState = 'DIALOG';
+        if (!this.carriedRefugee) {
+            this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
+        this._deliverRefugee(false);
+    }
+
+    npcMinegate(npc) {
+        this.state.gameState = 'DIALOG';
+        if (!this.carriedRefugee) {
+            // The gate reads out the operation: miners, stockpile, next unlock. Strings
+            // assembled here (per the file's assembly rule) from live numbers.
+            const u = this.state.unlocked;
+            const cap = 20 * (u.refugeesMined >= 2 ? 2 : 1);
+            const status = u.refugeesMined > 0
+                ? [`MINE LEDGER: ${u.refugeesMined} miner(s). Ore buffer: ${Math.floor(u.mineStockpile)}/${cap}. Output collects here — walk the motes.`]
+                : npc.dialog;
+            this.dialogManager.start(status, () => { this.state.gameState = 'PLAYING'; });
+            return;
+        }
+        this._deliverRefugee(true);
+    }
+
+    // Resolve a delivery (the head-end of the moral engine). The refugee's origin room is
+    // marked delivered (they never respawn there); their passenger segment leaves with
+    // them (mass-neutral round trip: +1 aboard, -1 here).
+    _deliverRefugee(mined) {
+        const u = this.state.unlocked;
+        if (!u.refugeesDelivered) u.refugeesDelivered = [];
+        u.refugeesDelivered.push(this.carriedRefugee);
+        this.carriedRefugee = null;
+        if (this.snake.body.length > 1) this.snake.body.pop(); // their seat leaves with them
+        let lines;
+        if (mined) {
+            u.refugeesMined = (u.refugeesMined || 0) + 1;
+            lines = [...INTAKE.mine];
+            // 2-Bit's one-time unease, and Hydratia's one-time insistence (post-catch).
+            if (!u.mineFirst2BitDone) { u.mineFirst2BitDone = true; lines.push(...INTAKE.mineFirst2Bit); }
+            if (u.hydratiaFound && !u.mineInsistDone) { u.mineInsistDone = true; lines.push(...INTAKE.mineInsistHydratia); }
+        } else {
+            u.refugeesFreed = (u.refugeesFreed || 0) + 1;
+            lines = INTAKE.free;
+            // They settle in NOW (a validated free cell; the room's canonical regeneration
+            // seats them at their proper home from the refugeesFreed count on later runs).
+            const voices = [LOCALHOST_CITIZENS.newFace, LOCALHOST_CITIZENS.cadenzaHint, LOCALHOST_CITIZENS.nibbleHint,
+                            LOCALHOST_CITIZENS.cacheClue1, LOCALHOST_CITIZENS.cacheClue2];
+            const pos = this.worldManager.roomGenerator.spawnValidApple(this.obstacles || [], this.glitches || [], this.npcs || [], [...this.snake.body, ...(this.dataMotes || [])]);
+            this.npcs.push(new NPC(pos.x, pos.y, this.gridSize, 'citizen', voices[(u.refugeesFreed - 1) % voices.length]));
+        }
+        this.audio.playMaterialize();
+        this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // --- QUANTCY'S TRUST: the Wilds bank (active compounding investment) ----------------
+    // Deposits run through the normal shop spend (Data = segments: you SHRINK by what you
+    // bank, and your gear cap drops with you). The vault is off-body and death-proof; a
+    // withdrawal materializes motes HERE, in his Wilds room — the carry home is the risk.
+
+    npcQuantcy(npc) {
+        if (!this.state.unlocked.quantcyMet) {
+            this.state.unlocked.quantcyMet = true;
+            this.state.gameState = 'DIALOG';
+            const intro = (npc.dialog && npc.dialog.length) ? npc.dialog : QUANTCY.intro;
+            this.dialogManager.start(intro, () => this.openQuantcyBank());
+            return;
+        }
+        this.openQuantcyBank();
+    }
+
+    openQuantcyBank() {
+        this.state.gameState = 'SHOP';
+        this.shopManager.open('quantcy', () => { this.state.gameState = 'PLAYING'; });
+    }
+
+    // A withdrawal: the whole vault (principal + accrued yield, floored) converts to a
+    // pending payout that materializes as motes in his room — each worth EXACTLY 1 Data
+    // (no Compression multiplier; see collectData). Uncollected payout persists (durable)
+    // and re-seeds on every visit until it's all been carried off.
+    quantcyWithdraw() {
+        const u = this.state.unlocked;
+        const total = Math.floor((u.quantcyPrincipal || 0) + (u.quantcyYield || 0));
+        if (total < 1) return;
+        u.quantcyPrincipal = 0;
+        u.quantcyYield = 0;
+        u.quantcyPayout = (u.quantcyPayout || 0) + total;
+        this.shopManager.close(); // back to the room — the motes are waiting
+        // Sweep any vault motes already on the floor before re-seeding: the payout
+        // counter represents ALL uncollected value, so stale motes + a fresh full seed
+        // would put more Data on the floor than the counter backs (a mint).
+        this.dataMotes = (this.dataMotes || []).filter(m => !m.vault);
+        this._seedReserveMotes();
+        this.audio.playMaterialize();
+    }
+
+    // Seed pending reserve motes (Quantcy's payout at his vault; the Mine's stockpile by
+    // the minegate). Clustered around an anchor, capped per entry (the counters persist,
+    // so the rest re-seeds next visit). Tagged so collectData drains the right counter.
+    _seedReserveMotes() {
+        const u = this.state.unlocked;
+        const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+        const g = this.gridSize;
+        const lm = this.worldManager.landmarks;
+        if (lm.quantcy && rx === lm.quantcy.x && ry === lm.quantcy.y && (u.quantcyPayout || 0) >= 1) {
+            const cx = Math.floor(this.canvas.width / 2 / g) * g;
+            const cy = Math.floor(this.canvas.height / 2 / g) * g;
+            this._seedMotesAround(cx, cy + 3 * g, Math.min(Math.floor(u.quantcyPayout), 12), 'vault');
+        }
+        if (rx === 5 && ry === 0 && (u.mineStockpile || 0) >= 1) {
+            const ax = (this._cols - 6) * g, ay = (this._rows - 6) * g; // by the minegate
+            this._seedMotesAround(ax, ay, Math.min(Math.floor(u.mineStockpile), 12), 'mine');
+        }
+    }
+
+    // Cluster `count` tagged motes around an anchor cell (±2), skipping anything occupied.
+    _seedMotesAround(ax, ay, count, tag) {
+        const g = this.gridSize;
+        const occupied = new Set(this.snake.body.map(s => `${s.x},${s.y}`));
+        if (this.apple) occupied.add(`${this.apple.x},${this.apple.y}`);
+        for (const n of this.npcs) occupied.add(`${n.x},${n.y}`);
+        for (const o of (this.obstacles || [])) occupied.add(`${o.x},${o.y}`);
+        for (const gl of (this.glitches || [])) occupied.add(`${gl.x},${gl.y}`);
+        for (const m of (this.dataMotes || [])) occupied.add(`${m.x},${m.y}`);
+        let placed = 0, guard = 0;
+        while (placed < count && guard < 300) {
+            guard++;
+            const dx = Math.floor(Math.random() * 5) - 2, dy = Math.floor(Math.random() * 5) - 2;
+            const x = ax + dx * g, y = ay + dy * g;
+            if (x < this.ringLeft || y < this.ringTop || x >= this.ringRight || y >= this.ringBottom) continue;
+            const key = `${x},${y}`;
+            if (occupied.has(key)) continue;
+            occupied.add(key);
+            const mote = { x, y };
+            mote[tag] = true;
+            this.dataMotes.push(mote);
+            placed++;
+        }
+    }
+
+    // --- HYDRATIA'S STALL (Localhost, post-catch): the autosave machinery --------------
+    openHydratiaShop() {
+        const open = () => {
+            this.state.gameState = 'SHOP';
+            this.shopManager.open('hydratia', () => { this.state.gameState = 'PLAYING'; });
+        };
+        if (!this.state.unlocked.hydratiaStallMet) {
+            this.state.unlocked.hydratiaStallMet = true;
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(HYDRATIA_STALL.intro, open);
+        } else {
+            open();
+        }
+    }
+
+    // Hydratia's silent shadow copy: serialize() to the per-file AUTO buffer (never the
+    // manual file — Cache's named commit stays sacred). serialize() structurally cannot
+    // contain score, so an autosave can never bank carried Data past a death (decision 1).
+    autoCommit() {
+        if (!this.state.unlocked.saveFunction) return;
+        this.saveManager.saveAuto(this.activeSlot, this.serialize());
     }
 
     // Cache's staged Hub conversation. Like 2-Bit, she offers no real choice — finishing
@@ -2803,11 +3163,19 @@ export class GameEngine {
     // pacing in and out of the Hub can't farm a fresh pile. Any entry clears stale motes.
     refreshDynamicRoomContent(seedMotes = false) {
         const inHub = this.worldManager.currentRoomX === 0 && this.worldManager.currentRoomY === 0;
-        if (inHub && this.deathCode === 'CACHE' && this.state.unlocked.cacheStage < 3) {
+        if (inHub && this.state.unlocked.cacheStage < 3
+            && (this.deathCode === 'CACHE' || this.state.unlocked.cachePending)) {
+            // A pending summons (the code completed away from the Hub — a Wilds bounce or
+            // a checkpoint respawn) is consumed on the next Hub entry.
+            this.state.unlocked.cachePending = false;
             this.spawnCacheNpc();
         }
         this.dataMotes = [];
         if (inHub && seedMotes && this.state.unlocked.spareDataUnlocked) this.seedHubData();
+        // Reserve motes (Quantcy's pending payout at his vault; the Mine's stockpile by
+        // the minegate) re-seed on EVERY entry to their room — they're your own stored
+        // Data awaiting embodiment, capped at the counters, so there's nothing to farm.
+        this._seedReserveMotes();
     }
 
     // --- Boot file-select menu (New Game / Load across 3 save files) -------------------
@@ -2884,6 +3252,15 @@ export class GameEngine {
         } else if (key === 'n' || key === 'N') {
             this.startMenuConfirmErase = null;
             this.newGame(slots[this.startMenuIndex].slot);
+        } else if (key === 'r' || key === 'R') {
+            // WARM RESTORE — load Hydratia's auto-buffer instead of the manual file, when
+            // hers is newer. Opt-in only: the manual file is never auto-clobbered; you
+            // choose her copy or Cache's, per boot.
+            const sel = slots[this.startMenuIndex];
+            if (sel.autoSavedAt && sel.autoSavedAt > (sel.savedAt || 0)) {
+                this.startMenuConfirmErase = null;
+                this.loadAutoSlot(sel.slot);
+            }
         } else if (key === 'Delete' || key === 'Backspace' || key === 'x' || key === 'X') {
             const sel = slots[this.startMenuIndex];
             if (!sel.exists) return;
@@ -2922,6 +3299,20 @@ export class GameEngine {
         return false;
     }
 
+    // Warm Restore: identical to loadSlot but sourcing Hydratia's auto-buffer.
+    loadAutoSlot(slot) {
+        const d = this.saveManager.loadAuto(slot);
+        if (d && this.applySave(d)) {
+            this.activeSlot = slot;
+            this.saveManager.markCameoSeen();
+            if (this.titleCameo && this.titleCameo.who === 'cadenza') this.saveManager.markCadenzaCameoSeen();
+            this.audio.stopVoidAmbient();
+            this.state.gameState = 'PLAYING';
+            return true;
+        }
+        return false;
+    }
+
     // Reset every run/world/progress field to a pristine "new worm in the Void" state,
     // WITHOUT touching localStorage (the file is only written when you save). Subsystems
     // (shopManager, narrative) hold this.state, so we reset its fields in place rather than
@@ -2931,6 +3322,9 @@ export class GameEngine {
         const fresh = new StateManager();
         Object.assign(this.state.unlocked, fresh.unlocked);
         Object.assign(this.state.upgrades, fresh.upgrades);
+        // Hydratia's catch is GLOBAL (cross-file, like the title cameos): a fresh run
+        // must re-mirror it or her stall silently vanishes from every New Game.
+        this.state.unlocked.hydratiaFound = this.saveManager.hasHydratiaCaught();
         this.state.score = 0;
         this.state.biteTopicsHeard = 0;
         this.state.isSuspended = false;
@@ -2942,6 +3336,7 @@ export class GameEngine {
         this.worldManager.brokenWalls = new Set();
         this.worldManager.wallDamage = {};
         this.worldManager.scannerReveals = {};
+        this.worldManager.scannerBeyond = {};
         this.worldManager.resetRomSeals(); // a fresh run's checkpoint door is write-protected again
         this.worldManager.currentRoomX = 0;
         this.worldManager.currentRoomY = 0;
@@ -2957,6 +3352,7 @@ export class GameEngine {
         this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
         this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
         this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
+        this._argListenMs = 0; this.carriedRefugee = null;
         this.audio.setDuck(1);
 
         // Back to the cold open: HUD hidden, terminal wiped (re-revealed at 5 Data).
@@ -2974,10 +3370,20 @@ export class GameEngine {
         this.refreshScore();
     }
 
+    // The durable-upgrade count, shared by the file-select summary and Hydratia's
+    // death-screen receipt (one computation — the two can never drift).
+    countMods() {
+        const up = this.state.upgrades, u = this.state.unlocked;
+        return ['dataCompression', 'dataCompression2', 'reinforcedSegments', 'pivot', 'scanner',
+                'corruptHandler', 'salvage', 'glitchWard'].filter(k => up[k]).length
+            + (up.crumpleLevel > 0 ? 1 : 0)
+            + ['autosaveSafe', 'autosaveDeath', 'autosaveEvery'].filter(k => u[k]).length;
+    }
+
     // Short display summary written into a save file for the file-select screen: how far
     // you got + how many mods you own. (Score/length aren't restored, so we don't show them.)
     saveMeta() {
-        const u = this.state.unlocked, up = this.state.upgrades;
+        const u = this.state.unlocked;
         let place = 'The Void';
         if (u.borders) place = 'The Wilds';
         if (u.pauseMenu) place = 'The Firewall';
@@ -2987,9 +3393,7 @@ export class GameEngine {
         if (u.purgeComplete) place = 'The Ascent';
         if (u.checkpointOpen) place = 'The Checkpoint';
         if (u.finaleDone) place = 'Act II - 16-bit';
-        const mods = ['dataCompression', 'reinforcedSegments', 'pivot', 'scanner', 'corruptHandler', 'salvage', 'glitchWard'].filter(k => up[k]).length
-            + (up.crumpleLevel > 0 ? 1 : 0);
-        return { place, mods };
+        return { place, mods: this.countMods() };
     }
 
     // --- Save / Load (localStorage via SaveManager) -----------------------------------
@@ -3022,6 +3426,11 @@ export class GameEngine {
         const fresh = new StateManager();
         Object.assign(this.state.unlocked, fresh.unlocked, d.unlocked || {});
         Object.assign(this.state.upgrades, fresh.upgrades, d.upgrades || {});
+        // RETCON MIGRATION: {2,2} used to grant the gear meter (now default-on with
+        // driving) and holds the Redline module instead. A pre-sprint save that already
+        // collected that room ('2,2' in modulesFound) gets the replacement grant — the
+        // room stays suppressed, so without this the module would be unobtainable.
+        if ((this.state.unlocked.modulesFound || []).includes('2,2')) this.state.unlocked.redline = true;
         this.state.biteTopicsHeard = d.biteTopicsHeard || 0;
         this.deathCode = d.deathCode || '';
         this.mapPins = d.mapPins ? { ...d.mapPins } : {};
@@ -3034,6 +3443,7 @@ export class GameEngine {
         // Scanner reveals and Architect-guidance memory so their one-shots can replay.
         this.worldManager.rooms = {};
         this.worldManager.scannerReveals = {};
+        this.worldManager.scannerBeyond = {};
         this._guided = new Set();
         this.worldManager.currentRoomX = 0;
         this.worldManager.currentRoomY = 0;
@@ -3050,7 +3460,11 @@ export class GameEngine {
         this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
         this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
         this._auditionLayer = null; this._wardUsedThisRoom = false;
+        this._argListenMs = 0; this.carriedRefugee = null;
         this.audio.setDuck(1);
+        // Hydratia's catch is a GLOBAL (cross-file) discovery: mirror it into this run's
+        // flags so RoomGenerator can seat her stall in Localhost.
+        this.state.unlocked.hydratiaFound = this.saveManager.hasHydratiaCaught();
         // The checkpoint door's state is derived from flags, not stored: reset the ROM
         // seals to baseline, then re-derive — committed = unsealed; once-breached =
         // standing open (a load must never demand a gear-3 re-ram from a fresh worm).
@@ -3146,6 +3560,10 @@ export class GameEngine {
             return;
         }
 
+        // HYDRATIA'S LAST BREATH — snapshot the durable set the instant before the wipe.
+        // serialize() cannot contain score, so this saves PROGRESS, never carried Data.
+        if (this.state.unlocked.autosaveDeath) this.autoCommit();
+
         const cx = Math.floor(this.canvas.width / 2 / this.gridSize) * this.gridSize;
         const cy = Math.floor(this.canvas.height / 2 / this.gridSize) * this.gridSize;
 
@@ -3174,6 +3592,14 @@ export class GameEngine {
         this._wardUsedThisRoom = false;
         this.heur = null;
         this._coilNear = null;
+        this._argListenMs = 0;
+        // A carried refugee is LOST with the run — but never gone: their origin room was
+        // never marked delivered, so they respawn back home, shaken, carryable again.
+        // The key is CAPTURED here; the cached (refugee-less) origin room is invalidated
+        // AFTER the saveRoom below, so a death INSIDE the origin room can't re-cache the
+        // empty copy over the wipe.
+        const lostRefugee = this.carriedRefugee;
+        this.carriedRefugee = null;
         this.audio.setDuck(1);
         if (toCheckpoint) {
             this._diedSinceCheckpoint = true;
@@ -3193,6 +3619,10 @@ export class GameEngine {
 
         const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite' && n.id !== 'cache');
         this.worldManager.saveRoom(appleToSave, this.glitches, npcsWithoutBite, this.obstacles);
+
+        // The lost refugee walks home: wipe their origin room's cache so it regenerates
+        // WITH them (their key was never marked delivered).
+        if (lostRefugee) delete this.worldManager.rooms[lostRefugee];
 
         this.worldManager.currentRoomX = toCheckpoint ? 5 : 0;
         this.worldManager.currentRoomY = toCheckpoint ? -4 : 0;
@@ -3231,8 +3661,24 @@ export class GameEngine {
         this.refreshDynamicRoomContent(true);
 
         this.narrative.onDeath(cause);
+
+        // HYDRATIA'S RECEIPT — the DEAD overlay's second voice (the Architect keeps his
+        // gloat in the terminal). Slot A reassures with what PERSISTED (the durable set —
+        // making decision 1's kept-half visible at the exact moment the loss stings);
+        // Slot B coaches on the cause, escalating (tier 2) once a cause has killed you 3+
+        // times. Computed AFTER onDeath so the per-cause tally includes this death.
+        const tally = this.narrative.deathByCause;
+        const causeKey = HYDRATIA_DEATH.hint[cause] ? cause : 'unknown';
+        const tier = (tally[causeKey] || 1) >= 3 ? 1 : 0;
+        this._deathReceipt = {
+            line: HYDRATIA_DEATH.receipt,
+            hint: HYDRATIA_DEATH.hint[causeKey][tier],
+            walls: this.worldManager.brokenWalls.size,
+            modules: ((this.state.unlocked.modulesFound || []).length) + (this.state.unlocked.mapModule ? 1 : 0),
+            mods: this.countMods(),
+        };
     }
-    
+
     checkUnlocks() {
         // Boot the narrative monitor as the UI reveals at 5 Data. Set BEFORE
         // onScoreUnlock so the score-5 message is the first thing it prints;
@@ -3293,6 +3739,21 @@ export class GameEngine {
         } else {
             this.state.titleCameoSprite = null;
         }
+        // Hydratia's boot-screen glimpse (START only): stage 0 = a sliver at the right
+        // edge, each quick reload ~8% further in; stage 4 = reachable.
+        this.state.hydratia = (this.state.gameState === 'START' && this._hydratia)
+            ? { stage: this._hydratia.stage, catchable: this._hydratia.catchable,
+                x: this.canvas.width - this.gridSize - this._hydratia.stage * Math.floor(this.canvas.width * 0.08) }
+            : null;
+        this.state.argListenMs = this._argListenMs;      // the bounce ARG's listening cue
+        this.state.carriedRefugee = this.carriedRefugee; // passenger readout (HUD)
+        this.state.deathReceipt = this.state.gameState === 'DEAD' ? this._deathReceipt : null;
+        // The PAUSE menu's RETAINED readout — persistence made visible (§2.6).
+        this.state.receipt = {
+            walls: this.worldManager.brokenWalls.size,
+            modules: ((this.state.unlocked.modulesFound || []).length) + (this.state.unlocked.mapModule ? 1 : 0),
+            mods: this.countMods(),
+        };
         this.state.reduceMotion = this.settings.reduceMotion; // Renderer dampens pulses/blinks
         this.state.options = this.optionsOpen ? { index: this.optionsIndex, settings: this.settings } : null;
         this.state.encore = (this.state.gameState === 'ENCORE' && this.encore) ? this.getEncoreRenderState() : null;
@@ -3320,6 +3781,7 @@ export class GameEngine {
         this.lastTime = timestamp;
 
         if (this._saveFlash > 0) this._saveFlash = Math.max(0, this._saveFlash - dt); // fade the toast
+        if (this._argListenMs > 0) this._argListenMs = Math.max(0, this._argListenMs - dt); // close the bounce listen window
 
         this.update(dt);
         this.draw();
@@ -3335,8 +3797,33 @@ export class GameEngine {
         const firstFilled = slots.findIndex(s => s.exists);
         this.startMenuIndex = firstFilled >= 0 ? firstFilled : 0;
         this.maybeStartTitleCameo();
+        this.maybeStartHydratiaCatch();
         this.lastTime = performance.now();
         requestAnimationFrame((ts) => this.loop(ts));
+    }
+
+    // HYDRATIA'S CATCH — the shy persistence daemon, glimpsed at the screen edge on boot.
+    // Reload the page within ~10s and she starts CLOSER; four quick reloads in a row and
+    // she holds still long enough to reach ([SPACE] on the file menu). Diegetically: a
+    // process restart catches her mid-round; do it again before she's re-hidden and she
+    // has less time to hide. Global (cross-file), like the title cameos. The '11,2' lore
+    // fragment is the planted clue. Silent (decision 3: no boot audio) and motion-free
+    // (she's a static mote per boot — nothing animates, so reduce-motion needs no branch).
+    maybeStartHydratiaCatch() {
+        const sm = this.saveManager;
+        const now = Date.now();
+        const last = sm.hydratiaBoot();
+        let approach = sm.hydratiaApproach();
+        // A quick reload advances the chase; a slow, deliberate boot resets it — except
+        // once she's already reachable (stage 4 persists: no lost chance, ever).
+        if (last && now - last <= 10000) approach = Math.min(4, approach + 1);
+        else if (approach < 4) approach = 0;
+        sm.setHydratiaBoot(now);
+        sm.setHydratiaApproach(approach);
+        // Eligibility: at least one save exists (the menu is up), she isn't caught yet,
+        // and no title cameo owns the screen this boot.
+        if (this.titleCameo || !sm.anySave() || sm.hasHydratiaCaught()) { this._hydratia = null; return; }
+        this._hydratia = { stage: approach, catchable: approach >= 4 };
     }
 
     // The first time the file-select menu is shown, Cache's title cameo plays: her sprite

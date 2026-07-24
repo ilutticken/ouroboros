@@ -78,10 +78,34 @@ export class StateManager {
             coordReadout: false,       // HUD sector-address readout (which room you're in)
             mapPinsTool: false,        // the Pause-Menu annotation tool (mark rooms on your map)
             pinShapes: 0,              // how many pin SHAPES you've unlocked (the tool grants the first)
-            modulesFound: []           // 'x,y' room keys of Wilds UI modules already picked up (no respawn)
+            modulesFound: [],          // 'x,y' room keys of Wilds UI modules already picked up (no respawn)
+            redline: false,            // gear-meter enhancement: numeric speed-limit readout ({2,2} module)
+            // The CACHE death-screen ARG's bounce extension: a code completed OUTSIDE the
+            // Hub (a Crumple bounce in the Wilds) latches here; the next Hub entry consumes
+            // it and summons her.
+            cachePending: false,
+            // --- HYDRATIA (the shy persistence daemon, caught on the START screen) ------
+            hydratiaFound: false,      // mirrored from SaveManager.hasHydratiaCaught() on run start
+            hydratiaStallMet: false,   // her stall intro has played once
+            autosaveSafe: false,       // Auto-Commit: silent autosave on entering a safe zone
+            autosaveDeath: false,      // Last Breath: autosave the instant before a death wipes the run
+            autosaveEvery: false,      // Frequent Commit: autosave on every room-cross
+            // --- THE REFUGEE ECONOMY (Localhost starts empty; the Wilds hold its people) -
+            refugeesFreed: 0,          // delivered to THE COMMONS — repopulate the town, boost Quantcy
+            refugeesMined: 0,          // delivered to THE DATA MINES — passive drip, the dark tally
+            refugeesDelivered: [],     // origin 'x,y' room keys of delivered refugees (no respawn)
+            mineFirst2BitDone: false,  // 2-Bit's one-time unease at the first mine delivery
+            mineInsistDone: false,     // Hydratia's one-time insistence (post-catch)
+            mineStockpile: 0,          // un-collected mined Data (off-body, death-proof, capped)
+            // --- QUANTCY (the Wilds bank: active compounding investment) ----------------
+            quantcyMet: false,         // his intro has played once
+            quantcyPrincipal: 0,       // deposited Data, held OFF-BODY in his vault (death-proof)
+            quantcyYield: 0,           // accrued interest (float), claimable via withdrawal
+            quantcyPayout: 0           // withdrawn Data awaiting collection as motes at his vault
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data
+            dataCompression2: false,  // apples give +3 Data (2-Bit's mine-gated stock tier, >= 3 miners)
             reinforcedSegments: false, // Glitch contact costs 1 segment, not 3
             pivot: false,             // press SHIFT for a safe 180 reversal
             scanner: false,           // sweep a wall to reveal its hidden weak points

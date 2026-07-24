@@ -52,11 +52,17 @@ export class Snake {
         // Just don't pop the tail, handled in Game loop
     }
     
-    shrink(hasBite = false) {
-        const minLength = hasBite ? 2 : 1;
+    // Pop the tail unless that would eat a PASSENGER's seat. `riders` is a COUNT (head +
+    // one protected seat per rider); a legacy boolean still works (Number(true) === 1).
+    // Returns whether a segment actually popped — mass-loss paths couple their Data dock
+    // to REAL pops, so score and length can't desync at the floor.
+    shrink(riders = 0) {
+        const minLength = 1 + Number(riders);
         if (this.body.length > minLength) {
             this.body.pop();
+            return true;
         }
+        return false;
     }
     
     reset(startX, startY, hasBite = false) {

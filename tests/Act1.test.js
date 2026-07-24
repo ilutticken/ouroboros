@@ -1035,7 +1035,7 @@ describe('Cold Storage — the checkpoint', () => {
         game.worldManager.currentRoomY = -4;
         game.npcs = [];
         game.deathCode = 'CACH';
-        game.recordDeathKey('E'); // spells CACHE at the checkpoint respawn
+        game.recordContinueKey('E'); // spells CACHE at the checkpoint respawn
         expect(game.npcs.some(n => n.id === 'cache')).toBe(false);
     });
 });

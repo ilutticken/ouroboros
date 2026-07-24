@@ -1,7 +1,7 @@
 import { NPC } from '../entities/NPC.js';
 import { Glitch } from '../entities/Glitch.js';
 import { DENNY_INTRO, LOCALHOST_SIGN, LOCALHOST_CITIZENS, GATE_INTRO, CADENZA_SCENE, CACHE_HOME_SCENE,
-         WILDS_CITIZENS, LORE_FRAGS, BOOTH_LORE, ROM_VAULT } from '../content/dialogue.js';
+         WILDS_CITIZENS, LORE_FRAGS, BOOTH_LORE, ROM_VAULT, REFUGEES, QUANTCY, INTAKE } from '../content/dialogue.js';
 
 // Fixed Wilds discovery rooms (matches the Topology Scan reference map).
 // Growth caches: a one-bite mass payout ('datacache', +4 Data & +4 length) so a lap of
@@ -12,13 +12,47 @@ const GROWTH_CACHE_ROOMS = new Set(['7,-3', '9,1', '3,5', '11,-1']);
 // Wilds-found UI / Pause-Menu utility modules, keyed by 'x,y' room. Each grants a HUD or
 // annotation tool (see Game.npcUiModule). Suppressed once picked up (its room key is in
 // unlocked.modulesFound), so it never respawns.
+// {2,2} is REDLINE now (the gear meter itself became default-on with driving — a lethal
+// gauge could not stay hidden behind optional exploration, §2.6). {0,5} sits inside a
+// scanner pocket — the sweep-then-breach verb's first prize.
 const WILDS_MODULES = {
-    '2,2':  'gearMeter',    // HUD tachometer
+    '2,2':  'redline',      // gear-meter enhancement: numeric speed-limit readout
     '8,2':  'coordReadout', // HUD sector-address readout
     '3,-3': 'mapPins',      // the Pause-Menu annotation tool + the first pin shape
     '2,-4': 'pinShape',     // an extra pin shape
     '7,4':  'pinShape',     // an extra pin shape
+    '0,5':  'pinShape',     // the SW scanner pocket's prize
 };
+
+// Where the scattered Localhost refugees wait (the town starts EMPTY — its people fled
+// into the Wilds when the Zones went up). Carry one home on your tail and deliver them
+// to THE COMMONS (freed) or THE DATA MINES (the dark tally). Suppressed once delivered
+// (origin key in unlocked.refugeesDelivered).
+const REFUGEE_ROOMS = new Set(['4,2', '9,-2', '2,4', '10,3', '6,-3']);
+
+// What is (statically) in a neighbouring room — the Topology Scanner's "beyond" read.
+// Category-only (the peek sells the sweep verb without spoiling the find), computed from
+// the fixed content registries so no room ever has to be generated to answer.
+export function classifyRoomBeyond(roomX, roomY, worldManager, stateUnlocked, carriedRefugeeKey = null) {
+    const key = `${roomX},${roomY}`;
+    // The refugee currently RIDING YOUR TAIL isn't home — their empty origin room must
+    // not echo [LIFE] for the whole carry.
+    if (carriedRefugeeKey === key) return null;
+    const lm = worldManager && worldManager.landmarks;
+    if (lm) {
+        for (const name of Object.keys(lm)) {
+            if (lm[name].x === roomX && lm[name].y === roomY) return 'landmark';
+        }
+    }
+    // Fixed story rooms that aren't landmark-registered.
+    if (['0,0', '1,0', '3,0', '5,0', '5,-1', '5,-2', '5,-3', '5,-5', '10,5', '1,-5'].includes(key)) return 'landmark';
+    if (WILDS_MODULES[key] && !((stateUnlocked && stateUnlocked.modulesFound) || []).includes(key)) return 'module';
+    if (GROWTH_CACHE_ROOMS.has(key) || key === '8,-5') return 'cache';
+    if (LORE_FRAGS[key]) return 'lore';
+    if (WILDS_CITIZENS[key]) return 'someone';
+    if (REFUGEE_ROOMS.has(key) && !((stateUnlocked && stateUnlocked.refugeesDelivered) || []).includes(key)) return 'someone';
+    return null;
+}
 
 export class RoomGenerator {
     constructor(gridSize, canvas) {
@@ -59,21 +93,34 @@ export class RoomGenerator {
             // First Wilds room — Denny, the apologetic deny-all checkpoint you route around.
             npcs.push(new NPC(cx, cy, this.gridSize, 'denny', DENNY_INTRO));
         } else if (roomX === 5 && roomY === 0) {
-            // Localhost — the first Safe Zone. No hazards; a welcome sign., 
+            // Localhost — the first Safe Zone. It starts EMPTY (pop. 1: the sign): its
+            // people scattered into the Wilds when the Zones went up, and the town only
+            // re-fills as you carry refugees home. The signpost + 2-Bit's gossip carry the
+            // landmark leads a first-timer used to get from the citizens (owner call, G1).
             npcs.push(new NPC(cx, cy, this.gridSize, 'signpost', LOCALHOST_SIGN));
-            // The few refugee programs still here. Their chatter CROSS-HINTS at the
-            // missing villagers (Cadenza SE, Nibble in the Wilds, the lost Cache),
-            // echoing 2-Bit's gossip so the leads land from more than one voice. Lines live
-            // in content/dialogue.js (LOCALHOST_CITIZENS); positions stay here (grid-relative).
+            // The two intake stations for a carried refugee: THE COMMONS (SW — freed) and
+            // THE DATA MINE (SE — the dark tally). Bump one while carrying to deliver.
+            npcs.push(new NPC(5 * this.gridSize, (this.rows - 6) * this.gridSize, this.gridSize, 'commons', INTAKE.commonsEmpty));
+            npcs.push(new NPC((this.cols - 6) * this.gridSize, (this.rows - 6) * this.gridSize, this.gridSize, 'minegate', INTAKE.mineEmpty));
+            // Hydratia's stall, once she's been caught on the START screen (global flag,
+            // mirrored into unlocked.hydratiaFound on run start). North side — she likes
+            // her back to a wall nobody comes through.
+            if (stateUnlocked && stateUnlocked.hydratiaFound) {
+                npcs.push(new NPC(Math.floor(this.cols / 2 - 4) * this.gridSize, 4 * this.gridSize, this.gridSize, 'hydratia', []));
+            }
+            // FREED refugees repopulate the town, one home per delivery, reusing the old
+            // citizen voices (they're the same people — they just had to walk home).
             const C = LOCALHOST_CITIZENS;
-            const town = [
+            const homes = [
                 { c: 6, r: 6, lines: C.newFace },
                 { c: this.cols - 7, r: 5, lines: C.cadenzaHint },
                 { c: 7, r: this.rows - 6, lines: C.nibbleHint },
                 { c: this.cols - 8, r: this.rows - 7, lines: C.cacheClue1 },
                 { c: Math.floor(this.cols / 2) + 4, r: 6, lines: C.cacheClue2 },
             ];
-            for (const t of town) {
+            const freed = Math.min((stateUnlocked && stateUnlocked.refugeesFreed) || 0, homes.length);
+            for (let i = 0; i < freed; i++) {
+                const t = homes[i];
                 npcs.push(new NPC(t.c * this.gridSize, t.r * this.gridSize, this.gridSize, 'citizen', t.lines));
             }
         } else if (roomX === 3 && roomY === 0) {
@@ -129,6 +176,12 @@ export class RoomGenerator {
                 glitches.push(new Glitch(4 * this.gridSize, 4 * this.gridSize, this.gridSize));
                 glitches.push(new Glitch((this.cols - 5) * this.gridSize, (this.rows - 5) * this.gridSize, this.gridSize));
             }
+        } else if (worldManager && worldManager.landmarks && worldManager.landmarks.quantcy
+                   && roomX === worldManager.landmarks.quantcy.x && roomY === worldManager.landmarks.quantcy.y) {
+            // QUANTCY'S TRUST — the Wilds bank. He stands mid-room behind an absent
+            // counter; the room is otherwise ordinary Wilds (the vault is safe, the walk
+            // isn't — deliberately no hazard suppression here).
+            npcs.push(new NPC(cx, cy, this.gridSize, 'quantcy', QUANTCY.intro));
         } else if (worldManager && worldManager.landmarks && worldManager.landmarks.hush
                    && roomX === worldManager.landmarks.hush.x && roomY === worldManager.landmarks.hush.y) {
             // HUSH's post — the dead sound-stage corridor SE of Cadenza. Sterile: the
@@ -159,8 +212,10 @@ export class RoomGenerator {
             const gx = Math.floor(this.cols * 0.65) * this.gridSize;
             const gy = Math.floor(this.rows * 0.35) * this.gridSize;
             npcs.push(new NPC(gx, gy, this.gridSize, 'datacache', []));
-        } else if (LORE_FRAGS[`${roomX},${roomY}`]) {
-            // A scannable environmental lore fragment (re-readable; it stays).
+        } else if (LORE_FRAGS[`${roomX},${roomY}`] && !(roomX === 8 && roomY === -5)) {
+            // A scannable environmental lore fragment (re-readable; it stays). {8,-5} is
+            // excluded here: the smuggler's-hoard pocket branch below places its frag
+            // TOGETHER with the mass cache.
             const lx = Math.floor(this.cols * 0.3) * this.gridSize;
             const ly = Math.floor(this.rows * 0.65) * this.gridSize;
             npcs.push(new NPC(lx, ly, this.gridSize, 'lorefrag', LORE_FRAGS[`${roomX},${roomY}`]));
@@ -172,11 +227,33 @@ export class RoomGenerator {
             npcs.push(new NPC(wx, wy, this.gridSize, 'citizen', WILDS_CITIZENS[`${roomX},${roomY}`]));
         } else if (roomX === 1 && roomY === -5) {
             // THE ROM VAULT — the Scanner-only pocket, deep NW against the coil. One
-            // hidden south door (a Scanner door); inside, the vault manifest and a
-            // sealed mass cache. The Corrupted Save File (Trading-Sequence Step 1)
-            // will live here when that chain is built.
+            // hidden south door (a Scanner door); inside, the vault manifest, the sealed
+            // mass cache — and now a real UPGRADE (Crumple Buffer II), so the Scanner's
+            // marquee purchase pays for itself in kind. The Corrupted Save File
+            // (Trading-Sequence Step 1) still moves in when that chain is built.
             npcs.push(new NPC(cx, cy - 2 * this.gridSize, this.gridSize, 'lorefrag', ROM_VAULT));
             npcs.push(new NPC(cx, cy + 2 * this.gridSize, this.gridSize, 'datacache', []));
+            if (!((stateUnlocked && stateUnlocked.modulesFound) || []).includes('1,-5')) {
+                const up = new NPC(cx - 3 * this.gridSize, cy, this.gridSize, 'uimodule', []);
+                up.grant = 'crumple2';
+                up.roomKey = '1,-5';
+                npcs.push(up);
+            }
+        } else if (roomX === 8 && roomY === -5) {
+            // THE SMUGGLER'S HOARD — the N-edge scanner pocket. A mass cache and the
+            // note that teaches the sweep-first habit. (Its LORE_FRAGS entry is placed
+            // here, not via the generic branch, so the pocket holds both.)
+            npcs.push(new NPC(cx, cy - 2 * this.gridSize, this.gridSize, 'lorefrag', LORE_FRAGS['8,-5']));
+            npcs.push(new NPC(cx, cy + 2 * this.gridSize, this.gridSize, 'datacache', []));
+        } else if (REFUGEE_ROOMS.has(`${roomX},${roomY}`)
+                   && !((stateUnlocked && stateUnlocked.refugeesDelivered) || []).includes(`${roomX},${roomY}`)) {
+            // A scattered Localhost refugee, waiting out the quarantine. Bump to take
+            // them aboard (they ride your tail like 2-Bit did); deliver at Localhost.
+            const rfx = Math.floor(this.cols * 0.55) * this.gridSize;
+            const rfy = Math.floor(this.rows * 0.4) * this.gridSize;
+            const ref = new NPC(rfx, rfy, this.gridSize, 'refugee', REFUGEES[`${roomX},${roomY}`] || []);
+            ref.roomKey = `${roomX},${roomY}`;
+            npcs.push(ref);
         } else if (roomX === 5 && roomY === -2 && stateUnlocked && stateUnlocked.ascentArmed && !stateUnlocked.dennyRematchDone) {
             // THE FALL-THROUGH — Denny's rematch. Open floor: the maze is the one HE
             // stamps onto your own trail, one beat late.

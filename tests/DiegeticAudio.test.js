@@ -1523,7 +1523,7 @@ describe('Cache — the CACHE death-screen secret', () => {
         const game = newGame();
         game.apple = { x: 200, y: 200 };
 
-        for (const k of ['c', 'a', 'c', 'h', 'e']) game.recordDeathKey(k); // one key per respawn
+        for (const k of ['c', 'a', 'c', 'h', 'e']) game.recordContinueKey(k); // one key per respawn
 
         expect(game.deathCode).toBe('CACHE');
         expect(game.state.unlocked.cacheFound).toBe(true);
@@ -1534,7 +1534,7 @@ describe('Cache — the CACHE death-screen secret', () => {
         const game = newGame();
         game.apple = { x: 200, y: 200 };
 
-        for (const k of ['x', 'z', 'c', 'a', 'c', 'h', 'e']) game.recordDeathKey(k); // last 5 = CACHE
+        for (const k of ['x', 'z', 'c', 'a', 'c', 'h', 'e']) game.recordContinueKey(k); // last 5 = CACHE
 
         expect(game.state.unlocked.cacheFound).toBe(true);
     });
@@ -1543,7 +1543,7 @@ describe('Cache — the CACHE death-screen secret', () => {
         const game = newGame();
         game.apple = { x: 200, y: 200 };
 
-        for (const k of ['w', 'a', 's', 'd', ' ', 'ArrowUp']) game.recordDeathKey(k);
+        for (const k of ['w', 'a', 's', 'd', ' ', 'ArrowUp']) game.recordContinueKey(k);
 
         expect(game.state.unlocked.cacheFound).toBe(false);
         expect(game.npcs.some(n => n.id === 'cache')).toBe(false);
@@ -1556,11 +1556,11 @@ describe('Cache — the CACHE death-screen secret', () => {
         game.state.unlocked.cacheStage = 0;
         game.apple = { x: 200, y: 200 };
 
-        for (const k of ['c', 'a', 'c', 'h', 'e']) game.recordDeathKey(k);
+        for (const k of ['c', 'a', 'c', 'h', 'e']) game.recordContinueKey(k);
         expect(game.npcs.some(n => n.id === 'cache')).toBe(true); // present while code == CACHE
 
         game.npcs = [];                    // she fades after a chat / you leave the room
-        game.recordDeathKey('x');          // the next death shifts the window -> 'ACHEX'
+        game.recordContinueKey('x');          // the next death shifts the window -> 'ACHEX'
         game.refreshDynamicRoomContent();  // walk back into the Hub
         expect(game.deathCode).not.toBe('CACHE');
         expect(game.npcs.some(n => n.id === 'cache')).toBe(false); // no longer camped in the Hub

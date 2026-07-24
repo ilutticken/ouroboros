@@ -15,12 +15,13 @@ export class InputHandler {
     }
 
     handleKeyDown(e, onFirstInput, onDialogAdvance, onAction, onSpeedChange) {
+        // A Space/Enter that DISMISSES a dialog (or releases the terminal latch) is
+        // consumed — it must not also fire the gameplay action on the same press. (That
+        // auto-triggered 2-Bit's consent the instant you closed his offer.) The consumed
+        // flag ALSO reaches onFirstInput: the same press must not requestSkip() the NEXT
+        // queued log the release just started typing (a one-Space skip-through).
+        let consumed = false;
         if (e.key === ' ' || e.key === 'Enter') {
-            // A Space/Enter that DISMISSES a dialog is consumed — it must not also fire
-            // the gameplay action on the same press. (That auto-triggered 2-Bit's
-            // consent the instant you closed his offer, so the choice could never be
-            // read or declined.) onDialogAdvance returns true when it handled a dialog.
-            let consumed = false;
             if (onDialogAdvance) consumed = !!onDialogAdvance();
             if (!consumed && onAction) onAction();
         }
@@ -28,7 +29,7 @@ export class InputHandler {
         // Wake/skip FIRST, so a key pressed on the START or DEAD screen flips the state
         // to PLAYING before the steering check below — otherwise that same press
         // couldn't also set the initial direction.
-        if (onFirstInput) onFirstInput();
+        if (onFirstInput) onFirstInput(consumed);
 
         // Steering + gear only while the sim is actually live. This drops keys pressed
         // during a dialog / pause / terminal print / module-install freeze, which used

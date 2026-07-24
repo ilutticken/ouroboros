@@ -13,7 +13,12 @@ export class NarrativeManager {
         this.online = false;
         this.skipRequested = false;
         this.unknownDeathCount = 0; // deaths with no specific cause (glitch drain) — for the escalating lines
+        this.deathByCause = { self: 0, border: 0, obstacle: 0, unknown: 0 }; // per-cause tallies (Hydratia's hint tiers)
         this._generation = 0;       // bumped by reset() to abandon an in-flight typewriter loop
+        // THE RELEASE LATCH (owner decision 5: text STOPS the game, and each log must be
+        // Space-barred through). A finished log no longer releases on a timer — it waits
+        // for release() (wired to Space in Game.js) behind a visible ">> SPACE" cue.
+        this.awaitingRelease = false;
     }
 
     // Wipe all per-run state (queued/printing logs, death counters, the on-screen terminal)
@@ -23,11 +28,13 @@ export class NarrativeManager {
         this.messageQueue = [];
         this.isPrinting = false;
         this.skipRequested = false;
+        this.awaitingRelease = false; // a stuck latch here would boot a New Game frozen
         this.deathCount = 0;
         this.unknownDeathCount = 0;
+        this.deathByCause = { self: 0, border: 0, obstacle: 0, unknown: 0 };
         this.online = false;
         this._generation++; // any in-flight processQueue loop is now stale and will bail
-        if (this.terminal) this.terminal.innerHTML = '';
+        if (this.terminal) this.terminal.innerHTML = ''; // (also removes any advance cue)
     }
 
     printMessage(msg) {
@@ -36,10 +43,41 @@ export class NarrativeManager {
         this.processQueue();
     }
 
-    // A keypress while a log is typing fast-completes the current line (and shortens
-    // the dwell) so the sim-hang can't strand the player for 6-8s per Architect log.
+    // A keypress while a log is TYPING fast-completes the current line. It never
+    // releases the latch — that takes an explicit release() (Space), the two-press
+    // model that matches the dialog boxes: first press finishes the type-out, second
+    // press releases the frozen sim.
     requestSkip() {
-        if (this.isPrinting) this.skipRequested = true;
+        if (this.isPrinting && !this.awaitingRelease) this.skipRequested = true;
+    }
+
+    // Space on a finished log: hide the cue, unfreeze the sim, pump the queue. Returns
+    // true when it consumed the press (so the caller doesn't also steer/advance).
+    release() {
+        if (!this.awaitingRelease) return false;
+        this.awaitingRelease = false;
+        this._hideAdvanceCue();
+        this.isPrinting = false;
+        this.skipRequested = false;
+        this.processQueue();
+        return true;
+    }
+
+    // §2.6: the frozen sim needs a VISIBLE cue that a key releases it (text, >=16px,
+    // steady — no motion dependency). Appended under the finished log line.
+    _showAdvanceCue() {
+        if (!this.terminal) return;
+        this._hideAdvanceCue();
+        const cue = document.createElement('div');
+        cue.className = 'narrative-advance';
+        cue.textContent = '>> SPACE';
+        this.terminal.appendChild(cue);
+        this.terminal.scrollTop = this.terminal.scrollHeight;
+    }
+    _hideAdvanceCue() {
+        if (!this.terminal) return;
+        const cue = this.terminal.querySelector('.narrative-advance');
+        if (cue) cue.remove();
     }
 
     async processQueue() {
@@ -75,11 +113,12 @@ export class NarrativeManager {
 
         if (gen !== this._generation) return;
         this.terminal.scrollTop = this.terminal.scrollHeight;
-        await new Promise(r => setTimeout(r, this.skipRequested ? 120 : 1000)); // dwell
-        if (gen !== this._generation) return;
-        this.isPrinting = false;
-        this.skipRequested = false;
-        this.processQueue();
+        // THE LATCH (owner decision 5). The old behavior released the sim on a fixed
+        // 1000ms timer — if you glanced away, lethal movement resumed unconfirmed. Now a
+        // finished log holds the freeze (isPrinting stays true) behind a visible cue
+        // until Space releases it (Game.js routes Space to release() ahead of steering).
+        this._showAdvanceCue();
+        this.awaitingRelease = true;
     }
     
     // NOTE ON VOICE: the Architect writes to his own private diagnostic log. He
@@ -88,6 +127,10 @@ export class NarrativeManager {
     // §5.5.) Keep all Architect lines self-directed, never addressed to "you".
     onDeath(cause) {
         this.deathCount++;
+        // Per-cause tally: Hydratia's death-screen hints escalate on the cause that is
+        // actually killing you, not the global count.
+        if (this.deathByCause[cause] !== undefined) this.deathByCause[cause]++;
+        else this.deathByCause.unknown++;
         if (cause === 'self') {
             this.printMessage(ARCHITECT.death.self);
         } else if (cause === 'border') {

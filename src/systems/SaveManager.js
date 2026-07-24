@@ -26,6 +26,10 @@ export class SaveManager {
     }
 
     _slotKey(slot) { return `${this.prefix}-s${slot}`; }
+    // Hydratia's AUTO-BUFFER: a per-file shadow copy her autosave upgrades write to. It
+    // is a SEPARATE key from the manual file — she never clobbers what Cache filed; the
+    // boot menu offers it as an opt-in Warm Restore when it's newer.
+    _autoKey(slot) { return `${this.prefix}-s${slot}-auto`; }
 
     // Move a pre-slots single-key save into slot 1 (once), so an existing player keeps
     // their progress when this update lands.
@@ -46,7 +50,10 @@ export class SaveManager {
     }
 
     anySave() {
-        for (let s = 1; s <= this.slotCount; s++) if (this.hasSave(s)) return true;
+        // An AUTO buffer counts: if Hydratia's shadow copy is the only surviving record
+        // of a run (e.g. progress since the last manual save), the boot menu must still
+        // appear — the bare cold open would hide (and let a New Game orphan) that copy.
+        for (let s = 1; s <= this.slotCount; s++) if (this.hasSave(s) || this.hasAuto(s)) return true;
         return false;
     }
 
@@ -76,25 +83,92 @@ export class SaveManager {
 
     clear(slot) {
         if (!this.available) return;
-        try { window.localStorage.removeItem(this._slotKey(slot)); } catch (e) { /* ignore */ }
+        try {
+            window.localStorage.removeItem(this._slotKey(slot));
+            window.localStorage.removeItem(this._autoKey(slot)); // the shadow copy goes with the file
+        } catch (e) { /* ignore */ }
     }
 
-    // Wipe every slot (and the cameo flag) — used to reset from a truly clean slate.
+    // Wipe every slot and every global one-time flag (cameos, encore, Hydratia) — a
+    // truly clean slate. Player settings (volume/motion) deliberately survive.
     clearAll() {
         for (let s = 1; s <= this.slotCount; s++) this.clear(s);
         if (!this.available) return;
-        try { window.localStorage.removeItem(this.cameoKey); } catch (e) { /* ignore */ }
+        try {
+            window.localStorage.removeItem(this.cameoKey);
+            window.localStorage.removeItem('ouroboros-encore-unlocked');
+            window.localStorage.removeItem('ouroboros-cadenza-cameo-seen');
+            window.localStorage.removeItem('ouroboros-hydratia-boot');
+            window.localStorage.removeItem('ouroboros-hydratia-approach');
+            window.localStorage.removeItem('ouroboros-hydratia-caught');
+        } catch (e) { /* ignore */ }
     }
 
-    // File-select metadata for every slot: { slot, exists, meta, savedAt }. `meta` is the
-    // display summary the save wrote (place reached, mods owned); null when empty.
+    // --- Hydratia's auto-buffer (saveAuto / loadAuto) ---------------------------------
+    saveAuto(slot, data) {
+        if (!this.available) return false;
+        try {
+            const blob = { ...data, savedAt: Date.now() };
+            window.localStorage.setItem(this._autoKey(slot), JSON.stringify(blob));
+            return true;
+        } catch (e) { return false; }
+    }
+    loadAuto(slot) {
+        if (!this.available) return null;
+        try {
+            const raw = window.localStorage.getItem(this._autoKey(slot));
+            return raw ? JSON.parse(raw) : null;
+        } catch (e) { return null; }
+    }
+    hasAuto(slot) {
+        if (!this.available) return false;
+        try { return window.localStorage.getItem(this._autoKey(slot)) !== null; } catch (e) { return false; }
+    }
+
+    // File-select metadata for every slot: { slot, exists, meta, savedAt, autoSavedAt }.
+    // `meta` is the display summary the save wrote; autoSavedAt is Hydratia's shadow
+    // copy's stamp (null when none) — the boot menu offers [R] Warm Restore when newer.
     slots() {
         const out = [];
         for (let s = 1; s <= this.slotCount; s++) {
             const d = this.load(s);
-            out.push({ slot: s, exists: !!d, meta: d ? (d.meta || null) : null, savedAt: d ? (d.savedAt || null) : null });
+            const a = this.loadAuto(s);
+            out.push({
+                slot: s, exists: !!d,
+                meta: d ? (d.meta || null) : null,
+                savedAt: d ? (d.savedAt || null) : null,
+                autoSavedAt: a ? (a.savedAt || null) : null,
+            });
         }
         return out;
+    }
+
+    // --- Hydratia's catch-on-reload (global, cross-file — same pattern as the cameos) --
+    // Boot timestamps + a 0..4 approach counter driven by QUICK reloads (<= ~10s apart);
+    // 'caught' is the one-time flag that retires the chase and seats her in Localhost.
+    hydratiaBoot() {
+        if (!this.available) return 0;
+        try { return +window.localStorage.getItem('ouroboros-hydratia-boot') || 0; } catch (e) { return 0; }
+    }
+    setHydratiaBoot(t) {
+        if (!this.available) return;
+        try { window.localStorage.setItem('ouroboros-hydratia-boot', String(t)); } catch (e) { /* ignore */ }
+    }
+    hydratiaApproach() {
+        if (!this.available) return 0;
+        try { return +window.localStorage.getItem('ouroboros-hydratia-approach') || 0; } catch (e) { return 0; }
+    }
+    setHydratiaApproach(n) {
+        if (!this.available) return;
+        try { window.localStorage.setItem('ouroboros-hydratia-approach', String(n)); } catch (e) { /* ignore */ }
+    }
+    hasHydratiaCaught() {
+        if (!this.available) return false;
+        try { return window.localStorage.getItem('ouroboros-hydratia-caught') === '1'; } catch (e) { return false; }
+    }
+    markHydratiaCaught() {
+        if (!this.available) return;
+        try { window.localStorage.setItem('ouroboros-hydratia-caught', '1'); } catch (e) { /* ignore */ }
     }
 
     // Global one-time flag for Cache's title-screen walk-on cameo (independent of slots,

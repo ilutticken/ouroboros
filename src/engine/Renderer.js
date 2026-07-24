@@ -152,6 +152,34 @@ export class Renderer {
                         this.ctx.restore();
                     }
                 }
+
+                // THE SCANNER'S BEYOND READ — a category echo of the neighbouring sector,
+                // drawn as a labelled tag at the swept wall's midpoint (text on a dark
+                // plate, >=16px — §2.6: never colour-only). Fades with the reveal.
+                if (worldManager.beyondFor) {
+                    const LABELS = { module: 'MOD', cache: 'DATA', lore: 'LOG', someone: 'LIFE', landmark: '???' };
+                    for (const dir of ['up', 'down', 'left', 'right']) {
+                        const b = worldManager.beyondFor(rx, ry, dir);
+                        if (!b || !LABELS[b.kind]) continue;
+                        const alpha = Math.min(1, b.ms / 800);
+                        const txt = `[${LABELS[b.kind]}]`;
+                        this.ctx.save();
+                        this.ctx.shadowBlur = 0;
+                        this.ctx.font = '16px "Press Start 2P", monospace';
+                        this.ctx.textAlign = 'center';
+                        let tx = W / 2, ty = H / 2;
+                        if (dir === 'up') ty = wallThickness + 24;
+                        else if (dir === 'down') ty = H - wallThickness - 10;
+                        else if (dir === 'left') { tx = wallThickness + 44; }
+                        else { tx = W - wallThickness - 44; }
+                        const w = this.ctx.measureText(txt).width;
+                        this.ctx.fillStyle = `rgba(3, 8, 6, ${0.75 * alpha})`;
+                        this.ctx.fillRect(tx - w / 2 - 4, ty - 15, w + 8, 20);
+                        this.ctx.fillStyle = `rgba(0, 229, 255, ${alpha})`;
+                        this.ctx.fillText(txt, tx, ty);
+                        this.ctx.restore();
+                    }
+                }
                 this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
             }
 
@@ -460,6 +488,15 @@ export class Renderer {
                 this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.fillText(`[M] MARK ROOM  (${tag})`, this.canvas.width / 2, this.canvas.height / 2 + 112);
             }
+            // The RETAINED readout — persistence made visible (§2.6): what survives every
+            // death, right where you plan around it. (Hydratia's ledger, unattributed
+            // until she's caught — the numbers are true either way.)
+            if (state.gameState === 'PAUSED' && !state.isSuspended && state.receipt) {
+                const r = state.receipt;
+                this.ctx.fillStyle = '#3fa080';
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.fillText(`RETAINED: ${r.walls} walls / ${r.mods} upgrades / ${r.modules} modules`, this.canvas.width / 2, this.canvas.height / 2 + 148);
+            }
 
             this.ctx.fillStyle = '#00ff00';
             this.ctx.font = '16px "Press Start 2P", monospace';
@@ -508,6 +545,20 @@ export class Renderer {
                 this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.fillText('PRESS ANY KEY TO CONTINUE', midX, midY + 36);
             }
+
+            // HYDRATIA'S RECEIPT — the death screen's second voice. The Architect gloats
+            // in the terminal; she reassures (what persisted) and coaches (cause-keyed
+            // hint, escalating with repeat offenses). All >=16px, static (§2.6).
+            if (state.deathReceipt) {
+                const r = state.deathReceipt;
+                this.ctx.font = '16px "Press Start 2P", monospace';
+                this.ctx.fillStyle = '#69d0a8';
+                this.ctx.fillText(r.line, midX, midY + 72);
+                this.ctx.fillStyle = '#3fa080';
+                this.ctx.fillText(`kept: ${r.walls} walls broken / ${r.mods} upgrades / ${r.modules} modules`, midX, midY + 96);
+                this.ctx.fillStyle = '#cf8aa0';
+                this.ctx.fillText(r.hint, midX, midY + 124);
+            }
         }
 
         // Boot / title. Before Cache "builds" it (startScreenUnlocked) the boot screen is
@@ -516,6 +567,7 @@ export class Renderer {
         if (state.gameState === 'START' && state.startMenu) {
             this.drawStartScreen(state); // green title + 3-file select menu
             if (state.titleCameoSprite) this.drawTitleCameoSprite(state.titleCameoSprite);
+            if (state.hydratia) this.drawHydratia(state.hydratia, rm);
         } else {
             // Bare A-Dark-Room cold open (no save files yet): a faint prompt (kept dim to
             // preserve the stark opening, but legible-sized and steady under reduce-motion).
@@ -821,6 +873,13 @@ export class Renderer {
             const bx = W - totalW - 14, by = H - 26;
             this.ctx.textAlign = 'right';
             this.ctx.font = '16px "Press Start 2P", monospace';
+            // REDLINE (the {2,2} module): the numeric speed-limit readout — which gear
+            // your current mass licenses (min(3, floor(score/10))), beside the pips.
+            if (u.redline) {
+                const lim = Math.min(3, Math.floor((state.score || 0) / 10));
+                this.ctx.fillStyle = '#ffc234';
+                this.ctx.fillText(`LIM ${lim}`, bx - 76, by + pip);
+            }
             this.ctx.fillStyle = gear < 0 ? '#ff8a3d' : (this.pal || PAL8).wall;
             this.ctx.fillText(gear < 0 ? 'BRK' : 'GEAR', bx - 8, by + pip);
             for (let i = 0; i < n; i++) {
@@ -834,6 +893,23 @@ export class Renderer {
                     this.ctx.fillRect(x + 2, by + 2, pip - 4, pip - 4);
                 }
             }
+        }
+
+        // A carried refugee (bottom-centre): the passenger state must be visible — their
+        // seat is a protected tail segment and the drop-off choice waits at Localhost.
+        if (state.carriedRefugee) {
+            this.ctx.textAlign = 'center';
+            this.ctx.font = '16px "Press Start 2P", monospace';
+            this.ctx.fillStyle = '#8fd0ff';
+            this.ctx.fillText('CARRYING: PASSENGER', W / 2, H - 34);
+        }
+        // The bounce ARG's listen window (§2.6 twin of the crack sound): Cache's back-up
+        // daemon leans in for a beat after a crumple — letters typed now are HEARD.
+        if ((state.argListenMs || 0) > 0) {
+            this.ctx.textAlign = 'center';
+            this.ctx.font = '16px "Press Start 2P", monospace';
+            this.ctx.fillStyle = '#00776a';
+            this.ctx.fillText('. . . listening . . .', W / 2, H - 12);
         }
         this.ctx.restore();
     }
@@ -1233,6 +1309,36 @@ export class Renderer {
     // Cache's placeholder title screen + the 3-file select menu, in the game's green-on-
     // black terminal palette. state.startMenu = { slots:[{slot,exists,meta,savedAt}], index,
     // confirmErase }.
+    // HYDRATIA'S GLIMPSE (boot screen): the shy persistence daemon, a watery-cyan mote at
+    // the right edge. Each quick reload she's ~8% further in (stage 0..4); at stage 4 she
+    // holds still and a [SPACE] prompt appears. Static per boot — no animation, so there
+    // is nothing for reduce-motion to dampen; progress is coded by position + a TRACE
+    // counter (never colour alone, §2.6). Silent by design (decision 3: no boot audio).
+    drawHydratia(h, rm) {
+        const H = this.canvas.height;
+        const y = Math.floor(H * 0.72);
+        this.ctx.save();
+        this.ctx.shadowBlur = 8;
+        this.ctx.shadowColor = '#7ee8e0';
+        this.ctx.fillStyle = '#7ee8e0';
+        // a small droplet: a circle with a nub — deliberately NOT an NPC silhouette
+        this.ctx.beginPath();
+        this.ctx.arc(h.x, y, 6, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.fillRect(h.x - 1.5, y - 11, 3, 6);
+        this.ctx.shadowBlur = 0;
+        this.ctx.font = '16px "Press Start 2P", monospace';
+        this.ctx.textAlign = 'right';
+        this.ctx.fillStyle = '#3fa080';
+        this.ctx.fillText(`TRACE ${h.stage}/4`, this.canvas.width - 12, 24);
+        if (h.catchable) {
+            this.ctx.textAlign = 'center';
+            this.ctx.fillStyle = '#7ee8e0';
+            this.ctx.fillText('[SPACE] reach out', h.x - 60 < 120 ? 140 : h.x - 60, y + 28);
+        }
+        this.ctx.restore();
+    }
+
     drawStartScreen(state) {
         const W = this.canvas.width, H = this.canvas.height, midX = W / 2;
         const menu = state.startMenu || { slots: [], index: 0, confirmErase: null };
@@ -1295,18 +1401,30 @@ export class Renderer {
                 const m = s.meta || {};
                 this.ctx.fillStyle = selected ? '#00cc88' : '#008f5c';
                 this.ctx.fillText(`${m.place || 'In progress'} - ${m.mods || 0} mod${m.mods === 1 ? '' : 's'}`, lx + body, sy);
+            } else if (s.autoSavedAt) {
+                // No manual file, but Hydratia holds a shadow copy — say so, or the only
+                // surviving record of a run would masquerade as an empty slot.
+                this.ctx.fillStyle = selected ? '#7ee8e0' : '#3fa080';
+                this.ctx.fillText('auto backup held — [R]', lx + body, sy);
             } else {
                 this.ctx.fillStyle = selected ? '#8fbfa0' : '#5a6b60';
                 this.ctx.fillText('-- new game --', lx + body, sy);
             }
         }
 
-        // Controls prompt (two lines, at the accessibility minimum).
+        // Controls prompt (two lines, at the accessibility minimum). When Hydratia's
+        // shadow copy is NEWER than the selected file's manual save, offer the opt-in
+        // Warm Restore ([R]) — the manual file is never auto-clobbered.
         const sel = slots[menu.index];
+        const warmRestore = sel && sel.autoSavedAt && sel.autoSavedAt > (sel.savedAt || 0);
         this.ctx.textAlign = 'center';
         this.ctx.font = `${MIN_FONT}px "Press Start 2P", monospace`;
         this.ctx.fillStyle = '#00ffcc';
-        this.ctx.fillText(sel && sel.exists ? 'ENTER load   N new   DEL erase' : 'ENTER  new game', midX, H - body * 2.2);
+        this.ctx.fillText(
+            sel && sel.exists
+                ? (warmRestore ? 'ENTER load   R restore-auto   N new   DEL erase' : 'ENTER load   N new   DEL erase')
+                : (warmRestore ? 'ENTER new game   R restore-auto' : 'ENTER  new game'),
+            midX, H - body * 2.2);
         this.ctx.fillStyle = '#00885f';
         this.ctx.fillText('up/down select file     [O] accessibility', midX, H - body * 0.9);
     }

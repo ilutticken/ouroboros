@@ -92,20 +92,19 @@ Two income engines sharing **one risk model**: off-body reserve → collect as `
 ## 5. The single build order (dependency-ordered)
 
 Legend: **[M]** = mechanical/safe · **[D]** = needs owner draft lines · **[?]** = gated on an owner decision in §6.
+**STATUS (sprint 2): ALL ELEVEN STEPS ARE BUILT.** Every [D] item shipped with placeholder lines explicitly marked DRAFT in `dialogue.js` for the owner's punch-up. 302 tests passing; nothing committed.
 
-1. **Canon retcon** — name swap + tick-cut **[M]**; Glitch-origin + replacement frags **[D]**.
-2. **One `unlocked` + serialize/applySave pass** — add every new flag, safe defaults. **[M]**
-3. **`ascentArmed` / Motion-Carried retiming** (Structure A.1). **[M]** *(rematch-line intensity optional [D])*
-4. **`talkToCacheHome` reorder + Cache-first gossip** (Structure A.2). **[M]**
-5. **Scene-order:** `cadenzaMet` **[M]**; `ARCHITECT.canRead`/`finaleCut` **[D]**; bounce-ARG window **[M]**.
-6. **Presentation 1–3:** dev button + P lift **[M]**; gear-meter-at-tailRider + cooldown + `{2,2}` repurpose **[M/?]**; text-release latch + guide-trim **[M]** *(one tutorial clause [D])*.
-7. **Scanner value** (Structure A.4) — ROM Vault upgrade + new pockets + "beyond" peek. **[M/?]**
-8. **Economy funnel** — empty Localhost, relocate citizens → Wilds refugees. **[M/?]** *(gated on G1)*
-9. **Hydratia** — catch (§A) + autosave & Localhost vendor (§B). **[M]** *(catch dialog [D])*
-10. **Economy Quantcy + Mines** — deposit/yield/withdrawal + drip/gates. **[M]** *(intake Free/Mine copy [D])*
-11. **Merged death receipt** — `countMods()` helper, DEAD + PAUSE panels, cause hints. **[M/D]**
-
-Steps 1–7 are mostly safe/mechanical and independently shippable; 8–11 are the new systems. Each design doc has its own 2–5 slice breakdown.
+1. ✅ **Canon retcon** — refreshd→Hydratia everywhere; tick/heartbeat lore cut (engine move-tick untouched); Glitch origin = the anomaly's feeding, observed. design_doc + audio-demos README updated.
+2. ✅ **`unlocked` flag pass** — all sprint flags, safe defaults (auto-serialized).
+3. ✅ **`ascentArmed` / Motion-Carried retiming** — midpoint climb live; +4 tests.
+4. ✅ **`talkToCacheHome` reorder + Cache-first gossip** — first meeting unblockable; +2 tests.
+5. ✅ **Scene-order** — `cadenzaMet` first contact; `canRead` fires at the Override clear; `finaleCut` at the reboot; bounce-ARG listen window + `cachePending` latch.
+6. ✅ **Presentation** — dev button gone (P kept); gear meter with driving + 1-step/tick cap; the terminal RELEASE LATCH (a finished log waits for Space behind a `>> SPACE` cue; guide logs 5→2; motionCarried+drift merged into one Space).
+7. ✅ **Scanner value** — pockets {0,5} & {8,-5}; ROM Vault carries Crumple II; {2,2}→Redline (numeric limit readout); the BEYOND read (sweep any wall → category tag of the next room).
+8. ✅ **Economy funnel** — Localhost starts empty (signpost carries the leads); 5 refugee rooms; tail-carry with protected passenger seats; COMMONS/MINE intake; freed citizens repopulate.
+9. ✅ **Hydratia** — catch-on-reload (4 quick boots; the '11,2' frag is the planted clue); Localhost stall selling Auto-Commit / Last Breath / Frequent Commit; per-file auto-buffer + [R] Warm Restore.
+10. ✅ **Quantcy + Mines** — deposit-by-shedding, 3%/sector compounding (+0.5pp per freed refugee), vault-full forcing withdrawal runs; mine drip with Deep Vein/Refinery gates and 2-Bit's mine-gated Compression II.
+11. ✅ **Merged death receipt** — Hydratia's DEAD-overlay reassurance + cause-keyed coaching (tiered by repeat cause), PAUSE `RETAINED` readout, one `countMods()`.
 
 ---
 

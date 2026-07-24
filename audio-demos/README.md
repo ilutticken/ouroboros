@@ -41,7 +41,7 @@ limits*, not more voices. This synth uses that same palette so the later 16/32-b
 The design's audio ladder is *diegetic layers that switch on in-world*. These demos are built to
 stack the same way:
 
-- **Layer 0** — refreshd's bare tick (already in-game).
+- **Layer 0** — **silence** (the game boots mute; the first music in the game is Cadenza's Encore).
 - **Layer 1** — Cadenza's Locked Groove: start with **02 (pad + bass)**, the quiet bed.
 - **Layer 2** (Beat 8 reboot) — add the **arpeggio** and the **melody** → **01**.
 - **Layer 3** (Beat 16, 32-bit) — add **percussion** (→ **03**), then countermelody, richer duty
