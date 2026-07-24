@@ -28,7 +28,9 @@ body {
     flex: 0 0 60px;
     display: flex;
     align-items: center;
+    justify-content: space-between; /* Data left, the gear gauge right */
     padding-left: 2rem;
+    padding-right: 2rem;
     z-index: 10;
     transition: opacity 2s ease-in;
 }
@@ -107,6 +109,46 @@ button:hover {
     letter-spacing: 0.2em;
     margin-bottom: 0.5rem;
 }
+
+/* The gear gauge (top ribbon, by your Data): label + three pips + optional Redline
+   limit. Text + fill coding, never colour alone (§2.6); no motion. */
+#gear-display {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 16px;
+    color: #00ffcc;
+}
+#gear-display.hidden { display: none; }
+#gear-display .gear-label { letter-spacing: 0.1em; margin-right: 2px; }
+#gear-display .gear-label.brake { color: #ff8a3d; }
+#gear-display .gear-pip {
+    width: 12px;
+    height: 12px;
+    border: 2px solid #00ffcc;
+    display: inline-block;
+}
+#gear-display .gear-pip.on { background: #00ffcc; }
+#gear-display .gear-pip.on.top { background: #ff8a3d; border-color: #ff8a3d; }
+/* Redline: gears your mass can't license grey out (border + opacity — not colour alone). */
+#gear-display .gear-pip.locked { border-color: #33554a; border-style: dashed; opacity: 0.5; }
+
+/* Boss/encounter status in the BOTTOM RIBBON (owner: no boss overlays on the play
+   space). Firewall-blue for Gate's citations; Heur gets his own class. >=16px, static. */
+#boss-status {
+    margin-left: 16px;
+    padding-left: 16px;
+    border-left: 2px solid rgba(0, 255, 204, 0.25);
+    font-size: 16px;
+    line-height: 1.5;
+    white-space: pre-line;
+    text-align: left;
+    align-self: center;
+    min-width: 220px;
+    color: #4aa3ff;
+}
+#boss-status.hidden { display: none; }
+#boss-status.heur { color: #bfe9ff; }
 
 #dialog-overlay {
     position: absolute;

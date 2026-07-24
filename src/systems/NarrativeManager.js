@@ -32,6 +32,7 @@ export class NarrativeManager {
         this.deathCount = 0;
         this.unknownDeathCount = 0;
         this.deathByCause = { self: 0, border: 0, obstacle: 0, unknown: 0 };
+        this._bitePairGloated = false; // the met-but-not-carried gloat re-arms per run
         this.online = false;
         this._generation++; // any in-flight processQueue loop is now stale and will bail
         if (this.terminal) this.terminal.innerHTML = ''; // (also removes any advance cue)
@@ -125,12 +126,19 @@ export class NarrativeManager {
     // does NOT know the player can read this terminal, so he mutters, gloats, and
     // — crucially — reveals the very mechanics he's trying to hide. (See design_doc
     // §5.5.) Keep all Architect lines self-directed, never addressed to "you".
-    onDeath(cause) {
+    onDeath(cause, opts = {}) {
         this.deathCount++;
         // Per-cause tally: Hydratia's death-screen hints escalate on the cause that is
         // actually killing you, not the global count.
         if (this.deathByCause[cause] !== undefined) this.deathByCause[cause]++;
         else this.deathByCause.unknown++;
+        // Situational gloat (once per run): the merchant remnant is met but not yet
+        // aboard — the Architect savors the non-cooperation. Replaces the cause line.
+        if (opts.nearBite && !this._bitePairGloated) {
+            this._bitePairGloated = true;
+            this.printMessage(ARCHITECT.death.nearBite);
+            return;
+        }
         if (cause === 'self') {
             this.printMessage(ARCHITECT.death.self);
         } else if (cause === 'border') {

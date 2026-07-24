@@ -89,6 +89,10 @@ describe('Boot + draw smoke (every state renders without throwing)', () => {
         game._argListenMs = 1000;
         game.worldManager.revealBeyond(0, 0, 'right', 'module', 3000);
         frames(game, 10);
+        // a wandered-off apple (null) must render a full frame without throwing
+        game.apple = null;
+        frames(game, 3);
+        game.apple = game.spawnApple();
         // walk a few real rooms (content rooms exercise NPC drawing)
         for (const [x, y] of [[5, 0], [1, -5], [8, -5], [7, -2], [4, 2]]) {
             game.worldManager.currentRoomX = x;

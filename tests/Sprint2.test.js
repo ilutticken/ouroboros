@@ -16,6 +16,7 @@ function mountDom() {
     document.body.innerHTML = `
         <div id="ui-layer" class="hidden">
             <div id="score-value">0</div>
+            <div id="gear-display" class="hidden"></div>
         </div>
         <div id="game-wrapper">
             <div id="shop-overlay" class="hidden">
@@ -378,15 +379,31 @@ describe("Quantcy's Trust (deposit / compound / withdrawal run)", () => {
 describe('Hydratia (the catch, the autosave, the receipt)', () => {
     beforeEach(mountDom);
 
-    it('quick reloads advance the approach; four in a row makes her catchable', () => {
+    it('QUICK reloads advance the chase (the hide timer); four in a row = catchable', () => {
         const game = newGame();
-        game.saveManager.save(1, {}); // the chase needs an existing save (menu is up)
+        // boot 1 seeds the timestamp; boots 2-5 land inside the 10s window
         for (let i = 0; i < 4; i++) game.maybeStartHydratiaCatch();
-        // boot 1 seeded the timestamp (approach 0), boots 2-4 were quick: approach 3.
         expect(game.saveManager.hydratiaApproach()).toBe(3);
         game.maybeStartHydratiaCatch();
         expect(game.saveManager.hydratiaApproach()).toBe(4);
         expect(game._hydratia && game._hydratia.catchable).toBe(true);
+    });
+
+    it('she haunts the BARE cold open too — no save files required (owner fix)', () => {
+        const game = newGame();
+        game.state.gameState = 'START'; // the boot screen, before any file exists
+        expect(game.saveManager.anySave()).toBe(false); // pre-Start-Screen player
+        game.maybeStartHydratiaCatch();
+        expect(game._hydratia).toBeTruthy(); // the glimpse still loads
+        // ...and catching her from the cold open works end-to-end
+        game.saveManager.setHydratiaApproach(3);
+        game.saveManager.setHydratiaBoot(Date.now()); // a quick reload follows
+        game.maybeStartHydratiaCatch();
+        expect(game._hydratia.catchable).toBe(true);
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ' }));
+        finishDialog(game);
+        expect(game.saveManager.hasHydratiaCaught()).toBe(true);
+        expect(game.state.gameState).toBe('START'); // the catch did NOT start the run
     });
 
     it('her stall seats in Localhost once caught', () => {
@@ -425,6 +442,7 @@ describe('Hydratia (the catch, the autosave, the receipt)', () => {
 
     it('the death receipt reassures + coaches, escalating on the repeat cause', () => {
         const game = newGame();
+        game.state.unlocked.hydratiaFound = true; // caught — her name shows
         game.die('self');
         expect(game._deathReceipt.hint).toBe(HYDRATIA_DEATH.hint.self[0]);
         expect(game._deathReceipt.line).toBe(HYDRATIA_DEATH.receipt);
@@ -534,5 +552,150 @@ describe('Review fixes (sprint 2)', () => {
         const ok = game.applySave({ unlocked: { modulesFound: ['2,2'], gearMeter: true } });
         expect(ok).toBe(true);
         expect(game.state.unlocked.redline).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------------
+// PLAYTEST ROUND 2 — the owner's feedback items, locked in.
+describe('Playtest feedback (round 2)', () => {
+    beforeEach(mountDom);
+
+    it('Denny stands down from {1,0} once the map is installed AND Localhost is open', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 1; game.worldManager.currentRoomY = 0;
+        expect(game.worldManager.getOrCreateRoom(game.state.unlocked).npcs.some(n => n.id === 'denny')).toBe(true);
+        game.state.unlocked.mapModule = true;
+        game.state.unlocked.biteDroppedOff = true;
+        game._maybeRetireDenny(); // the cached room is wiped when the pair completes
+        const after = game.worldManager.getOrCreateRoom(game.state.unlocked);
+        expect(after.npcs.some(n => n.id === 'denny')).toBe(false);
+    });
+
+    it("the Architect's met-but-not-carried gloat fires once, then normal gloats resume", () => {
+        const game = newGame();
+        game.narrative.online = true;
+        const printed = [];
+        game.narrative.printMessage = (m) => printed.push(m);
+        game.state.unlocked.biteProgress = 1; // met 2-Bit...
+        game.state.unlocked.tailRider = false; // ...but never hooked him aboard
+        game.die('border');
+        expect(printed[printed.length - 1]).toContain('merchant remnant');
+        game.state.gameState = 'PLAYING';
+        game.die('border');
+        expect(printed[printed.length - 1]).not.toContain('merchant remnant'); // once per run
+    });
+
+    it('the Fall-Through catch THROWS you back toward the door you entered (never kills)', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -2;
+        game.apple = { x: 300, y: 300 }; game.obstacles = []; game.glitches = [];
+        game._roomEntryDir = { x: 0, y: -1 }; // you entered heading NORTH (from the south door)
+        const denny = new NPC(120, 100, 20, 'denny2', []); // already adjacent
+        game.npcs = [denny];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.input.direction = { x: 20, y: 0 };
+        game._denny2Catch(denny);
+        expect(game.input.direction).toEqual({ x: 0, y: 20 }); // hurled back toward the south door
+        expect(game.gear).toBe(0);
+        expect(game.state.gameState).toBe('PLAYING'); // a DENIED, never a death
+        expect(denny.stunMs).toBeGreaterThan(0); // satisfied — you get a running start
+    });
+
+    it('the Pause inventory lists what you own by display name', () => {
+        const game = newGame();
+        game.state.upgrades.scanner = true;
+        game.state.upgrades.crumpleLevel = 2;
+        game.state.unlocked.mapModule = true;
+        game.state.unlocked.autosaveSafe = true;
+        const inv = game._buildInventory();
+        expect(inv.upgrades).toContain('Topology Scanner');
+        expect(inv.upgrades).toContain('Crumple Buffer II');
+        expect(inv.upgrades).toContain('Auto-Commit');
+        expect(inv.modules).toContain('Sector Map');
+    });
+
+    it('outside the Hub, an eaten apple can WANDER (20%); re-entry re-arms the room', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 3; game.worldManager.currentRoomY = 1;
+        game.npcs = []; game.obstacles = []; game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.apple = { x: 120, y: 100 };
+        const rand = vi.spyOn(Math, 'random').mockReturnValue(0.1); // inside the 20%
+        step(game, { x: 20, y: 0 });
+        rand.mockRestore();
+        expect(game.apple).toBeNull(); // it skittered into another sector
+        game.shiftScreen(1, 0);  // leave...
+        game.shiftScreen(-1, 0); // ...and return: the food came back
+        expect(game.apple).toBeTruthy();
+    });
+
+    it("a wandered-off apple can't crash a tick — the room simply has no food (playtest lockup)", () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 4; game.worldManager.currentRoomY = 2;
+        const room = game.worldManager.getOrCreateRoom(game.state.unlocked); // the refugee room
+        game.npcs = room.npcs; game.obstacles = []; game.glitches = [];
+        game.apple = null; // the skitter just happened
+        game.snake.body = [{ x: 100, y: 100 }];
+        expect(() => {
+            step(game, { x: 20, y: 0 }); // the old code threw in checkAppleCollision
+            step(game, { x: 20, y: 0 });
+        }).not.toThrow();
+        expect(game.state.gameState).toBe('PLAYING');
+    });
+
+    it('the death receipt is UNATTRIBUTED until Hydratia is caught', () => {
+        const game = newGame();
+        game.die('self');
+        expect(game._deathReceipt.line).not.toContain('HYDRATIA');
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.hydratiaFound = true;
+        game.die('self');
+        expect(game._deathReceipt.line).toContain('HYDRATIA');
+    });
+
+    it('a carried refugee rides the tail with a face, like 2-Bit', () => {
+        const game = newGame();
+        game.carriedRefugee = '4,2';
+        game.growSnake(4);
+        expect(game.refugeeIndex).toBe(game.snake.body.length - 1); // the tail tip
+        game.carriedRefugee = null;
+        expect(game.refugeeIndex).toBe(-1);
+    });
+
+    it('the Hub always respawns its apple in place (tutorial economy)', () => {
+        const game = newGame();
+        game.npcs = []; game.obstacles = []; game.glitches = [];
+        game.snake.body = [{ x: 100, y: 100 }];
+        game.apple = { x: 120, y: 100 };
+        const rand = vi.spyOn(Math, 'random').mockReturnValue(0.1);
+        step(game, { x: 20, y: 0 });
+        rand.mockRestore();
+        expect(game.apple).toBeTruthy();
+    });
+
+    it("Hydratia's shop is a tiered ladder: each Shadow Copy requires the last", () => {
+        const game = newGame();
+        game.shopManager.open('hydratia', () => {});
+        expect(game.shopManager.rows.length).toBe(1); // only tier I on the shelf
+        game.shopManager.close();
+        game.state.unlocked.autosaveSafe = true;
+        game.shopManager.open('hydratia', () => {});
+        expect(game.shopManager.rows.length).toBe(2); // tier II appears
+        game.shopManager.close();
+    });
+
+    it('the ribbon gear gauge appears with the meter unlock and reads the live gear', () => {
+        const game = newGame();
+        game.state.unlocked.ui = true;
+        game.state.unlocked.gearMeter = true;
+        game.state.score = 30;
+        game.gear = 2;
+        game.refreshGearDisplay();
+        const el = document.getElementById('gear-display');
+        expect(el.classList.contains('hidden')).toBe(false);
+        expect(el.querySelectorAll('.gear-pip.on').length).toBe(2);
+        game.gear = -1;
+        game.refreshGearDisplay();
+        expect(el.innerHTML).toContain('BRK');
     });
 });

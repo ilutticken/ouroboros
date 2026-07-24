@@ -841,53 +841,70 @@ describe('The Ascent — Beat 7, the Fall-Through, the Override', () => {
         expect(game.audio.playCrash).toHaveBeenCalled();
     });
 
-    it('the Fall-Through stamps land one beat late — never on the cell you occupy', () => {
+    it('the Fall-Through stamps your TAIL wake — the path behind you hardens (v3)', () => {
         const game = newGame();
-        game.state.unlocked.purgeComplete = true;
-        game.state.unlocked.borders = true;
         game.worldManager.currentRoomX = 5;
         game.worldManager.currentRoomY = -2;
         game.apple = { x: 300, y: 300 };
         game.obstacles = []; game.glitches = [];
-        game.npcs = [new NPC(200, 340, 20, 'denny2', [])];
-        game.snake.body = [{ x: 100, y: 100 }];
-        step(game, { x: 20, y: 0 }); // head 100->120; trail memory primes at 100
-        expect(game.stamps.length).toBe(0);
-        step(game, { x: 20, y: 0 }); // head 120->140; the DENIED lands at 100
+        const denny = new NPC(200, 340, 20, 'denny2', []);
+        denny.stunMs = 999999; // park the chase; this test is about the stamps
+        game.npcs = [denny];
+        game.snake.body = [{ x: 120, y: 100 }, { x: 100, y: 100 }];
+        step(game, { x: 20, y: 0 }); // the tail vacates (100,100); the wake memory primes
+        step(game, { x: 20, y: 0 }); // the vacated cell comes back DENIED
         expect(game.stamps).toContainEqual(expect.objectContaining({ x: 100, y: 100 }));
-        // the stamp is never under the current head
+        // never under your live body — the wake is always BEHIND the tail
         for (const s of game.stamps) {
-            expect(s.x === game.snake.head.x && s.y === game.snake.head.y).toBe(false);
+            expect(game.snake.body.some(b => b.x === s.x && b.y === s.y)).toBe(false);
         }
     });
 
     it('doubling back into a stamp is an obstacle-death', () => {
         const game = newGame();
-        game.state.unlocked.purgeComplete = true;
         game.worldManager.currentRoomX = 5;
         game.worldManager.currentRoomY = -2;
         game.apple = { x: 300, y: 300 };
         game.obstacles = []; game.glitches = [];
-        game.npcs = [new NPC(200, 340, 20, 'denny2', [])];
-        game.stamps = [{ x: 160, y: 100, ttl: 12 }];
+        const denny = new NPC(200, 340, 20, 'denny2', []);
+        denny.stunMs = 999999;
+        game.npcs = [denny];
+        game.stamps = [{ x: 160, y: 100, ttl: 9999 }];
         game.snake.body = [{ x: 140, y: 100 }];
         step(game, { x: 20, y: 0 });
         expect(game.state.gameState).toBe('DEAD');
     });
 
-    it('stamps decay, so the room can never fully seal', () => {
+    it('stamps PERSIST until you leave the room (v3), and leaving clears them', () => {
         const game = newGame();
-        game.state.unlocked.purgeComplete = true;
         game.worldManager.currentRoomX = 5;
         game.worldManager.currentRoomY = -2;
         game.apple = { x: 300, y: 300 };
         game.obstacles = []; game.glitches = [];
-        game.npcs = [new NPC(200, 340, 20, 'denny2', [])];
-        game.stamps = [{ x: 60, y: 60, ttl: 2 }];
-        game.snake.body = [{ x: 100, y: 100 }];
-        step(game, { x: 20, y: 0 });
-        step(game, { x: 20, y: 0 });
-        expect(game.stamps.some(s => s.x === 60 && s.y === 60)).toBe(false);
+        const denny = new NPC(200, 340, 20, 'denny2', []);
+        denny.stunMs = 999999;
+        game.npcs = [denny];
+        game.stamps = [{ x: 60, y: 60, ttl: 9999 }];
+        game.snake.body = [{ x: 200, y: 100 }];
+        for (let i = 0; i < 4; i++) step(game, { x: 20, y: 0 });
+        expect(game.stamps.some(s => s.x === 60 && s.y === 60)).toBe(true); // no decay
+        game.shiftScreen(0, 1); // leaving the room voids the paperwork
+        expect(game.stamps.length).toBe(0);
+    });
+
+    it('the Fall-Through chase runs on HIS clock: faster than gear 2, slower than gear 3', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = -2;
+        game.apple = { x: 300, y: 300 };
+        game.obstacles = []; game.glitches = [];
+        const denny = new NPC(300, 300, 20, 'denny2', []);
+        game.npcs = [denny];
+        game.snake.body = [{ x: 60, y: 60 }];
+        const before = { x: denny.x, y: denny.y };
+        game.updateDenny2Chase(120); // 120ms = 3 steps at 40ms/cell (gear2=50, gear3=30)
+        const moved = (Math.abs(denny.x - before.x) + Math.abs(denny.y - before.y)) / 20;
+        expect(moved).toBe(3);
     });
 
     it('the Override holds exactly one citation at a time and always leaves a window', () => {

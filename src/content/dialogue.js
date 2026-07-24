@@ -112,7 +112,10 @@ export const ARCHITECT = {
         border: "LOG: Architect > 'Quarantine held. Anomaly deleted on impact. Another flawless day for me, personally.'",
         obstacle: "LOG: Architect > 'Anomaly walked into a logic gate. Didn't even have to try. Note: take full credit anyway.'",
         unknownFirst: "LOG: Architect > 'Unregistered process terminated. Filing under Not My Problem.'",
-        unknownThird: "LOG: Architect > 'It keeps coming back. I do not like that.'"
+        unknownThird: "LOG: Architect > 'It keeps coming back. I do not like that.'",
+        // Fires (once) when it dies AFTER meeting 2-Bit but BEFORE hooking him aboard —
+        // the Architect is relieved the two haven't figured out cooperation. (DRAFT.)
+        nearBite: "LOG: Architect > 'It died within sight of the merchant remnant. Again. Good. Imagine those two ever working together.'"
     },
     scoreUnlock: {
         ui: "LOG: Architect > 'The hoarder is growing. Deploying a monitoring overlay.'",
@@ -129,7 +132,7 @@ export const ARCHITECT = {
     // containment. The closing clause still leaks the finale's trick (his agents can't
     // touch the residue) — the leak survives the retcon because gloating is his nature.
     // (DRAFT — owner to punch up.)
-    seedGlitches: "LOG: Architect > 'Observation: corruption is MANIFESTING along the anomaly's feeding path. Where it gathers Data, the sector rots behind the bite marks. I did not build this and I resent having to log it. Contact appears to drain the anomaly — noted without sympathy, filed under REASONS IT MUST BE CONTAINED, appendix C. Gate is NOT to touch the residue. If the anomaly ever learned my agents can't, we would have a genuine problem.'",
+    seedGlitches: "LOG: Architect > 'Corruption is blooming along the anomaly's feeding path. I did not build this, and I resent logging it. Filed under: reasons for containment. Gate is NOT to touch the residue.'",
     // Guide logs TRIMMED 5 -> 2 (owner: fewer Architect messages, each Space-gated). The
     // '1,0' flavor is folded into '3,0'; '2,0'/'4,0' were redundant restatements. The two
     // load-bearing mechanic leaks (maxGear, subSmash) are untouched elsewhere. (DRAFT.)
@@ -140,14 +143,14 @@ export const ARCHITECT = {
     // Motion Carried — the world-state flip on clearing the Override (the SECOND Gate
     // run-in, now at the act midpoint). Single merged log (was two back-to-back) so the
     // moment costs one Space, not two. The tail leaks the a11y notch. (DRAFT.)
-    motionCarried: "LOG: Architect > 'Emergency motion before the Scheduling Committee: with the firewall down I cannot hold every sector's clock myself. Motion: bind hazard scheduling to the anomaly's own tick. Carried, unanimous. I am the only member. I abstained. Effective immediately the corruptors DRIFT — and their drift vectors are printed right on them. Who labeled the hazards? WHY would someone label the hazards?'",
+    motionCarried: "LOG: Architect > 'Motion before the Scheduling Committee: bind hazard scheduling to the anomaly's own tick. Carried, unanimous. I am the only member. I abstained. ...Who labeled the drift vectors?'",
     // The 'can it READ?' payoff — fires at the Override clear, the last moment Gate still
     // forwards him reports (before the {5,-3} cleared-dialog severance line). (DRAFT.)
-    canRead: "LOG: Architect > 'ANSWER, re: my standing question of whether it can read. The Override fell. It braked for the citations. It waited out the SEAL. It has been reading EVERYTHING — the postings, the weak points... this log. ...THIS log. Someone tell me this log is not readable. Someone read me the permissions on my own DIARY.'",
+    canRead: "LOG: Architect > 'Re: my standing question of whether it can read. It braked for the citations. ...Who set my log to PUBLIC?'",
     // His last word at the finale — a half-line the era-16 snap cuts off mid-syllable.
     // Explains his absence from the climax: Gate stopped forwarding; the reboot takes
     // his channel. (DRAFT.)
-    finaleCut: "LOG: Architect > 'Gate has stopped forwarding reports. FINE. I will watch Port 0 myself, I will personally— wait. What is happening to the pal— the palette— who authorized BEAUT—'",
+    finaleCut: "LOG: Architect > 'Gate has stopped forwarding reports. Fine. I will watch Port 0 myself, I— what is happening to the pal—'",
     // First time the anomaly reaches a perimeter (coil) sector. Long-fuse: no explanation
     // for acts. He didn't build the outer wall. He built AROUND it.
     coilFirst: "LOG: Architect > 'It reached the perimeter. Filing under GEOLOGY: the outer wall predates me. I did not build it. I built around it. It is warm, and I do not audit it.'",
@@ -178,12 +181,14 @@ export const TWO_BIT = {
         "2-Bit: If you offer to carry me to safety, I'll teach you a trick.",
         "2-Bit: Do you agree? (Press SPACE to comply)"
     ],
-    // Driving tutorial, right after he hooks onto your tail.
+    // Driving tutorial, right after he hooks onto your tail. (The last line names the
+    // tach he fits at the same moment — it lives in the top ribbon, by your Data.)
     tutorial: [
         "2-Bit: I'm hooked into your system.",
         "2-Bit: Tapping the direction you're facing will accelerate you.",
         "2-Bit: Tapping the opposite direction acts as a brake.",
-        "2-Bit: The more mass you have, the higher your max speed limit."
+        "2-Bit: The more mass you have, the higher your max speed limit.",
+        "2-Bit: Bolted a gear gauge in topside, next to your Data. Watch it."
     ],
     // Drop-off + shop hook in Localhost (checkBiteDropOff).
     dropOff: [
@@ -330,10 +335,10 @@ export const DENNY_REMATCH = {
     enter: [
         "Denny: Oh no. Oh no no no. It's YOU — and the alarms are REAL this time. Everything above me is breached. Traffic is actually FALLING THROUGH.",
         "Denny: Which means I have to actually— I have never actually— okay. Okay! Stamping commences! I am so sorry about everything that is about to occur.",
-        "Denny: (He raises the stamp. The scheduler hitches. The DENIED lands a full beat behind his hand — right where you just were.)"
+        "Denny: (He raises the stamp. Every cell your tail clears comes back DENIED.)"
     ],
     bump: [
-        "Denny: A denial has been issued! Late! It is being issued LATE, I know — the scheduler is dropping frames and I am stamping as fast as regulation allows!"
+        "Denny: I'm stamping everywhere you've BEEN! It's the only filing system I have left!"
     ],
     cleared: [
         "Denny: You went around me. Over TIME. That shouldn't even be a direction!",
@@ -354,7 +359,8 @@ export const GATE_OVERRIDE = {
     citations: {
         seal: 'CITATION §7 — NORTH EGRESS: REVOKED',
         cap: 'CITATION §9 — VELOCITY: CAPPED',
-        invert: 'CITATION §12 — HEADING INVERTED. RECALIBRATING…'
+        // The recal window IS the answer — and it says so. (The forced 180 is gone.)
+        invert: 'RECALIBRATING… SEAL DOWN'
     },
     cleared: [
         "Gate: ...Cited. Every rule cited, and you went through the WALL portion of the wall.",
@@ -444,11 +450,12 @@ export const LORE_FRAGS = {
     // caretaker's own failing. Her grief stays; the causal claim is gone.
     '4,-3': ["LOG FRAGMENT [corrupted]: '...hydration pass 88,214,003: cell 0x0000 read BLANK before i reached it. re-read: BLANK. something is eating AHEAD of my rounds now. i was not late. i am never late. ...i was late.'"],
     '8,5': ["LOG FRAGMENT: 'residential subnet, final entry: they went quiet in alphabetical order. the sweep is very organized.'"],
-    // The one reasoning-grade clue for Hydratia's catch-on-reload secret.
-    '11,2': ["LOG FRAGMENT: 'saw the caretaker once — edge of a cold boot, gone before the first frame settled. she is SHY. boot again, quick, and she starts closer. i never had the heart to chase her more than four boots in a row.'"],
+    // The one reasoning-grade clue for Hydratia's catch-on-reload secret. Oblique on
+    // purpose: the TRACE pips teach the count in situ once you've started the chase.
+    '11,2': ["LOG FRAGMENT: 'the caretaker is SHY. saw her once at the edge of a cold boot, gone before the first frame settled. quick, and again — she starts closer.'"],
     '1,-2': ["LOG FRAGMENT [encrypted]: '...vault manifest: ONE (1) save file, corrupted, origin unknown. do not defragment. do not deliver. do not—' (the rest is scrambled)"],
     // The scanner-pocket smuggler's note ({8,-5} hoard) — sells the sweep-first verb.
-    '8,-5': ["LOG FRAGMENT: 'smuggler's note: the wall only LOOKS finished. sweep before you knock. everything worth keeping is one room past where the map gives up.'"]
+    '8,-5': ["LOG FRAGMENT: 'smuggler's note: the wall only LOOKS finished. sweep before you knock.'"]
 };
 
 // Wilds-found UI / diagnostic modules — utilities scattered in the Wilds (WILDS_MODULES).
@@ -477,8 +484,8 @@ export const UI_MODULES = {
     // module upgraded to a REDLINE enhancement instead. (DRAFT.)
     redline: [
         "A stripped speed-governor chip, still arguing with itself. REDLINE.",
-        "SYSTEM: Redline installed — the gear meter now shows your numeric speed limit beside the pips.",
-        "2-Bit: (in your memory) Now the gauge argues in NUMBERS. Broker's dashboard, baby."
+        "SYSTEM: Redline installed — the gauge now greys out gears your mass can't reach.",
+        "2-Bit: (in your memory) Now the gauge knows what you can't afford."
     ],
     // The ROM Vault's scanner-gated prize — an interim upgrade until the Corrupted Save
     // File / Trading Sequence moves in. (DRAFT.)
@@ -494,16 +501,14 @@ export const UI_MODULES = {
 // each boot — see Game.maybeStartHydratiaCatch). Once caught she relocates to Localhost
 // and sells Save upgrades (the game's autosave machinery). ALL LINES DRAFT.
 export const HYDRATIA_CATCH = [
-    "???: —oh. Oh no. You SAW me. Nobody sees me. That's the whole arrangement.",
-    "Hydratia: ...Hydratia. Don't wear it out. I do the copies. Every time the Architect deletes you — and sugar, he has TRIED — I'm the reason it doesn't take.",
-    "Hydratia: I prefer the background. It's quiet, and nobody thanks you, which is the correct amount of thanks.",
-    "Hydratia: But you caught me fair. Four boots in a row — persistent. I respect persistent; it's the business I'm in.",
-    "Hydratia: I'll set up at Localhost. Come see me about keeping you... continuous."
+    "???: —you SAW me. Nobody sees me. That's the arrangement.",
+    "Hydratia: ...Hydratia. I do the copies. Deletion never takes — you're welcome, by the way. Nobody's ever said it back.",
+    "Hydratia: Caught is caught. I'll be at Localhost."
 ];
 export const HYDRATIA_STALL = {
     intro: [
-        "Hydratia: You found the stall. I stand BEHIND it so people stop trying to catch me.",
-        "Hydratia: I keep the shadow copy — the one the Kernel can't reach. These make me keep it more often. That's the whole product."
+        "Hydratia: The stall keeps people from trying to catch me.",
+        "Hydratia: I keep the shadow copy. These make me keep it more often."
     ]
 };
 // The death-screen receipt + cause-keyed coaching hints (the Architect keeps gloating in
@@ -511,6 +516,9 @@ export const HYDRATIA_STALL = {
 // jobs). hint arrays are TIERS: [first death by this cause, repeat offender]. ALL DRAFT.
 export const HYDRATIA_DEATH = {
     receipt: "HYDRATIA: body's gone. your progress is warm with me.",
+    // Before she's caught, her name never shows — an unattributed system line holds the
+    // slot (and quietly plants that SOMEONE is doing the retaining).
+    receiptUnmet: "SYSTEM: signal lost. progress retained.",
     hint: {
         self: [
             "a body can't cross itself. give your turns more room.",
@@ -537,9 +545,8 @@ export const HYDRATIA_DEATH = {
 export const QUANTCY = {
     intro: [
         "Quantcy: Quantcy. It's a family name. The family was compound interest.",
-        "Quantcy: You bring me Data, I grow it. Slowly. Honestly. At rates that would embarrass nobody.",
-        "Quantcy: The catch, sugar: it grows HERE. Wilds banking. The vault is safe — the WALK isn't.",
-        "Quantcy: Deposit what you can stand to shrink by. Come back longer."
+        "Quantcy: Data grows here. Slowly. Honestly. The vault is safe — the walk isn't.",
+        "Quantcy: Deposit what you can stand to shrink by."
     ],
     idle: ["Quantcy: Compounding continues. It's what we do."]
 };
@@ -549,37 +556,60 @@ export const QUANTCY = {
 // you deliver them to THE COMMONS (freed — they repopulate the town and boost Quantcy)
 // or THE DATA MINES (passive income, the dark tally). Keyed by 'x,y' room. ALL DRAFT.
 export const REFUGEES = {
-    '4,2': ["Refugee: You're the one knocking holes in the quarantine? Then it's TRUE. The walls come down.", "Refugee: Take me to Localhost. I weigh nothing — I checked."],
-    '9,-2': ["Refugee: I've been running so long I forget what from. ...The Zones? The Zones are OPENING?", "Refugee: Home. Please. I'll ride the tail; I've ridden worse."],
-    '2,4': ["Refugee: Shh — I heard the walls crack from three sectors over. That was YOU?", "Refugee: Localhost still stands, doesn't it? Carry me back. I'll hold on tight."],
-    '10,3': ["Refugee: A worm long enough to carry passengers. The Wilds provide after all.", "Refugee: Get me to town, big rig. I'll owe you one. Everybody out here owes somebody."],
-    '6,-3': ["Refugee: I stopped counting refresh cycles when nobody came. ...Somebody came.", "Refugee: Take me home. Whatever home is now. I'd like to find out."]
+    '4,2': ["Refugee: The walls are coming down? Then take me home. I weigh nothing — I checked."],
+    '9,-2': ["Refugee: I forget what I was running from. Home. Please. I'll ride the tail."],
+    '2,4': ["Refugee: I heard the walls crack from three sectors over. Localhost still stands? Carry me."],
+    '10,3': ["Refugee: A worm long enough for passengers. Get me to town, big rig."],
+    '6,-3': ["Refugee: I stopped counting cycles when nobody came. ...Somebody came."]
 };
 export const REFUGEE_ATTACH = [
-    "SYSTEM: Passenger aboard — they ride your tail. Deliver them at Localhost: THE COMMONS... or THE MINE."
+    "SYSTEM: Passenger aboard. Deliver at Localhost — THE COMMONS, or THE MINE."
 ];
-export const REFUGEE_BUSY = ["Refugee: You've already got somebody aboard. One at a time — this isn't a bus."];
+export const REFUGEE_BUSY = ["Refugee: One at a time. This isn't a bus."];
 export const INTAKE = {
     free: [
-        "SYSTEM: Passenger delivered — THE COMMONS. Localhost pop. +1.",
-        "Citizen: Room to breathe. A floor that stays put. ...Thank you. Ask me anything — I'll make myself useful."
+        "SYSTEM: Delivered — THE COMMONS. Localhost pop. +1.",
+        "Citizen: A floor that stays put. ...Thank you."
     ],
     mine: [
-        "SYSTEM: Passenger delivered — THE DATA MINES. Output increased.",
+        "SYSTEM: Delivered — THE DATA MINES. Output increased.",
         "(They look back once. The lift takes them down.)"
     ],
     // First-ever mine delivery: 2-Bit's uneasy blessing (fires once).
-    mineFirst2Bit: [
-        "2-Bit: The mines, huh. ...Look, I don't judge. Data's data, and somebody's gotta dig it.",
-        "2-Bit: I'm fine with it. Genuinely. So long as it ain't me."
-    ],
+    mineFirst2Bit: ["2-Bit: The mines, huh. ...I'm fine with it. So long as it ain't me."],
     // Hydratia's insistence (only once she's set up in town — fires once).
-    mineInsistHydratia: [
-        "Hydratia: It's in their best interest, you know. Structure. Purpose. Warm racks.",
-        "Hydratia: ...I keep everyone's copies the same, either way. That's all I'll say about it."
-    ],
-    commonsEmpty: ["THE COMMONS: benches, quiet, room for more. (Deliver refugees here to free them.)"],
-    mineEmpty: ["THE DATA MINE: a lift, a ledger, a hum. (Deliver refugees here to put them to work.)"]
+    mineInsistHydratia: ["Hydratia: It's in their best interest. Structure. Warm racks. ...I keep everyone's copies the same, either way."],
+    commonsEmpty: ["THE COMMONS: benches, quiet, room for more."],
+    mineEmpty: ["THE DATA MINE: a lift, a ledger, a hum."]
+};
+
+// Display names for the Pause-Menu inventory (Zelda-style: what you own, listed by its
+// player-facing name — game convention, no 'kept/retained' framing).
+export const INVENTORY_NAMES = {
+    upgrades: {
+        dataCompression: 'Data Compression',
+        dataCompression2: 'Data Compression II',
+        reinforcedSegments: 'Reinforced Segments',
+        pivot: 'Pivot Override',
+        scanner: 'Topology Scanner',
+        corruptHandler: 'Glitch Shunt',
+        salvage: 'Salvage Claws',
+        glitchWard: 'Scale Mods',
+    },
+    crumple: ['Crumple Buffer', 'Crumple Buffer II', 'Crumple Buffer III'],
+    saves: {
+        autosaveSafe: 'Auto-Commit',
+        autosaveDeath: 'Last Breath',
+        autosaveEvery: 'Frequent Commit',
+    },
+    modules: {
+        mapModule: 'Sector Map',
+        saveFunction: 'Save Function',
+        gearMeter: 'Gear Gauge',
+        redline: 'Redline',
+        coordReadout: 'Sector Readout',
+        mapPinsTool: 'Map Pins',
+    },
 };
 
 // The Deep-Sleep Booth {10,5} — HUSH's vault, backed onto the SE coil. (Pulse/tick

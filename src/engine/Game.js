@@ -14,7 +14,7 @@ import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, CADENZA_SCENE, 
          NIBBLE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH, GATE_OVERRIDE,
          CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING, UI_MODULES,
          QUANTCY, REFUGEE_ATTACH, REFUGEE_BUSY, INTAKE, LOCALHOST_CITIZENS,
-         HYDRATIA_CATCH, HYDRATIA_STALL, HYDRATIA_DEATH } from '../content/dialogue.js';
+         HYDRATIA_CATCH, HYDRATIA_STALL, HYDRATIA_DEATH, INVENTORY_NAMES } from '../content/dialogue.js';
 import { classifyRoomBeyond } from '../systems/RoomGenerator.js';
 
 export class GameEngine {
@@ -202,6 +202,28 @@ export class GameEngine {
         // makes startMenuActive() flip false mid-event, which would otherwise let the same
         // keypress fall through and auto-start a run.
         window.addEventListener('keydown', (e) => {
+            // THE BARE COLD OPEN (no file menu yet): Hydratia haunts this screen too —
+            // she must be catchable before the Start Screen ever exists (owner).
+            if (this.state.gameState === 'START' && !this.startMenuActive()) {
+                if (this.startCameoActive) {
+                    // her catch dialog is up over the bare void: SPACE advances it,
+                    // everything else is swallowed (a stray key must not start the run
+                    // mid-conversation).
+                    if (e.key === ' ' || e.key === 'Enter') this.dialogManager.advance();
+                    e.stopImmediatePropagation();
+                    return;
+                }
+                if (this._hydratia && this._hydratia.catchable) {
+                    if (e.key === ' ' || e.key === 'Enter') {
+                        this.audio.init();
+                        this._startHydratiaCatchDialog();
+                        e.stopImmediatePropagation();
+                        return;
+                    }
+                    this._hydratia = null; // she bolts; the wake-press still starts the run
+                }
+                return; // input.init's wake-press handles the bare cold open
+            }
             if (!this.startMenuActive()) return;
             this.audio.init(); // idempotent — so the FIRST menu key isn't silent
             this.maybeStartVoidAmbient(); // Cadenza's title piece loops once the Encore's done
@@ -217,16 +239,7 @@ export class GameEngine {
             // approach counter holds at 4, so she's reachable again next boot.
             if (this._hydratia && this._hydratia.catchable) {
                 if (e.key === ' ' || e.key === 'Enter') {
-                    this._hydratia = null;
-                    this.startCameoActive = true;
-                    this.dialogManager.start(HYDRATIA_CATCH, () => {
-                        this.startCameoActive = false;
-                        this.saveManager.markHydratiaCaught();
-                        this.state.unlocked.hydratiaFound = true;
-                        // Her stall seats itself in Localhost on the next room build; if a
-                        // cached Localhost exists this session, rebuild it with her in it.
-                        delete this.worldManager.rooms[this.worldManager.getRoomKey(5, 0)];
-                    });
+                    this._startHydratiaCatchDialog();
                     e.stopImmediatePropagation();
                     return;
                 }
@@ -255,8 +268,10 @@ export class GameEngine {
         this._beaconTimer = 0;     // accumulates dt to pace Cadenza's proximity ping
         this.stamps = [];          // Denny's lagged DENIED stamps (room-local; head contact kills)
         this._wardUsedThisRoom = false; // Scale Mods' free Glitch absorb, spent once per room
-        this._trailPrev = null;    // the cell the head occupied LAST move-tick (the stamp target)
-        this._stampStun = 0;       // ticks Denny's stamp emitter is flustered after a bump
+        this._tailPrev = null;    // the cell the TAIL occupied last move-tick (the Fall-Through's stamp target)
+        this._stampStun = 0;       // ticks Denny's stamp emitter is flustered after a bump/catch
+        this._denny2Timer = 0;     // the Fall-Through's real-time chase clock (ms accumulator)
+        this._roomEntryDir = { x: 0, y: 0 }; // which way you moved to ENTER this room (the catch throws you back)
         this._coilNear = null;     // { proximity, dirs } — the Kernel-coil approach (audio duck + deaf twin)
         this.mapPins = {};         // Map-Pins annotations: 'x,y' room key -> pin shape index (persisted)
         this._ovr = null;          // Gate's active permission override in {5,-3} ({mode, t})
@@ -681,7 +696,7 @@ export class GameEngine {
         // override (and its gear cap), the stamp-trail memory, and Scale Mods' per-room
         // free absorb.
         this.stamps = [];
-        this._trailPrev = null;
+        this._tailPrev = null;
         this._stampStun = 0;
         this._ovr = null;
         this._wardUsedThisRoom = false;
@@ -712,6 +727,11 @@ export class GameEngine {
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
+        // A room whose apple wandered off re-arms on entry (the food came back).
+        if (!this.apple) this.apple = this.spawnApple();
+        // Remember which way you came IN (the Fall-Through's catch throws you back
+        // toward the door you entered through).
+        this._roomEntryDir = { x: dx, y: dy };
 
         // ONE-WAY: stepping through Cache's checkpoint door re-seals it behind you.
         // The reboot beyond flushes volatile memory; doors out of her stacks are one-way.
@@ -825,6 +845,16 @@ export class GameEngine {
         }, 500);
     }
 
+    // Denny's first post stands down once his map is INSTALLED and Localhost is open —
+    // his job at {1,0} is done (he's next seen manning the Fall-Through up the spine).
+    // Wipes the cached room so the next visit regenerates without him; RoomGenerator
+    // gates his spawn on the same pair of flags for fresh sessions/loads.
+    _maybeRetireDenny() {
+        if (this.state.unlocked.mapModule && this.state.unlocked.biteDroppedOff) {
+            delete this.worldManager.rooms['1,0'];
+        }
+    }
+
     // Is the current room on the finite interior's edge (any wall is the Kernel's
     // coil)? The Hub is exempt — the Architect's own quarantine masks the coil there.
     _inBoundaryRoom() {
@@ -890,6 +920,7 @@ export class GameEngine {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== 0) return false;
 
         this.state.unlocked.biteDroppedOff = true;
+        this._maybeRetireDenny();
         if (this.snake.body.length > 1) this.snake.body.pop(); // detach his segment
         // Place his stall on a validated empty cell (never on a citizen/signpost,
         // which would sit ahead of it in the collision loop and block the shop, nor
@@ -1052,6 +1083,18 @@ export class GameEngine {
         return n >= 2 ? n - 1 : -1; // never index 0 — the worm's head is never 2-Bit
     }
 
+    // Which body index wears the carried REFUGEE's face (they ride like 2-Bit: a real
+    // passenger on a real segment — no HUD label). Stacking from the tail tip: the
+    // module holds the tip, 2-Bit one forward, the refugee next. -1 = don't draw
+    // (nobody aboard, or the worm is momentarily too short; reappears on regrowth).
+    get refugeeIndex() {
+        if (!this.carriedRefugee) return -1;
+        const n = this.snake.body.length;
+        const back = (this.carriedModule ? 1 : 0) + (this.hasBiteSegment ? 1 : 0);
+        const idx = n - 1 - back;
+        return idx >= 1 ? idx : -1;
+    }
+
     // The carried Module always rides the true tail tip. Keeping it OFF 2-Bit's cell
     // (2-Bit sits one segment ahead of it, see biteIndex) is what lets you drag it
     // into the Module Slot while he's still hitching a ride — you no longer have to
@@ -1095,6 +1138,7 @@ export class GameEngine {
             this.carriedModule = null;
             this.moduleLoad = null;
             if (installed === 'map') this.state.unlocked.mapModule = true;
+            this._maybeRetireDenny();
             this.state.gameState = 'DIALOG';
             this.dialogManager.start(TWO_BIT.moduleInstalled, () => { this.state.gameState = 'PLAYING'; });
         }
@@ -1311,13 +1355,23 @@ export class GameEngine {
                 });
                 return true;
             }
-        } else if (this.snake.checkAppleCollision(this.apple)) {
+        } else if (this.apple && this.snake.checkAppleCollision(this.apple)) {
             this.snake.grow(); // growth = not shrinking this tick
             const gain = this.appleGain;
             this.state.addScore(gain);
             if (gain > 1) this.growSnake(gain - 1); // Data = segments (the eat already gave +1)
             this.audio.playBeep();
-            this.apple = this.spawnApple();
+            // THE WANDER (owner direction, exploration pressure): outside the Hub, an
+            // eaten apple has a 20% chance of NOT respawning here — the food skittered
+            // into another sector; the room re-arms when you come back (shiftScreen).
+            // The Hub keeps its tutorial economy; Heur's sealed bay stays stable.
+            const inHub = this.worldManager.currentRoomX === 0 && this.worldManager.currentRoomY === 0;
+            if (!inHub && !this.heur && Math.random() < 0.2) {
+                this.apple = null;
+                this.audio.playDoot(); // the skitter — something small got away
+            } else {
+                this.apple = this.spawnApple();
+            }
             this.checkUnlocks();
             grew = true;
         }
@@ -1454,6 +1508,7 @@ export class GameEngine {
         // how fast you're actually slithering.
         this.updateCadenzaBeacon(dt);
         this.worldManager.tickReveals(dt); // fade out expiring Scanner reveals
+        this.updateDenny2Chase(dt);        // the Fall-Through runs on his own clock
 
         this.moveTimer += dt;
 
@@ -2618,43 +2673,101 @@ export class GameEngine {
         npc.stun = 3;
     }
 
-    // The Fall-Through — Denny's rematch ({5,-2}): the goalie half slow-tracks like his
-    // first post; the stamp half lands one move-tick LATE, on the cell your head just
-    // left, hardening your own trail into DENIED walls. Stamps decay (no soft-lock);
-    // the current cell is always safe by construction — only doubling back can kill.
+    // The Fall-Through — Denny's rematch ({5,-2}), v3 per playtest:
+    //  * He chases in REAL TIME — one cell per DENNY2_STEP_MS, independent of your gear.
+    //    At 40ms/cell he's faster than gear 2 (50ms) and slower than gear 3 (30ms): you
+    //    can outrun him at TOP speed and only top speed. (A scripted boss keeps its own
+    //    clock, like Heur's ping — the Motion Carried turn-lock is for world hazards.)
+    //  * His DENIED stamps follow your TAIL: every cell your body clears is stamped and
+    //    STAYS stamped until you leave the room — your own path hardens behind you
+    //    (Tron rules), so the fight is driving lines you can live with.
+    //  * The CATCH (adjacent to your head): he hurls you back toward the door you came
+    //    in through — a DENIED to your whole visit, never a death — voiding the stamps
+    //    around you so the throw itself can't be lethal (fairness by construction).
+    get DENNY2_STEP_MS() { return 40; }
+
+    _denny2Live() {
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -2) return null;
+        if (this.state.unlocked.dennyRematchDone) return null;
+        return this.npcs.find(n => n.id === 'denny2') || null;
+    }
+
+    // The real-time chase — driven by dt from update(), not the move-tick.
+    updateDenny2Chase(dt) {
+        const denny = this._denny2Live();
+        if (!denny) { this._denny2Timer = 0; return; }
+        if (denny.stunMs > 0) { denny.stunMs = Math.max(0, denny.stunMs - dt); return; }
+        this._denny2Timer = (this._denny2Timer || 0) + dt;
+        while (this._denny2Timer >= this.DENNY2_STEP_MS) {
+            this._denny2Timer -= this.DENNY2_STEP_MS;
+            this._pursueHead(denny);
+            if (this._denny2Catch(denny)) break;
+        }
+    }
+
+    // The move-tick half: stamp the cell your TAIL just vacated (permanent for the
+    // room), and re-check the catch on YOUR movement too.
     updateDenny2() {
-        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -2) return;
-        if (this.state.unlocked.dennyRematchDone) { this._trailPrev = null; return; }
-        const denny = this.npcs.find(n => n.id === 'denny2');
-        if (!denny) { this._trailPrev = null; return; }
-        for (const s of this.stamps) s.ttl--;
-        this.stamps = this.stamps.filter(s => s.ttl > 0);
-        if (this._tick % 2 === 0) this._trackTowardRow(denny);
+        const denny = this._denny2Live();
+        if (!denny) { this._tailPrev = null; return; }
         if (this._stampStun > 0) {
             this._stampStun--;
-        } else if (this._trailPrev) {
-            const t = this._trailPrev;
+        } else if (this._tailPrev) {
+            const t = this._tailPrev;
+            const vacated = !this.snake.body.some(s => s.x === t.x && s.y === t.y);
             const occupied = (this.apple && this.apple.x === t.x && this.apple.y === t.y)
                 || this.npcs.some(n => n.x === t.x && n.y === t.y)
                 || (this.dataMotes || []).some(m => m.x === t.x && m.y === t.y)
                 || this.stamps.some(s => s.x === t.x && s.y === t.y);
-            if (!occupied) this.stamps.push({ x: t.x, y: t.y, ttl: 12 });
+            if (vacated && !occupied) this.stamps.push({ x: t.x, y: t.y, ttl: 9999 }); // until you leave the room
         }
-        this._trailPrev = { x: this.snake.head.x, y: this.snake.head.y };
+        const tail = this.snake.body[this.snake.body.length - 1];
+        this._tailPrev = tail ? { x: tail.x, y: tail.y } : null;
+        this._denny2Catch(denny);
     }
 
-    // Bumping the Fall-Through Denny: apologetic, and the emitter is flustered a while.
+    // Adjacent to your head = CAUGHT: thrown back toward the door you entered through
+    // (your whole visit is DENIED), momentum gone, local stamps voided so the throw is
+    // always survivable. Returns true when a catch fired.
+    _denny2Catch(denny) {
+        if (denny.stunMs > 0) return false;
+        const g = this.gridSize;
+        const adj = Math.abs(denny.x - this.snake.head.x) + Math.abs(denny.y - this.snake.head.y) === g;
+        if (!adj) return false;
+        const entry = this._roomEntryDir || { x: 0, y: 0 };
+        let throwDir;
+        if (entry.x !== 0 || entry.y !== 0) {
+            throwDir = { x: (-entry.x || 0) * g, y: (-entry.y || 0) * g }; // back toward the entry door (|| 0 kills a stray -0)
+        } else {
+            const d = this.input.direction;
+            throwDir = (d.x || d.y) ? { x: -d.x || 0, y: -d.y || 0 } : { x: 0, y: g };
+        }
+        this.input.direction = { ...throwDir };
+        this.input.nextDirection = { ...throwDir };
+        this.gear = 0; this.speed = this.baseSpeed;
+        this.audio.playDenied();
+        const hx = this.snake.head.x, hy = this.snake.head.y;
+        this.stamps = this.stamps.filter(s => Math.max(Math.abs(s.x - hx), Math.abs(s.y - hy)) > 2 * g);
+        this._stampStun = 6;
+        this._tailPrev = null;
+        denny.stunMs = 900; // satisfied for a beat — you get a running start
+        return true;
+    }
+
+    // Bumping the Fall-Through Denny head-on: apologetic, and the emitter is flustered.
     npcDenny2(npc) {
         this.state.gameState = 'DIALOG';
-        this._stampStun = 4;
+        this._stampStun = 6;
+        npc.stunMs = 900; // the bump also resets his pursuit, so talking isn't a trap
         this.dialogManager.start(DENNY_REMATCH.bump, () => { this.state.gameState = 'PLAYING'; });
     }
 
-    // The Override — Gate's rematch ({5,-3}). He holds exactly ONE override at a time:
-    // SEAL (north egress revoked) -> CAP (gearbox held at 1) -> a scripted safe 180
-    // ("heading inverted by policy" — the Pivot verb, reused, so it can never self-kill)
-    // + a short RECALIBRATING window. The window is the answer: be in position, then
-    // build to gear 3 and breach north before he re-targets.
+    // The Override — Gate's rematch ({5,-3}), v2 per playtest. He holds exactly ONE
+    // override at a time: SEAL (north egress revoked, 5 ticks) -> CAP (gearbox held at
+    // 1, 5 ticks) -> RECALIBRATING (8 ticks — the WINDOW: seal down, gears free). The
+    // forced 180 is GONE (it undid the player's own approach and made the fight read as
+    // impossible); the fight is now positioning: bait his goalie line off the door
+    // during CAP, then build to gear 3 and breach north inside the window.
     updateGate3() {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -3) return;
         if (this.state.unlocked.gateRematchDone) { this._ovr = null; return; }
@@ -2668,8 +2781,7 @@ export class GameEngine {
             this.changeGear(0); // the cap clamps the live gear immediately
         } else if (o.mode === 'cap' && o.t >= 5) {
             o.mode = 'recal'; o.t = 0;
-            this.pivot(); // the one override that touches your heading — safely, by construction
-        } else if (o.mode === 'recal' && o.t >= 3) {
+        } else if (o.mode === 'recal' && o.t >= 8) {
             o.mode = 'seal'; o.t = 0;
         }
         if (gate.stun > 0) { gate.stun--; return; }
@@ -2686,8 +2798,30 @@ export class GameEngine {
         }
     }
 
-    // The active citation, for the Renderer's in-room banner (never the terminal — a
-    // printing log would hang the fight).
+    // Encounter status -> the BOTTOM RIBBON (owner: no boss-room overlay on the play
+    // space). Gate's live citation, or Heur's remaining signatures. DOM writes only on
+    // change; hidden when no encounter owns it.
+    refreshBossStatus() {
+        const el = document.getElementById('boss-status');
+        if (!el) return;
+        let txt = '', heur = false;
+        if (this.heur) {
+            txt = `DECONTAMINATION\nSIGNATURES LEFT: ${this.heur.bricks.length}`;
+            heur = true;
+        } else {
+            const c = this._citationLabel();
+            if (c) txt = c;
+        }
+        const key = `${txt}|${heur}`;
+        if (key === this._bossHudKey) return;
+        this._bossHudKey = key;
+        el.classList.toggle('hidden', !txt);
+        el.classList.toggle('heur', heur);
+        el.textContent = txt;
+    }
+
+    // The active citation, for the ribbon status (never the terminal — a printing log
+    // would hang the fight).
     _citationLabel() {
         if (!this._ovr) return null;
         if (this._ovr.mode === 'seal') return GATE_OVERRIDE.citations.seal;
@@ -3350,7 +3484,7 @@ export class GameEngine {
         this.carriedModule = null; this.moduleLoad = null; this.bursts = []; this.dataMotes = [];
         this.onUnpauseCallback = null; this._guided = new Set(); this._tick = 0;
         this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
-        this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
+        this.stamps = []; this._tailPrev = null; this._stampStun = 0; this._ovr = null;
         this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
         this._argListenMs = 0; this.carriedRefugee = null;
         this.audio.setDuck(1);
@@ -3368,6 +3502,19 @@ export class GameEngine {
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
         this.refreshScore();
+    }
+
+    // The Pause-Menu inventory: every owned upgrade and module by display name (the
+    // convention-standard equipment screen). Built only while PAUSED.
+    _buildInventory() {
+        const u = this.state.unlocked, up = this.state.upgrades;
+        const N = INVENTORY_NAMES;
+        const upgrades = Object.keys(N.upgrades).filter(k => up[k]).map(k => N.upgrades[k]);
+        if (up.crumpleLevel > 0) upgrades.push(N.crumple[Math.min(up.crumpleLevel, N.crumple.length) - 1]);
+        upgrades.push(...Object.keys(N.saves).filter(k => u[k]).map(k => N.saves[k]));
+        const modules = Object.keys(N.modules).filter(k => u[k]).map(k => N.modules[k]);
+        if ((u.pinShapes || 0) > 1) modules.push(`Pin Shapes x${u.pinShapes}`);
+        return { upgrades, modules };
     }
 
     // The durable-upgrade count, shared by the file-select summary and Hydratia's
@@ -3457,7 +3604,7 @@ export class GameEngine {
         this.carriedModule = d.carriedModule || null; // preserve an un-installed module (the map)
         this.moduleLoad = null; this.bursts = [];
         this.state.isSuspended = false; this.onUnpauseCallback = null; // never load INTO a Gate suspension
-        this.stamps = []; this._trailPrev = null; this._stampStun = 0; this._ovr = null;
+        this.stamps = []; this._tailPrev = null; this._stampStun = 0; this._ovr = null;
         this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
         this._auditionLayer = null; this._wardUsedThisRoom = false;
         this._argListenMs = 0; this.carriedRefugee = null;
@@ -3586,7 +3733,7 @@ export class GameEngine {
         // Battle transients die with you: stamps, the stamp trail, Gate's override (and
         // its gear cap), the coil's held breath, Scale Mods' per-room absorb.
         this.stamps = [];
-        this._trailPrev = null;
+        this._tailPrev = null;
         this._stampStun = 0;
         this._ovr = null;
         this._wardUsedThisRoom = false;
@@ -3632,6 +3779,8 @@ export class GameEngine {
         this.glitches = room.glitches;
         this.npcs = room.npcs;
         this.obstacles = room.obstacles || [];
+        if (!this.apple) this.apple = this.spawnApple(); // a wandered-off apple re-arms
+        this._roomEntryDir = { x: 0, y: 0 }; // a respawn has no entry door
 
         // Don't respawn on/next to durable Glitches that drifted into the hub (you can
         // farm apples here with biteProgress>0, and glitches persist) — that would
@@ -3660,7 +3809,12 @@ export class GameEngine {
         // seeds her spare-data pile if you've earned it (respawn -> seedMotes=true).
         this.refreshDynamicRoomContent(true);
 
-        this.narrative.onDeath(cause);
+        // The Architect's gloat — with a special observation when you die having MET
+        // 2-Bit but never hooked him aboard (relieved the two of you haven't figured
+        // out cooperation; fires once per run).
+        this.narrative.onDeath(cause, {
+            nearBite: this.state.unlocked.biteProgress >= 1 && !this.state.unlocked.tailRider,
+        });
 
         // HYDRATIA'S RECEIPT — the DEAD overlay's second voice (the Architect keeps his
         // gloat in the terminal). Slot A reassures with what PERSISTED (the durable set —
@@ -3671,7 +3825,9 @@ export class GameEngine {
         const causeKey = HYDRATIA_DEATH.hint[cause] ? cause : 'unknown';
         const tier = (tally[causeKey] || 1) >= 3 ? 1 : 0;
         this._deathReceipt = {
-            line: HYDRATIA_DEATH.receipt,
+            // Her NAME only appears once you've caught her (owner) — before that the
+            // receipt is an unattributed system line (the mystery does the work).
+            line: this.state.unlocked.hydratiaFound ? HYDRATIA_DEATH.receipt : HYDRATIA_DEATH.receiptUnmet,
             hint: HYDRATIA_DEATH.hint[causeKey][tier],
             walls: this.worldManager.brokenWalls.size,
             modules: ((this.state.unlocked.modulesFound || []).length) + (this.state.unlocked.mapModule ? 1 : 0),
@@ -3712,8 +3868,34 @@ export class GameEngine {
             if (el) el.innerText = this.state.score.toString();
         }
     }
+
+    // The gear gauge in the TOP RIBBON, beside your Data (game convention: the HUD stats
+    // live together). 2-Bit installs it with the gearbox. Label + three pips (+ Redline's
+    // numeric limit); brake reads BRK. DOM writes only when the reading changes.
+    refreshGearDisplay() {
+        const el = document.getElementById('gear-display');
+        if (!el) return;
+        const show = this.state.unlocked.ui && this.state.unlocked.gearMeter;
+        const gear = this.gear;
+        const lim = Math.min(3, Math.floor(this.state.score / 10));
+        const key = `${show}|${gear}|${this.state.unlocked.redline ? lim : '-'}`;
+        if (key === this._gearHudKey) return;
+        this._gearHudKey = key;
+        el.classList.toggle('hidden', !show);
+        if (!show) return;
+        let html = `<span class="gear-label${gear < 0 ? ' brake' : ''}">${gear < 0 ? 'BRK' : 'GEAR'}</span>`;
+        for (let i = 1; i <= 3; i++) {
+            // REDLINE greys out the gears your mass can't license (simpler than a
+            // numeric readout — the gauge itself says what's reachable).
+            const locked = this.state.unlocked.redline && i > lim;
+            html += `<span class="gear-pip${gear >= i ? ' on' : ''}${gear >= i && i === 3 ? ' top' : ''}${locked ? ' locked' : ''}"></span>`;
+        }
+        el.innerHTML = html;
+    }
     
     draw() {
+        this.refreshGearDisplay(); // the ribbon gauge (cheap: writes only on change)
+        this.refreshBossStatus();  // encounter status lives in the bottom ribbon, not on the canvas
         this.state.gear = this.gear;
         this.state.carriedModule = this.carriedModule;
         this.state.moduleSlotX = this.moduleSlotX;
@@ -3721,6 +3903,7 @@ export class GameEngine {
         this.state.moduleLoad = this.moduleLoad;
         this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
+        this.state.refugeeIndex = this.refugeeIndex; // which segment wears the refugee's
         this.state.bursts = this.bursts;       // shed-segment particles for the Renderer
         this.state.dataMotes = this.dataMotes; // Cache's spare-data pile in the Hub
         this.state.deathCode = this.deathCode; // the CACHE puzzle buffer, shown on the death screen
@@ -3746,14 +3929,14 @@ export class GameEngine {
                 x: this.canvas.width - this.gridSize - this._hydratia.stage * Math.floor(this.canvas.width * 0.08) }
             : null;
         this.state.argListenMs = this._argListenMs;      // the bounce ARG's listening cue
+        // The listening cue only draws once the ARG is PRIMED (2-Bit's Cache gossip is
+        // topic one) — before that, a wall-bounce flashing 'listening' is just confusing
+        // noise that spoils the secret. The window itself always works.
+        this.state.argCuePrimed = (this.state.biteTopicsHeard || 0) >= 1 || this.state.unlocked.cacheFound;
         this.state.carriedRefugee = this.carriedRefugee; // passenger readout (HUD)
         this.state.deathReceipt = this.state.gameState === 'DEAD' ? this._deathReceipt : null;
-        // The PAUSE menu's RETAINED readout — persistence made visible (§2.6).
-        this.state.receipt = {
-            walls: this.worldManager.brokenWalls.size,
-            modules: ((this.state.unlocked.modulesFound || []).length) + (this.state.unlocked.mapModule ? 1 : 0),
-            mods: this.countMods(),
-        };
+        // The Pause-Menu inventory (Zelda-style: what you own, by name).
+        this.state.inventory = this.state.gameState === 'PAUSED' ? this._buildInventory() : null;
         this.state.reduceMotion = this.settings.reduceMotion; // Renderer dampens pulses/blinks
         this.state.options = this.optionsOpen ? { index: this.optionsIndex, settings: this.settings } : null;
         this.state.encore = (this.state.gameState === 'ENCORE' && this.encore) ? this.getEncoreRenderState() : null;
@@ -3811,19 +3994,37 @@ export class GameEngine {
     // (she's a static mote per boot — nothing animates, so reduce-motion needs no branch).
     maybeStartHydratiaCatch() {
         const sm = this.saveManager;
+        if (sm.hasHydratiaCaught()) { this._hydratia = null; return; }
         const now = Date.now();
         const last = sm.hydratiaBoot();
         let approach = sm.hydratiaApproach();
-        // A quick reload advances the chase; a slow, deliberate boot resets it — except
-        // once she's already reachable (stage 4 persists: no lost chance, ever).
+        // THE HIDE TIMER (owner: keep it): a QUICK reload (<= ~10s) catches her mid-round
+        // and she starts closer; a slow, deliberate boot lets her re-hide — except once
+        // she's already reachable (stage 4 persists: no lost chance, ever).
         if (last && now - last <= 10000) approach = Math.min(4, approach + 1);
         else if (approach < 4) approach = 0;
         sm.setHydratiaBoot(now);
         sm.setHydratiaApproach(approach);
-        // Eligibility: at least one save exists (the menu is up), she isn't caught yet,
-        // and no title cameo owns the screen this boot.
-        if (this.titleCameo || !sm.anySave() || sm.hasHydratiaCaught()) { this._hydratia = null; return; }
+        // She haunts EVERY boot screen — the bare "press any key" cold open included
+        // (owner: she must load even before the Start Screen exists). Only a title
+        // cameo owning the screen suppresses her for that boot.
+        if (this.titleCameo) { this._hydratia = null; return; }
         this._hydratia = { stage: approach, catchable: approach >= 4 };
+    }
+
+    // Her catch dialog (shared by the file menu AND the bare cold open): the modal
+    // cameo path owns the keyboard while she talks; catching her is global.
+    _startHydratiaCatchDialog() {
+        this._hydratia = null;
+        this.startCameoActive = true;
+        this.dialogManager.start(HYDRATIA_CATCH, () => {
+            this.startCameoActive = false;
+            this.saveManager.markHydratiaCaught();
+            this.state.unlocked.hydratiaFound = true;
+            // Her stall seats itself in Localhost on the next room build; if a cached
+            // Localhost exists this session, rebuild it with her in it.
+            delete this.worldManager.rooms[this.worldManager.getRoomKey(5, 0)];
+        });
     }
 
     // The first time the file-select menu is shown, Cache's title cameo plays: her sprite

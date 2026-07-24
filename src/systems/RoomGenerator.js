@@ -90,8 +90,12 @@ export class RoomGenerator {
         if (roomX === 0 && roomY === 0) {
             // Hub: No obstacles
         } else if (roomX === 1 && roomY === 0) {
-            // First Wilds room — Denny, the apologetic deny-all checkpoint you route around.
-            npcs.push(new NPC(cx, cy, this.gridSize, 'denny', DENNY_INTRO));
+            // First Wilds room — Denny, the apologetic deny-all checkpoint you route
+            // around. He stands down once his map is installed AND Localhost is open
+            // (job done; he's next seen at the Fall-Through up the north spine).
+            if (!(stateUnlocked && stateUnlocked.mapModule && stateUnlocked.biteDroppedOff)) {
+                npcs.push(new NPC(cx, cy, this.gridSize, 'denny', DENNY_INTRO));
+            }
         } else if (roomX === 5 && roomY === 0) {
             // Localhost — the first Safe Zone. It starts EMPTY (pop. 1: the sign): its
             // people scattered into the Wilds when the Zones went up, and the town only
@@ -99,9 +103,21 @@ export class RoomGenerator {
             // landmark leads a first-timer used to get from the citizens (owner call, G1).
             npcs.push(new NPC(cx, cy, this.gridSize, 'signpost', LOCALHOST_SIGN));
             // The two intake stations for a carried refugee: THE COMMONS (SW — freed) and
-            // THE DATA MINE (SE — the dark tally). Bump one while carrying to deliver.
-            npcs.push(new NPC(5 * this.gridSize, (this.rows - 6) * this.gridSize, this.gridSize, 'commons', INTAKE.commonsEmpty));
-            npcs.push(new NPC((this.cols - 6) * this.gridSize, (this.rows - 6) * this.gridSize, this.gridSize, 'minegate', INTAKE.mineEmpty));
+            // THE DATA MINE (SE — the dark tally). Each is a REAL 3x3 damaged building
+            // (playtest: single cells read as people) — every cell carries the handler,
+            // so bumping any face of the structure delivers; bx/by drive the composite
+            // facade in the Renderer.
+            const building = (id, dialog, tlc, tlr) => {
+                for (let by = 0; by < 3; by++) {
+                    for (let bx = 0; bx < 3; bx++) {
+                        const cell = new NPC((tlc + bx) * this.gridSize, (tlr + by) * this.gridSize, this.gridSize, id, dialog);
+                        cell.bx = bx; cell.by = by;
+                        npcs.push(cell);
+                    }
+                }
+            };
+            building('commons', INTAKE.commonsEmpty, 6, this.rows - 9);
+            building('minegate', INTAKE.mineEmpty, this.cols - 9, this.rows - 9);
             // Hydratia's stall, once she's been caught on the START screen (global flag,
             // mirrored into unlocked.hydratiaFound on run start). North side — she likes
             // her back to a wall nobody comes through.
@@ -115,7 +131,7 @@ export class RoomGenerator {
                 { c: 6, r: 6, lines: C.newFace },
                 { c: this.cols - 7, r: 5, lines: C.cadenzaHint },
                 { c: 7, r: this.rows - 6, lines: C.nibbleHint },
-                { c: this.cols - 8, r: this.rows - 7, lines: C.cacheClue1 },
+                { c: this.cols - 8, r: this.rows - 5, lines: C.cacheClue1 }, // below the minegate, clear of its 3x3
                 { c: Math.floor(this.cols / 2) + 4, r: 6, lines: C.cacheClue2 },
             ];
             const freed = Math.min((stateUnlocked && stateUnlocked.refugeesFreed) || 0, homes.length);

@@ -11,6 +11,8 @@
     <!-- Top Ribbon for Score -->
     <div id="ui-layer" class="hidden">
         <div id="score-display">Data: <span id="score-value">0</span></div>
+        <!-- The gear gauge 2-Bit installs (tailRider) — same ribbon as your Data. -->
+        <div id="gear-display" class="hidden"></div>
     </div>
     
     <div id="game-wrapper">
@@ -28,6 +30,9 @@
     <!-- Bottom Ribbon for Terminal -->
     <div id="ui-layer-bottom" class="hidden">
         <div id="narrative-terminal"></div>
+        <!-- Boss/encounter status (citations, decontamination count) — ribbon, not a
+             canvas overlay: the play space stays clean. -->
+        <div id="boss-status" class="hidden"></div>
     </div>
 
     <script type="module" src="src/main.js"></script>

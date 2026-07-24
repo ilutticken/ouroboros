@@ -89,15 +89,20 @@ export class ShopManager {
         // HYDRATIA'S STALL — the autosave machinery (Localhost, post-catch). Each item is
         // a real code delta in Game.js (autoCommit hooks); all write her SHADOW buffer,
         // never Cache's manual file. All DRAFT copy.
+        // ONE rolling shadow copy, upgraded in TIERS (owner direction: Hydratia = the
+        // single evolving autosave; Cache = the manual named FILES). Each tier requires
+        // the last, so her stall always shows exactly the NEXT step of the same product.
         this.vendors.hydratia = {
-            title: "Hydratia's Shadow Copies",
+            title: "Hydratia's Shadow Copy",
             cls: null,
             items: [
-                { key: '1', name: 'Auto-Commit', price: 20, desc: 'She quietly backs up your progress every time you reach a safe zone. Restore it from the boot menu ([R] when her copy is newer).',
+                { key: '1', name: 'Shadow Copy I — Auto-Commit', price: 20, desc: 'Her one rolling backup, written every time you reach a safe zone. Restore from the boot menu ([R] when her copy is newer).',
                   owned: () => this.state.unlocked.autosaveSafe, buy: () => { this.state.unlocked.autosaveSafe = true; } },
-                { key: '2', name: 'Last Breath', price: 25, desc: 'She snapshots your progress the instant before a death wipes the run. Progress only — carried Data still dies with you.',
+                { key: '2', name: 'Shadow Copy II — Last Breath', price: 25, desc: 'She also snapshots the instant before a death wipes the run. Progress only — carried Data still dies with you.',
+                  avail: () => this.state.unlocked.autosaveSafe,
                   owned: () => this.state.unlocked.autosaveDeath, buy: () => { this.state.unlocked.autosaveDeath = true; } },
-                { key: '3', name: 'Frequent Commit', price: 30, desc: 'Every sector you cross, she commits. Constant. Silent. Thorough.',
+                { key: '3', name: 'Shadow Copy III — Frequent Commit', price: 30, desc: 'Every sector you cross, she commits. Constant. Silent. Thorough.',
+                  avail: () => this.state.unlocked.autosaveDeath,
                   owned: () => this.state.unlocked.autosaveEvery, buy: () => { this.state.unlocked.autosaveEvery = true; } },
             ],
         };

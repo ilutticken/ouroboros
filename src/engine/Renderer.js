@@ -40,7 +40,7 @@ export class Renderer {
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
         // Neon Glow effect
-        this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+        this.ctx.shadowBlur = this._frameGlow(state);
         
         if (state.unlocked.borders) {
             // The quarantine wall — a THICK neon band (WALL px). Drawn as a wide stroke,
@@ -180,7 +180,7 @@ export class Renderer {
                         this.ctx.restore();
                     }
                 }
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+                this.ctx.shadowBlur = this._frameGlow(state);
             }
 
             // Cadenza's DIRECTIONAL cue (a11y: her beacon must not be sound-only). In
@@ -220,7 +220,7 @@ export class Renderer {
                 this.ctx.textBaseline = 'alphabetic';
             }
             this.ctx.globalAlpha = 1;
-            this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+            this.ctx.shadowBlur = this._frameGlow(state);
         }
 
         // Draw Glitches (Magenta) — with a dark X so corruption reads as a HAZARD by SHAPE,
@@ -234,7 +234,7 @@ export class Renderer {
                 const [bx, by, bw, bh] = this._cellRect(g.x, g.y, 2, bordersOn);
                 this.ctx.fillStyle = P.glitch;
                 this.ctx.shadowColor = P.glitch;
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+                this.ctx.shadowBlur = this._frameGlow(state);
                 this.ctx.fillRect(bx, by, bw, bh);
                 this.ctx.shadowBlur = 0;
                 this.ctx.strokeStyle = '#2a002a';
@@ -263,16 +263,20 @@ export class Renderer {
                 }
             }
             // Restore the frame glow the X-stroke zeroed, so the apple (drawn next) still glows.
-            this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+            this.ctx.shadowBlur = this._frameGlow(state);
         }
 
         // Module Slot (socket you install carried modules into)
         this.drawModuleSlot(state);
 
-        // Draw Apple (Red Data)
-        this.ctx.fillStyle = P.apple;
-        this.ctx.shadowColor = P.apple;
-        this.ctx.fillRect(...this._cellRect(apple.x, apple.y, 2, bordersOn));
+        // Draw Apple (Red Data). NULL is legal — a wandered-off apple (the 20% skitter)
+        // leaves the room foodless until re-entry. An unguarded deref here killed the
+        // rAF loop mid-draw (walls drawn, snake/NPCs not — the playtest lockup).
+        if (apple) {
+            this.ctx.fillStyle = P.apple;
+            this.ctx.shadowColor = P.apple;
+            this.ctx.fillRect(...this._cellRect(apple.x, apple.y, 2, bordersOn));
+        }
 
         // Cache's spare-data motes (Hub only): small Data pips with a cold archival glow,
         // so they read as HERS and as smaller than the main apple.
@@ -294,7 +298,7 @@ export class Renderer {
         if (npcs) {
             for (const npc of npcs) {
                 // Re-assert the frame glow each iteration (drawNpcFeatures zeroes it).
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? P.glow : 0;
+                this.ctx.shadowBlur = this._frameGlow(state);
                 // Cache's apparition materialises/dissolves — honour her alpha (others = 1).
                 this.ctx.globalAlpha = (npc.alpha === undefined) ? 1 : Math.max(0, Math.min(1, npc.alpha));
                 if (npc.id === 'gate' || npc.id === 'gate3' || npc.id === 'gatefinal') {
@@ -339,11 +343,23 @@ export class Renderer {
                 } else if (npc.id === 'lostverse') {
                     this.ctx.fillStyle = '#ffe08a'; // a shard of Cadenza's fanfare — a warm gold note
                     this.ctx.shadowColor = '#ffe08a';
+                } else if (npc.id === 'hydratia') {
+                    this.ctx.fillStyle = '#0a2e2b'; // her cell is DEEP water — the droplet glyph carries the light
+                    this.ctx.shadowColor = '#7ee8e0';
+                } else if (npc.id === 'quantcy') {
+                    this.ctx.fillStyle = '#d8b64a'; // banker's brass — a strongbox, not a packet
+                    this.ctx.shadowColor = '#d8b64a';
+                } else if (npc.id === 'commons' || npc.id === 'minegate') {
+                    this.ctx.fillStyle = '#4a5a50'; // weathered structure-grey: architecture, not a program
+                    this.ctx.shadowColor = '#4a5a50';
                 } else {
                     this.ctx.fillStyle = '#00ff00';
                     this.ctx.shadowColor = '#00ff00';
                 }
-                this.ctx.fillRect(...this._cellRect(npc.x, npc.y, 2, bordersOn));
+                // Buildings draw at PAD 0 so their nine cells fuse into one continuous
+                // structure (padded cells read as a grid of squares, not a place).
+                const basePad = (npc.id === 'commons' || npc.id === 'minegate') ? 0 : 2;
+                this.ctx.fillRect(...this._cellRect(npc.x, npc.y, basePad, bordersOn));
                 this.drawNpcFeatures(npc, state); // little 8-bit face/glyph so they aren't plain dots
                 this.ctx.globalAlpha = 1; // reset after a possibly-faded apparition
             }
@@ -361,18 +377,26 @@ export class Renderer {
             // forward while a Module occupies the tail tip (see GameEngine.biteIndex).
             // -1 means don't draw his face here (he's on the grid, dropped off, etc.).
             const isBite = state.biteIndex >= 0 && i === state.biteIndex && !biteOnGrid;
-            if (isBite) {
+            // A carried refugee rides a segment exactly like 2-Bit does — a real
+            // passenger with a face, not a HUD label.
+            const isRefugee = state.refugeeIndex >= 0 && i === state.refugeeIndex;
+            if (isBite || isRefugee) {
                 this.ctx.fillStyle = '#00ff00';
                 this.ctx.shadowColor = '#00ff00';
-                this.ctx.shadowBlur = state.unlocked.maxSpeedReached ? Math.max(1, state.gear || 0) * 10 : 0;
+                this.ctx.shadowBlur = Math.max(0, state.gear || 0) * 10; // the worm's own glow rides the live gear too
             } else {
                 this.ctx.fillStyle = i === 0 ? P.head : P.body;
                 this.ctx.shadowBlur = 0;
             }
             this.ctx.fillRect(...this._cellRect(segment.x, segment.y, 1, bordersOn));
-            // The worm's head has no eyes (it's not a packet); 2-Bit, who IS a packet
-            // riding the tail, keeps his.
+            // The worm's head has no eyes (it's not a packet); passengers keep theirs.
             if (isBite) this.drawEyes(segment.x, segment.y, '#003b00');
+            else if (isRefugee) {
+                this.drawEyes(segment.x, segment.y, '#0a1a0a');
+                // the bindle — they're still packed, even mid-ride
+                this.ctx.fillStyle = '#0a1a0a';
+                this.ctx.fillRect(segment.x + this.gridSize - 7, segment.y + 3, 4, 4);
+            }
         }
 
         // A carried Module rides ONE segment behind 2-Bit (state.mapCell), so 2-Bit
@@ -415,26 +439,11 @@ export class Renderer {
             this.drawCoilNear(state.coilNear, rm);
         }
 
-        // Gate's live permission override ({5,-3}): the citation is POSTED on the room
-        // (an in-world banner, ≥16px — never the terminal, which would hang the fight).
-        // Splits at the ' — ' when the canvas is too narrow; never shrinks below 16px.
-        if (state.citation) {
-            const W = this.canvas.width;
-            this.ctx.save();
-            this.ctx.shadowBlur = 0;
-            this.ctx.font = '16px "Press Start 2P", monospace';
-            this.ctx.textAlign = 'center';
-            const fits = this.ctx.measureText(state.citation).width <= W - 16;
-            const lines = fits ? [state.citation] : state.citation.split(' — ');
-            this.ctx.fillStyle = 'rgba(40, 8, 8, 0.85)';
-            this.ctx.fillRect(0, 0, W, 8 + lines.length * 22);
-            this.ctx.fillStyle = '#ffcc00';
-            lines.forEach((ln, i) => this.ctx.fillText(ln, W / 2, 20 + i * 22));
-            this.ctx.restore();
-        }
+        // (Gate's citations and Heur's signature count moved OFF the canvas into the
+        // bottom ribbon — see #boss-status / Game.refreshBossStatus. The play space
+        // stays clean during boss encounters, per playtest.)
 
-        // 2-Bit's route map (extra feature) — dropped below the citation strip when one
-        // is posted, so the banner and the map never fight over the top edge.
+        // 2-Bit's route map (extra feature).
         this.drawMinimap(worldManager, state);
 
         // Wilds-found HUD utilities: the gear meter (tachometer) and the sector readout.
@@ -488,14 +497,26 @@ export class Renderer {
                 this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.fillText(`[M] MARK ROOM  (${tag})`, this.canvas.width / 2, this.canvas.height / 2 + 112);
             }
-            // The RETAINED readout — persistence made visible (§2.6): what survives every
-            // death, right where you plan around it. (Hydratia's ledger, unattributed
-            // until she's caught — the numbers are true either way.)
-            if (state.gameState === 'PAUSED' && !state.isSuspended && state.receipt) {
-                const r = state.receipt;
-                this.ctx.fillStyle = '#3fa080';
+            // THE INVENTORY (Zelda-style): everything you own, by name, in two columns —
+            // UPGRADES left, MODULES right. Convention-standard equipment screen; the
+            // pause menu is the diegetic System Diagnostic, so this is its device list.
+            if (state.gameState === 'PAUSED' && !state.isSuspended && state.inventory) {
+                const inv = state.inventory;
+                const colY = 110, lineH = 24;
                 this.ctx.font = '16px "Press Start 2P", monospace';
-                this.ctx.fillText(`RETAINED: ${r.walls} walls / ${r.mods} upgrades / ${r.modules} modules`, this.canvas.width / 2, this.canvas.height / 2 + 148);
+                this.ctx.textAlign = 'left';
+                this.ctx.fillStyle = '#00885f';
+                this.ctx.fillText('UPGRADES', 36, colY);
+                this.ctx.fillStyle = '#00cc88';
+                inv.upgrades.forEach((name, i) => this.ctx.fillText(name, 36, colY + (i + 1) * lineH));
+                if (!inv.upgrades.length) { this.ctx.fillStyle = '#33554a'; this.ctx.fillText('- none -', 36, colY + lineH); }
+                this.ctx.textAlign = 'right';
+                this.ctx.fillStyle = '#00885f';
+                this.ctx.fillText('MODULES', this.canvas.width - 36, colY);
+                this.ctx.fillStyle = '#00cc88';
+                inv.modules.forEach((name, i) => this.ctx.fillText(name, this.canvas.width - 36, colY + (i + 1) * lineH));
+                if (!inv.modules.length) { this.ctx.fillStyle = '#33554a'; this.ctx.fillText('- none -', this.canvas.width - 36, colY + lineH); }
+                this.ctx.textAlign = 'center';
             }
 
             this.ctx.fillStyle = '#00ff00';
@@ -554,8 +575,9 @@ export class Renderer {
                 this.ctx.font = '16px "Press Start 2P", monospace';
                 this.ctx.fillStyle = '#69d0a8';
                 this.ctx.fillText(r.line, midX, midY + 72);
+                // plain stats, game-convention style — no 'kept'/'retained' framing
                 this.ctx.fillStyle = '#3fa080';
-                this.ctx.fillText(`kept: ${r.walls} walls broken / ${r.mods} upgrades / ${r.modules} modules`, midX, midY + 96);
+                this.ctx.fillText(`${r.walls} WALLS BROKEN   ${r.mods} UPGRADES   ${r.modules} MODULES`, midX, midY + 96);
                 this.ctx.fillStyle = '#cf8aa0';
                 this.ctx.fillText(r.hint, midX, midY + 124);
             }
@@ -580,6 +602,8 @@ export class Renderer {
                 this.ctx.fillStyle = 'rgba(0, 255, 204, 0.4)';
                 this.ctx.fillText('[O] accessibility', this.canvas.width / 2, this.canvas.height - 14);
             }
+            // Hydratia haunts the bare cold open too (she predates your Start Screen).
+            if (state.gameState === 'START' && state.hydratia) this.drawHydratia(state.hydratia, rm);
         }
 
         // Cadenza's DA CAPO Encore — the ring + call/progress banner, over the live room.
@@ -773,16 +797,8 @@ export class Renderer {
             this.ctx.strokeRect(state.headCell.x - 2, state.headCell.y - 2, g + 4, g + 4);
         }
 
-        // banner: the objective + how much of the database is left (≥16px). No fail state —
-        // break the database to open the far door, or retreat the way you came.
-        this.ctx.textAlign = 'center';
-        this.ctx.font = '16px "Press Start 2P", monospace';
-        this.ctx.fillStyle = 'rgba(2, 8, 12, 0.8)';
-        this.ctx.fillRect(0, 0, W, 52);
-        this.ctx.fillStyle = '#bfe9ff';
-        this.ctx.fillText('DECONTAMINATION — GUARD THE HEAD', W / 2, 20);
-        this.ctx.fillStyle = '#7fd4ff';
-        this.ctx.fillText('SIGNATURES LEFT: ' + h.bricksLeft, W / 2, 42);
+        // (The objective banner + signature count moved to the bottom ribbon — see
+        // #boss-status. In-room stays pure arena: bricks, ping, the read-head warning.)
 
         this.ctx.restore();
     }
@@ -854,7 +870,7 @@ export class Renderer {
             // dark plate in a soft amber (NOT the wall's cyan) so it stays legible against
             // the cyan wall band + its max-speed glow.
             const txt = `SECTOR ${state.roomX},${state.roomY}`;
-            const yy = state.citation ? 74 : 26;
+            const yy = 26;
             this.ctx.textAlign = 'left';
             this.ctx.font = '16px "Press Start 2P", monospace';
             const w = this.ctx.measureText(txt).width;
@@ -864,48 +880,16 @@ export class Renderer {
             this.ctx.fillText(txt, 16, yy);
         }
 
-        if (u.gearMeter) {
-            // bottom-right tachometer: 3 pips filled to the current gear (1-3); gear 0 = no
-            // pips, brake shows a BRK label. Max gear is 3, so 3 boxes (no dead box).
-            const gear = state.gear || 0;
-            const pip = 12, gap = 4, n = 3; // gears 1..3
-            const totalW = n * (pip + gap);
-            const bx = W - totalW - 14, by = H - 26;
-            this.ctx.textAlign = 'right';
-            this.ctx.font = '16px "Press Start 2P", monospace';
-            // REDLINE (the {2,2} module): the numeric speed-limit readout — which gear
-            // your current mass licenses (min(3, floor(score/10))), beside the pips.
-            if (u.redline) {
-                const lim = Math.min(3, Math.floor((state.score || 0) / 10));
-                this.ctx.fillStyle = '#ffc234';
-                this.ctx.fillText(`LIM ${lim}`, bx - 76, by + pip);
-            }
-            this.ctx.fillStyle = gear < 0 ? '#ff8a3d' : (this.pal || PAL8).wall;
-            this.ctx.fillText(gear < 0 ? 'BRK' : 'GEAR', bx - 8, by + pip);
-            for (let i = 0; i < n; i++) {
-                const full = gear >= i + 1;
-                const x = bx + i * (pip + gap);
-                this.ctx.strokeStyle = (this.pal || PAL8).wall;
-                this.ctx.lineWidth = 2;
-                this.ctx.strokeRect(x, by, pip, pip);
-                if (full) {
-                    this.ctx.fillStyle = i >= 2 ? '#ff8a3d' : (this.pal || PAL8).wall; // top gear glows orange
-                    this.ctx.fillRect(x + 2, by + 2, pip - 4, pip - 4);
-                }
-            }
-        }
+        // (The gear gauge moved OFF the canvas into the top ribbon, beside your Data —
+        // see index.html #gear-display / Game.refreshGearDisplay. HUD stats live together.)
 
-        // A carried refugee (bottom-centre): the passenger state must be visible — their
-        // seat is a protected tail segment and the drop-off choice waits at Localhost.
-        if (state.carriedRefugee) {
-            this.ctx.textAlign = 'center';
-            this.ctx.font = '16px "Press Start 2P", monospace';
-            this.ctx.fillStyle = '#8fd0ff';
-            this.ctx.fillText('CARRYING: PASSENGER', W / 2, H - 34);
-        }
+        // (The carried refugee shows AS a passenger on your tail — like 2-Bit — rather
+        // than as a HUD label; see the snake loop's refugeeIndex face.)
         // The bounce ARG's listen window (§2.6 twin of the crack sound): Cache's back-up
         // daemon leans in for a beat after a crumple — letters typed now are HEARD.
-        if ((state.argListenMs || 0) > 0) {
+        // Drawn only once the secret is PRIMED (you've heard 2-Bit's Cache gossip);
+        // before that it read as inexplicable noise on every wall crumple.
+        if ((state.argListenMs || 0) > 0 && state.argCuePrimed) {
             this.ctx.textAlign = 'center';
             this.ctx.font = '16px "Press Start 2P", monospace';
             this.ctx.fillStyle = '#00776a';
@@ -1020,6 +1004,14 @@ export class Renderer {
     }
 
     // Simple 8-bit features per character so NPCs aren't plain squares.
+    // ENVIRONMENT GLOW RIDES THE LIVE GEAR (owner direction): the neon breathes with
+    // your momentum — gear 0 is a dull, dormant world; gear 3 is full bloom. (Replaces
+    // the old permanent switch that flipped on at first max speed and never dimmed.)
+    _frameGlow(state) {
+        const P = this.pal || PAL8;
+        return (Math.max(0, (state && state.gear) || 0) / 3) * P.glow;
+    }
+
     drawNpcFeatures(npc, state) {
         const g = this.gridSize, x = npc.x, y = npc.y;
         this.ctx.shadowBlur = 0;
@@ -1108,6 +1100,70 @@ export class Renderer {
             this.ctx.fillRect(sx, y + g * 0.22, 2, g * 0.42);                 // stem
             this.ctx.fillRect(sx, y + g * 0.22, g * 0.16, 2);                 // flag
             this.ctx.fillRect(x + g * 0.34, y + g * 0.56, g * 0.24, g * 0.2); // note head
+        } else if (npc.id === 'commons' || npc.id === 'minegate') {
+            // DAMAGED 3x3 BUILDINGS (the intake stations are places, not people). Each
+            // NPC cell knows its position in the facade (bx 0-2, by 0-2) and draws its
+            // piece: a cracked roofline on top, walls and broken windows mid, a doorway
+            // at bottom-centre. The minegate hangs a headframe strut over its door; the
+            // commons keeps a bench by its. No eyes anywhere: architecture.
+            const bx = npc.bx ?? 1, by = npc.by ?? 1;
+            this.ctx.fillStyle = '#12251a';
+            if (by === 0) {
+                // roofline: slabs with bites missing (the quarantine years were unkind)
+                if (!(npc.id === 'commons' && bx === 2)) this.ctx.fillRect(x + 1, y + g - 7, g - 2, 4);
+                if (bx === 0) this.ctx.fillRect(x + 3, y + g * 0.35, g * 0.5, 3); // sagging ridge
+                if (npc.id === 'minegate' && bx === 1) this.ctx.fillRect(x + g / 2 - 2, y + 2, 4, g - 4); // headframe strut
+            } else if (by === 1) {
+                if (bx === 0) { // left wall + broken window
+                    this.ctx.fillRect(x + 2, y, 3, g);
+                    this.ctx.fillRect(x + 8, y + g * 0.3, 5, 4);
+                } else if (bx === 2) { // right wall + boarded window
+                    this.ctx.fillRect(x + g - 5, y, 3, g);
+                    this.ctx.fillRect(x + 4, y + g * 0.3, 6, 2);
+                } else if (npc.id === 'minegate') { // the lift cable runs down the middle
+                    this.ctx.fillRect(x + g / 2 - 1, y, 2, g);
+                }
+            } else {
+                // ground floor: foundation line; the doorway at bottom-centre
+                this.ctx.fillRect(x + 1, y + g - 5, g - 2, 3);
+                if (bx === 1) {
+                    this.ctx.fillRect(x + g / 2 - 4, y + 3, 8, g - 7); // the dark doorway
+                } else if (bx === 0) {
+                    this.ctx.fillRect(x + 3, y, 3, g - 4); // corner post
+                    if (npc.id === 'commons') this.ctx.fillRect(x + 8, y + g - 9, g * 0.5, 3); // the bench
+                } else {
+                    this.ctx.fillRect(x + g - 6, y, 3, g - 4); // corner post
+                }
+            }
+        } else if (npc.id === 'hydratia') {
+            // HYDRATIA — the watery-cyan droplet from the boot screen (same silhouette,
+            // so catching her THERE is finding her HERE), with her shy wide eyes.
+            this.ctx.fillStyle = '#7ee8e0';
+            this.ctx.beginPath();
+            this.ctx.arc(x + g / 2, y + g * 0.58, g * 0.3, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.fillRect(x + g / 2 - 1.5, y + g * 0.12, 3, g * 0.2); // the droplet nub
+            this.ctx.fillStyle = '#0a3a36'; // eyes (she was missing them on the boot screen too)
+            this.ctx.fillRect(x + g / 2 - 4, y + g * 0.52, 2.5, 2.5);
+            this.ctx.fillRect(x + g / 2 + 1.5, y + g * 0.52, 2.5, 2.5);
+        } else if (npc.id === 'quantcy') {
+            // QUANTCY — a strongbox of a program: a vault door (ring + keyhole) worn like
+            // a face, with two narrow appraising eyes above it.
+            this.ctx.strokeStyle = '#3a2c00';
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(x + g / 2, y + g * 0.6, g * 0.24, 0, Math.PI * 2);
+            this.ctx.stroke();
+            this.ctx.fillStyle = '#3a2c00';
+            this.ctx.fillRect(x + g / 2 - 1, y + g * 0.55, 2, g * 0.14); // the keyhole
+            this.ctx.fillRect(x + g / 2 - 5, y + g * 0.26, 3.5, 2);      // narrow eyes
+            this.ctx.fillRect(x + g / 2 + 1.5, y + g * 0.26, 3.5, 2);
+        } else if (npc.id === 'refugee') {
+            // A refugee — a citizen face plus the bindle on their back (they're packed).
+            this.drawEyes(x, y, '#0a1a0a');
+            this.ctx.fillStyle = '#0a1a0a';
+            this.ctx.fillRect(x + g - 7, y + 3, 4, 4);       // the bundle
+            this.ctx.fillRect(x + g - 9, y + 6, 2, g * 0.3); // the stick
         } else {
             // eyes for bite / denny (all of him) / nibble / citizen / shop (any friendly program)
             const dennyish = npc.id === 'denny' || npc.id === 'denny2'
@@ -1167,7 +1223,7 @@ export class Renderer {
         this.ctx.textAlign = 'center';
         this.ctx.fillText(carrying ? 'DROP TAIL HERE' : 'SLOT', x + size / 2, y - 4);
         // Restore the frame-wide neon glow so later draws (apple, NPCs) still glow.
-        this.ctx.shadowBlur = (state.unlocked && state.unlocked.maxSpeedReached) ? (this.pal || PAL8).glow : 0;
+        this.ctx.shadowBlur = this._frameGlow(state);
     }
 
     // The two-beat install animation: the module is sucked into the socket (phase 1),
@@ -1230,7 +1286,7 @@ export class Renderer {
         // smallest explored span (the earliest the map can be installed = a 2-room span).
         const mw = Math.max(cols * cell + pad * 2, 48), mh = rows * cell + pad * 2 + header;
         // A posted citation owns the top strip — the map slides under it.
-        const ox = this.canvas.width - mw - 10, oy = state.citation ? 56 : 10;
+        const ox = this.canvas.width - mw - 10, oy = 10;
 
         this.ctx.shadowBlur = 0;
         this.ctx.fillStyle = 'rgba(0, 20, 18, 0.72)';
@@ -1327,6 +1383,10 @@ export class Renderer {
         this.ctx.fill();
         this.ctx.fillRect(h.x - 1.5, y - 11, 3, 6);
         this.ctx.shadowBlur = 0;
+        // her shy wide eyes (matching her Localhost sprite — she was faceless before)
+        this.ctx.fillStyle = '#0a3a36';
+        this.ctx.fillRect(h.x - 3.5, y - 2, 2.5, 2.5);
+        this.ctx.fillRect(h.x + 1, y - 2, 2.5, 2.5);
         this.ctx.font = '16px "Press Start 2P", monospace';
         this.ctx.textAlign = 'right';
         this.ctx.fillStyle = '#3fa080';
