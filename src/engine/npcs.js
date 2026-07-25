@@ -31,10 +31,19 @@ export const NpcMethods = {
     },
 
     // Nibble's black-market stall. Like 2-Bit's, a real shop overlay — her lineup lives
-    // in ShopManager.vendors.nibble. First bump plays her intro, then opens the store;
-    // afterwards it's straight to browsing (with the occasional idle line).
+    // in ShopManager.vendors.nibble.
+    //
+    // Three of her five dialogue blocks used to be unreachable: `pitch` was written when
+    // she sold ONE item (its copy had rotted to match), and `tooPoor` / `idle` were never
+    // wired at all. All three play now:
+    //   first bump  -> intro + pitch, then the shelf
+    //   broke       -> tooPoor, then the shelf anyway (she's a merchant, not a bouncer)
+    //   returning   -> the next unheard `idle` entry, then the shelf; once the pool is
+    //                  dry she stops talking and lets you browse. That pacing is the
+    //                  point — her history leaks one line per visit, over hours.
     openNibbleShop() {
         const hadShunt = this.state.upgrades.corruptHandler;
+        const u = this.state.unlocked;
         const openShop = () => {
             this.state.gameState = 'SHOP';
             this.shopManager.open('nibble', () => {
@@ -49,13 +58,31 @@ export const NpcMethods = {
                 }
             });
         };
-        if (!this.state.unlocked.nibbleMet) {
-            this.state.unlocked.nibbleMet = true;
+        const say = (lines) => {
             this.state.gameState = 'DIALOG';
-            this.dialogManager.start(NIBBLE.intro, openShop);
-        } else {
-            openShop();
+            this.dialogManager.start(lines, openShop);
+        };
+
+        if (!u.nibbleMet) {
+            u.nibbleMet = true;
+            say([...NIBBLE.intro, ...NIBBLE.pitch]);
+            return;
         }
+        // Priced out of the whole shelf — read from the live vendor list so the line can
+        // never disagree with the stock (the exact way the old `pitch` copy rotted).
+        const stock = (this.shopManager.vendors.nibble || {}).items || [];
+        const affordable = stock.filter(i => (!i.avail || i.avail()) && !i.owned());
+        if (affordable.length && !affordable.some(i => this.state.score >= i.price)) {
+            say(NIBBLE.tooPoor);
+            return;
+        }
+        const seen = u.nibbleIdle || 0;
+        if (seen < NIBBLE.idle.length) {
+            u.nibbleIdle = seen + 1;
+            say(NIBBLE.idle[seen]);
+            return;
+        }
+        openShop();
     },
 
     // Spelling CACHE across death screens summons the archivist. She coalesces in the

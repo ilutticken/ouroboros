@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/engine/Game.js';
 import { Glitch } from '../src/entities/Glitch.js';
 import { NPC } from '../src/entities/NPC.js';
-import { HEUR } from '../src/content/dialogue.js';
+import { HEUR, NIBBLE } from '../src/content/dialogue.js';
 import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 
 // Act1 stubs the standard audio set on a 400x400 canvas.
@@ -462,11 +462,12 @@ describe('Nibble\'s black market & the Glitch Shunt', () => {
     it('buying the Glitch Shunt spends Data off the body; price = 20', () => {
         const game = newGame();
         game.state.unlocked.nibbleMet = true;
+        game.state.unlocked.nibbleIdle = NIBBLE.idle.length; // past her patter
         game.state.score = 25;
         game.growSnake(25); // Data = segments: 26 cells incl. head
         const nib = new NPC(200, 200, 20, 'nibble', []);
         game.npcs = [nib];
-        game.npcNibble(nib); // straight to shop (already met)
+        game.npcNibble(nib); // straight to shop (met, and she's out of small talk)
         expect(game.state.gameState).toBe('SHOP');
         const shunt = game.shopManager.items.find(i => i.name === 'Glitch Shunt');
         game.shopManager.purchase(shunt);
@@ -481,10 +482,91 @@ describe('Nibble\'s black market & the Glitch Shunt', () => {
         game.state.score = 10;
         const nib = new NPC(200, 200, 20, 'nibble', []);
         game.npcNibble(nib);
+        finishDialog(game); // she prices you out loud first (tooPoor), then opens the shelf
+        expect(game.state.gameState).toBe('SHOP');
         const shunt = game.shopManager.items.find(i => i.name === 'Glitch Shunt');
         game.shopManager.purchase(shunt); // refused: can't afford
         expect(game.state.upgrades.corruptHandler).toBe(false);
         expect(game.state.score).toBe(10);
+    });
+
+    // Three of her five dialogue blocks used to be unreachable — `pitch` was written for a
+    // one-item shelf and had rotted, `tooPoor` and `idle` were never wired. These pin all
+    // three so a future shop change can't quietly orphan her writing again.
+    describe('her script actually plays', () => {
+        it('the first bump runs intro AND pitch before the shelf', () => {
+            const game = newGame();
+            const nib = new NPC(200, 200, 20, 'nibble', []);
+            game.npcNibble(nib);
+            const said = [];
+            while (game.dialogManager.currentDialog) {
+                said.push(...game.dialogManager.currentDialog);
+                game.dialogManager.currentDialog = null;
+                game.dialogManager.end();
+            }
+            expect(said).toEqual([...NIBBLE.intro, ...NIBBLE.pitch]);
+        });
+
+        it('priced out of the WHOLE shelf, she says so — then lets you look anyway', () => {
+            const game = newGame();
+            game.state.unlocked.nibbleMet = true;
+            game.state.score = 0;
+            game.npcNibble(new NPC(200, 200, 20, 'nibble', []));
+            expect(game.dialogManager.currentDialog).toEqual(NIBBLE.tooPoor);
+            finishDialog(game);
+            expect(game.state.gameState).toBe('SHOP'); // a merchant, not a bouncer
+        });
+
+        it('affording ANY row skips tooPoor, even if the good one is out of reach', () => {
+            const game = newGame();
+            game.state.unlocked.nibbleMet = true;
+            game.state.unlocked.nibbleIdle = NIBBLE.idle.length;
+            game.state.score = 20; // the Shunt exactly; the 25 and 30 rows are not
+            game.npcNibble(new NPC(200, 200, 20, 'nibble', []));
+            expect(game.state.gameState).toBe('SHOP');
+        });
+
+        it('owning everything affordable does not re-trigger tooPoor', () => {
+            // Every row owned => nothing left to be priced out OF. Without the
+            // already-owned filter a broke completionist gets scolded forever.
+            const game = newGame();
+            game.state.unlocked.nibbleMet = true;
+            game.state.unlocked.nibbleIdle = NIBBLE.idle.length;
+            game.state.score = 0;
+            game.state.upgrades.corruptHandler = true;
+            game.state.upgrades.salvage = true;
+            game.state.upgrades.glitchWard = true;
+            game.npcNibble(new NPC(200, 200, 20, 'nibble', []));
+            expect(game.state.gameState).toBe('SHOP');
+        });
+
+        it('return visits deal ONE idle entry each, in order, then she goes quiet', () => {
+            const game = newGame();
+            game.state.unlocked.nibbleMet = true;
+            game.state.score = 100; // affords everything, so tooPoor never fires
+            const nib = new NPC(200, 200, 20, 'nibble', []);
+
+            for (let i = 0; i < NIBBLE.idle.length; i++) {
+                game.npcNibble(nib);
+                expect(game.dialogManager.currentDialog, `visit ${i + 1}`).toEqual(NIBBLE.idle[i]);
+                finishDialog(game);
+                expect(game.state.gameState).toBe('SHOP');
+                game.shopManager.close();
+            }
+            // Pool dry: she stops talking and just opens the shelf.
+            game.npcNibble(nib);
+            expect(game.dialogManager.currentDialog).toBeNull();
+            expect(game.state.gameState).toBe('SHOP');
+        });
+
+        it('no line of hers quotes a price or a stock count (the copy-rot trap)', () => {
+            // The old `pitch` said "One item today" long after she stocked three, and
+            // `tooPoor` hardcoded "Twenty". The shelf is the only place numbers live.
+            const all = [NIBBLE.intro, NIBBLE.pitch, NIBBLE.tooPoor, NIBBLE.buy, ...NIBBLE.idle].flat();
+            for (const line of all) {
+                expect(line, line).not.toMatch(/\b\d+\s*Data\b|\bTwenty\b|\bOne item\b|\bThree in stock\b/i);
+            }
+        });
     });
 
     it('Scale Mods absorb the first Glitch bite per room, then it bites again', () => {

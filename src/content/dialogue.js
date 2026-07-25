@@ -260,30 +260,62 @@ export const TWO_BIT = {
 
 // Nibble — 2-Bit's estranged sister. Warm like a heat lamp: comforting, and it burns if
 // you stay. Endearments that are also threats; the wound (her brother) deflected into
-// commerce; disclosures rattled off as one unhearable compound word.
+// commerce AT SPEED — the tell is how fast she changes the subject; disclosures rattled
+// off as one unhearable compound word. The pet name escalates the longer you stay:
+// sweetie -> sugar -> lamb.
+//
+// No line here names a price or a stock count. The shelf already says both, and the last
+// draft rotted the moment her lineup went from one item to three.
 export const NIBBLE = {
+    // First bump only. Runs straight into `pitch`, then the shelf opens.
     intro: [
-        "Nibble: Ohh, look at the LENGTH on you. Come in, come in, sweetie. Touch anything you like — everything in here bites, but gently.",
-        "Nibble: You're wearing my brother's gear. Mm. He always did find clients with appetite. We don't talk. There's a ledger involved.",
-        "Nibble: Browse! Everything's cursed, everything's a bargain. Disclosuresavailableonrequestnorefundsnoexorcisms."
+        "Nibble: Ohh. Look at the LENGTH on you.",
+        "Nibble: Come in, come in. Touch whatever you like, sweetie — it all bites, but gently.",
+        "Nibble: ...You're wearing my brother's gear.",
+        "Nibble: Mm.",
+        "Nibble: We don't talk. There's a ledger. ANYWAY!",
+        "Nibble: Everything's cursed, everything's a bargain. Disclosuresavailableonrequestnorefundsnoexorcisms."
     ],
     pitch: [
-        "Nibble: One item today, sweetie — the good one. The GLITCH SHUNT. Clips to that pretty head and lets you PUSH corruption instead of wearing it.",
-        "Nibble: Shove a Glitch anywhere you like. Stack them. Herd them. Park one somewhere... load-bearing. The Firewall HATES that last one.",
-        "Nibble: Twenty Data. Family discount. He'd hate that. Take it."
+        "Nibble: The Shunt's the good one. Everyone says so. Everyone's right.",
+        "Nibble: The rest of the shelf is for after.",
+        "Nibble: ...After's a whole thing. You'll see."
     ],
+    // You bumped her without enough Data for anything on the shelf. She still lets you
+    // look — she's a merchant, not a bouncer.
     tooPoor: [
-        "Nibble: Twenty, sweetie. Come back heavier.",
-        "Nibble: I'd float you credit, but you've seen what happens to my debtors. ...You haven't. That's the point."
+        "Nibble: Not enough, sugar. Come back heavier.",
+        "Nibble: I'd float you credit, but you've seen what happens to my debtors.",
+        "Nibble: ...You haven't.",
+        "Nibble: That's the point."
     ],
+    // On the way out, the FIRST time you buy the Glitch Shunt (pre-purge). This is Heur's
+    // telegraph: the decontamination must never read as an ambush.
     buy: [
-        "Nibble: Sold! It clips right onto the head. Cold, isn't it? That's normal. The whispering is also normal.",
-        "Nibble: One tip, on the house: the sweeper daemon flags anything that can HOLD corruption without dying. You just qualified, sweetie.",
-        "Nibble: It's got a Bay — north out of Localhost, the very first sector up the spine. You WILL be decontaminated before they let you climb any higher.",
-        "Nibble: It's polite about it. Politeness is the worst part. Go get it over with."
+        "Nibble: Sold! Clips right onto the head. Cold, isn't it? That's normal.",
+        "Nibble: The whispering is also normal.",
+        "Nibble: One tip, on the house — the sweeper flags anything that can HOLD corruption without dying.",
+        "Nibble: You just qualified, sweetie.",
+        "Nibble: North out of Localhost. First sector up the spine. It'll be waiting.",
+        "Nibble: It's polite about it. That's the worst part."
     ],
+    // ROTATING — one entry per return visit until the pool runs dry, then she lets you
+    // browse in peace. Her history leaks HERE, a line at a time, never in a block: the
+    // mystery is meant to unroll over hours.
     idle: [
-        "Nibble: Back for more? Stock rotates when the sweep gets close. Which is always. Browse fast, sweetie."
+        ["Nibble: Back already? Stock rotates when the sweep gets close. Which is always. Browse fast, sugar."],
+        ["Nibble: Still got all your segments, I see. Disappointing. I price for attrition."],
+        ["Nibble: Mind the pets. They're stock. They're also security. They're also pets."],
+        [
+            "Nibble: He tell you why we don't talk?",
+            "Nibble: ...No. He wouldn't.",
+            "Nibble: Buy something, lamb."
+        ],
+        [
+            "Nibble: You get a taste for it, you know. Corruption. Little bitter, little bright.",
+            "Nibble: Oh, don't look at me like that.",
+            "Nibble: Everyone in this system is eating SOMETHING."
+        ]
     ]
 };
 
