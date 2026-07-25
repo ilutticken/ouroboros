@@ -11,50 +11,9 @@ import { GameEngine } from '../src/engine/Game.js';
 import { NPC } from '../src/entities/NPC.js';
 import { ARCHITECT, LORE_FRAGS, BOOTH_LORE, CACHE_CHECKPOINT, HYDRATIA_DEATH } from '../src/content/dialogue.js';
 import { classifyRoomBeyond } from '../src/systems/RoomGenerator.js';
+import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 
-function mountDom() {
-    document.body.innerHTML = `
-        <div id="ui-layer" class="hidden">
-            <div id="score-value">0</div>
-            <div id="gear-display" class="hidden"></div>
-        </div>
-        <div id="game-wrapper">
-            <div id="shop-overlay" class="hidden">
-                <h2 id="shop-title"></h2>
-                <div class="shop-items" id="shop-items"></div>
-                <button id="btn-close-shop">Leave</button>
-            </div>
-        </div>
-        <div id="ui-layer-bottom" class="hidden">
-            <div id="narrative-terminal"></div>
-        </div>
-    `;
-    window.localStorage.clear();
-}
-
-function newGame(width = 400, height = 400) {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const game = new GameEngine(canvas);
-    for (const fn of ['init', 'playWub', 'playGlide', 'playDenied', 'playCorruptHit', 'playCrack',
-        'playCrash', 'playBeep', 'playDeath', 'playMaterialize', 'playDoot', 'playBump',
-        'playScannerPing', 'setDuck', 'setMusicLayer', 'stopVoidAmbient', 'stopMusic']) {
-        game.audio[fn] = vi.fn();
-    }
-    game.state.gameState = 'PLAYING';
-    return game;
-}
-
-function step(game, dir) {
-    game.input.nextDirection = { ...dir };
-    game.update(1000);
-}
-
-function finishDialog(game) {
-    let guard = 0;
-    while (game.dialogManager.currentDialog && guard++ < 200) game.dialogManager.advance();
-}
+const newGame = (width = 400, height = 400) => makeGame({ width, height });
 
 // ---------------------------------------------------------------------------------
 describe('The terminal release latch (text stops the game until Space)', () => {
@@ -387,6 +346,40 @@ describe('Hydratia (the catch, the autosave, the receipt)', () => {
         game.maybeStartHydratiaCatch();
         expect(game.saveManager.hydratiaApproach()).toBe(4);
         expect(game._hydratia && game._hydratia.catchable).toBe(true);
+    });
+
+    it('erasing the LAST save file restores the intro beats (playtest: the cameos stopped existing)', () => {
+        const game = newGame();
+        game.saveManager.save(1, { unlocked: {} });
+        // burn every one-time flag, the way months of playtesting does
+        game.saveManager.markCameoSeen();
+        game.saveManager.markCadenzaCameoSeen();
+        game.saveManager.markHydratiaCaught();
+        expect(game.saveManager.hasCameoSeen()).toBe(true);
+
+        game.state.gameState = 'START';
+        game.startMenuIndex = 0;
+        game.startMenuHandleKey('Delete');           // arm
+        game.startMenuHandleKey('Delete');           // confirm — that was the last file
+        expect(game.saveManager.anySave()).toBe(false);
+        // a genuinely fresh start: the openings come back
+        expect(game.saveManager.hasCameoSeen()).toBe(false);
+        expect(game.saveManager.hasCadenzaCameoSeen()).toBe(false);
+        expect(game.saveManager.hasHydratiaCaught()).toBe(false);
+        expect(game.state.unlocked.hydratiaFound).toBe(false);
+    });
+
+    it('erasing ONE of several files leaves the intro flags alone', () => {
+        const game = newGame();
+        game.saveManager.save(1, { unlocked: {} });
+        game.saveManager.save(2, { unlocked: {} });
+        game.saveManager.markCameoSeen();
+        game.state.gameState = 'START';
+        game.startMenuIndex = 0;
+        game.startMenuHandleKey('Delete');
+        game.startMenuHandleKey('Delete');
+        expect(game.saveManager.anySave()).toBe(true);   // file 2 survives
+        expect(game.saveManager.hasCameoSeen()).toBe(true); // ...so the cameo stays spent
     });
 
     it('she haunts the BARE cold open too — no save files required (owner fix)', () => {

@@ -3402,6 +3402,16 @@ export class GameEngine {
                 this.saveManager.clear(sel.slot);
                 this.startMenuConfirmErase = null;
                 this.audio.playCrack();
+                // Erasing the LAST file restores the fresh-start contract: the one-time
+                // title cameos and Hydratia's chase come back for the next new player.
+                // (Without this they were burned forever by the first newGame/load — the
+                // playtest report "I no longer get the Cache or Cadenza cutscenes".)
+                if (!this.saveManager.anySave()) {
+                    this.saveManager.resetIntroFlags();
+                    this.state.unlocked.hydratiaFound = false;
+                    this.maybeStartTitleCameo();
+                    this.maybeStartHydratiaCatch();
+                }
             } else {
                 this.startMenuConfirmErase = sel.slot; // arm; a second DEL confirms
             }
@@ -3924,9 +3934,12 @@ export class GameEngine {
         }
         // Hydratia's boot-screen glimpse (START only): stage 0 = a sliver at the right
         // edge, each quick reload ~8% further in; stage 4 = reachable.
+        // Stage 0 sits just INSIDE the right edge (she peeks; the sprite clips) and each
+        // stage pulls her ~9% further in. She used to start a hair off-canvas at a 6px
+        // radius, which read as nothing at all.
         this.state.hydratia = (this.state.gameState === 'START' && this._hydratia)
             ? { stage: this._hydratia.stage, catchable: this._hydratia.catchable,
-                x: this.canvas.width - this.gridSize - this._hydratia.stage * Math.floor(this.canvas.width * 0.08) }
+                x: Math.round(this.canvas.width - this.canvas.width * (0.03 + 0.09 * this._hydratia.stage)) }
             : null;
         this.state.argListenMs = this._argListenMs;      // the bounce ARG's listening cue
         // The listening cue only draws once the ARG is PRIMED (2-Bit's Cache gossip is

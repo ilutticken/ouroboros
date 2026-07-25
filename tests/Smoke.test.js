@@ -6,55 +6,16 @@
 // green test suite. This drives the FULL frame loop — update() + draw() — through every
 // game state with a Proxy canvas context that accepts any call, so ReferenceErrors and
 // TypeErrors in draw code surface here.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/engine/Game.js';
 import { NPC } from '../src/entities/NPC.js';
+import { mountDom, makeGame, frames } from './helpers.js';
 
-function mountDom() {
-    document.body.innerHTML = `
-        <div id="ui-layer" class="hidden"><div id="score-value">0</div></div>
-        <div id="game-wrapper">
-            <div id="shop-overlay" class="hidden">
-                <h2 id="shop-title"></h2>
-                <div class="shop-items" id="shop-items"></div>
-                <button id="btn-close-shop">Leave</button>
-            </div>
-        </div>
-        <div id="ui-layer-bottom" class="hidden"><div id="narrative-terminal"></div></div>
-    `;
-    window.localStorage.clear();
-}
+// Smoke needs EVERY audio method stubbed and the swallow-everything canvas ctx
+// (happy-dom's getContext returns null, so this is the only way to run draw()).
+const bootGame = (width = 400, height = 400) =>
+    makeGame({ width, height, audio: 'all', ctx: true, playing: false });
 
-// A 2D context that absorbs every method call and property write — so draw code runs
-// for real (its own logic, string building, state reads) without a rasterizer.
-function stubCtx() {
-    const noop = () => stub; // chainable-ish
-    const stub = new Proxy({}, {
-        get: (t, prop) => {
-            if (prop === 'measureText') return () => ({ width: 42 });
-            if (prop === 'canvas') return undefined;
-            return noop;
-        },
-        set: () => true,
-    });
-    return stub;
-}
-
-function bootGame(width = 400, height = 400) {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const game = new GameEngine(canvas);
-    for (const k of Object.getOwnPropertyNames(Object.getPrototypeOf(game.audio))) {
-        if (k !== 'constructor' && typeof game.audio[k] === 'function') game.audio[k] = vi.fn();
-    }
-    game.renderer.ctx = stubCtx(); // absorb rasterization; keep all draw logic live
-    return game;
-}
-
-function frames(game, n, dt = 40) {
-    for (let i = 0; i < n; i++) { game.update(dt); game.draw(); }
-}
 
 describe('Boot + draw smoke (every state renders without throwing)', () => {
     beforeEach(mountDom);

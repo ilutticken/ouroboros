@@ -12,43 +12,15 @@ import { NPC } from '../src/entities/NPC.js';
 import { SaveManager } from '../src/systems/SaveManager.js';
 import { NarrativeManager } from '../src/systems/NarrativeManager.js';
 import { THEME_CHANNELS, LOOP_BEATS, noteFreq } from '../src/content/music.js';
+import { mountDom as mountDomShared, makeGame, step } from './helpers.js';
 
-function mountDom() {
-    document.body.innerHTML = `
-        <div id="ui-layer" class="hidden">
-            <div id="score-value">0</div>
-            <button id="btn-playtest">dev</button>
-        </div>
-        <div id="game-wrapper">
-            <div id="shop-overlay" class="hidden">
-                <h2 id="shop-title"></h2>
-                <div class="shop-items" id="shop-items"></div>
-                <button id="btn-close-shop">Leave</button>
-            </div>
-        </div>
-        <div id="ui-layer-bottom" class="hidden">
-            <div id="narrative-terminal"></div>
-        </div>
-    `;
-}
+// This file manages save-slot state across its own tests, so it does NOT wipe
+// localStorage per mount, and it spies ONLY the two ambient sounds it asserts on
+// (the rest of AudioEngine safely no-ops before init()).
+const mountDom = () => mountDomShared({ clearStorage: false });
+const newGame = (width = 400, height = 400) =>
+    makeGame({ width, height, audio: ['playWub', 'playGlide'] });
 
-function newGame(width = 400, height = 400) {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;   // default 20 cols
-    canvas.height = height; // default 20 rows
-    const game = new GameEngine(canvas);
-    // Spy on the diegetic sounds so we can assert triggers without Web Audio.
-    game.audio.playWub = vi.fn();
-    game.audio.playGlide = vi.fn();
-    game.state.gameState = 'PLAYING';
-    return game;
-}
-
-/** Drive exactly one grid step in a given direction. */
-function step(game, dir) {
-    game.input.nextDirection = { ...dir };
-    game.update(1000); // exceed any speed threshold -> one guaranteed move
-}
 
 describe('AudioEngine diegetic sounds', () => {
     it('exposes wub and glide, and no-ops safely before init', () => {

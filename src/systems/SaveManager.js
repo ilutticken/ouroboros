@@ -143,6 +143,25 @@ export class SaveManager {
         return out;
     }
 
+    // THE FRESH-START CONTRACT. The title cameos and Hydratia's chase are GLOBAL
+    // one-time flags (deliberately: they're first-contact beats, not per-file ones).
+    // But erasing every save file has to mean a genuinely new player — otherwise those
+    // openings are consumed FOREVER on this browser, which is exactly what happened in
+    // playtest (Cache's title walk-on and Cadenza's cameo simply stopped existing).
+    // Called from the boot menu when the last file is erased. Deliberately does NOT
+    // clear `encore-unlocked` (a real cross-file achievement — Cadenza's ambient stays
+    // earned) or player settings.
+    resetIntroFlags() {
+        if (!this.available) return;
+        try {
+            window.localStorage.removeItem(this.cameoKey);
+            window.localStorage.removeItem('ouroboros-cadenza-cameo-seen');
+            window.localStorage.removeItem('ouroboros-hydratia-boot');
+            window.localStorage.removeItem('ouroboros-hydratia-approach');
+            window.localStorage.removeItem('ouroboros-hydratia-caught');
+        } catch (e) { /* ignore */ }
+    }
+
     // --- Hydratia's catch-on-reload (global, cross-file — same pattern as the cameos) --
     // Boot timestamps + a 0..4 approach counter driven by QUICK reloads (<= ~10s apart);
     // 'caught' is the one-time flag that retires the chase and seats her in Localhost.

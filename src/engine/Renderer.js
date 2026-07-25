@@ -1371,30 +1371,47 @@ export class Renderer {
     // is nothing for reduce-motion to dampen; progress is coded by position + a TRACE
     // counter (never colour alone, §2.6). Silent by design (decision 3: no boot audio).
     drawHydratia(h, rm) {
-        const H = this.canvas.height;
-        const y = Math.floor(H * 0.72);
+        const W = this.canvas.width, H = this.canvas.height;
+        const y = Math.floor(H * 0.66);
+        const R = 13; // playtest: she was a 6px speck 20px off the right edge — unfindable
         this.ctx.save();
-        this.ctx.shadowBlur = 8;
+        this.ctx.shadowBlur = 14;
         this.ctx.shadowColor = '#7ee8e0';
         this.ctx.fillStyle = '#7ee8e0';
-        // a small droplet: a circle with a nub — deliberately NOT an NPC silhouette
+        // A droplet PEEKING from behind the right edge — the clipping IS the character
+        // (she's hiding, not decorating). Each stage pulls her further into the room.
         this.ctx.beginPath();
-        this.ctx.arc(h.x, y, 6, 0, Math.PI * 2);
+        this.ctx.arc(h.x, y, R, 0, Math.PI * 2);
         this.ctx.fill();
-        this.ctx.fillRect(h.x - 1.5, y - 11, 3, 6);
+        this.ctx.fillRect(h.x - 3, y - R - 8, 6, 10); // the nub
         this.ctx.shadowBlur = 0;
-        // her shy wide eyes (matching her Localhost sprite — she was faceless before)
+        // her shy wide eyes (matching her Localhost sprite)
         this.ctx.fillStyle = '#0a3a36';
-        this.ctx.fillRect(h.x - 3.5, y - 2, 2.5, 2.5);
-        this.ctx.fillRect(h.x + 1, y - 2, 2.5, 2.5);
+        this.ctx.fillRect(h.x - 7, y - 4, 5, 5);
+        this.ctx.fillRect(h.x + 2, y - 4, 5, 5);
+        // A DASHED TRACE LANE from her to the edge she bolted through: motionless (so
+        // reduce-motion needs no branch) but unmistakably "something went that way".
+        this.ctx.strokeStyle = 'rgba(126, 232, 224, 0.35)';
+        this.ctx.lineWidth = 2;
+        this.ctx.setLineDash([5, 6]);
+        this.ctx.beginPath();
+        this.ctx.moveTo(h.x + R + 4, y);
+        this.ctx.lineTo(W, y);
+        this.ctx.stroke();
+        this.ctx.setLineDash([]);
+        // The readout — >=16px, on a dark plate so it can't wash out against the title.
         this.ctx.font = '16px "Press Start 2P", monospace';
         this.ctx.textAlign = 'right';
-        this.ctx.fillStyle = '#3fa080';
-        this.ctx.fillText(`TRACE ${h.stage}/4`, this.canvas.width - 12, 24);
+        const label = h.catchable ? 'TRACE 4/4 — REACHABLE' : `TRACE ${h.stage}/4`;
+        const tw = this.ctx.measureText(label).width;
+        this.ctx.fillStyle = 'rgba(3, 12, 12, 0.8)';
+        this.ctx.fillRect(W - 16 - tw - 6, 8, tw + 12, 22);
+        this.ctx.fillStyle = h.catchable ? '#7ee8e0' : '#3fa080';
+        this.ctx.fillText(label, W - 20, 24);
         if (h.catchable) {
             this.ctx.textAlign = 'center';
             this.ctx.fillStyle = '#7ee8e0';
-            this.ctx.fillText('[SPACE] reach out', h.x - 60 < 120 ? 140 : h.x - 60, y + 28);
+            this.ctx.fillText('[SPACE] reach out', Math.max(140, h.x - 70), y + 34);
         }
         this.ctx.restore();
     }

@@ -1,12 +1,12 @@
 {
   "name": "ouroboros",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "An incremental RPG disguised as a minimalist Snake clone. A static, build-free ES-module web game — see ARCHITECTURE.md.",
   "type": "module",
   "scripts": {
     "start": "npx --yes serve -p 8080 .",
-    "test": "vitest"
+    "test": "vitest",
+    "test:run": "vitest run"
   },
   "bugs": {
     "url": "https://github.com/ilutticken/ouroboros/issues"

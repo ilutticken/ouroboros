@@ -1,0 +1,19 @@
+# Normalize line endings so git stops warning "LF will be replaced by CRLF" on every
+# edit. Text files are stored LF in the repo and checked out with the platform's
+# native endings.
+* text=auto
+
+# Explicit for the file types in this project.
+*.js    text
+*.json  text
+*.html  text
+*.css   text
+*.md    text
+
+# Never touched.
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.wav   binary
+*.mp3   binary
+*.ogg   binary

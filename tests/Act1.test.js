@@ -5,56 +5,15 @@
 // Nibble's Glitch Shunt, Heur's Purge Cycle, and the Ascent to Cold Storage
 // (Beat 7 trap, Denny's Fall-Through, Gate's Override, Cache's checkpoint,
 // the Port 0 rigidity funnel + the 16-bit reboot).
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/engine/Game.js';
 import { Glitch } from '../src/entities/Glitch.js';
 import { NPC } from '../src/entities/NPC.js';
 import { HEUR, GATE_FINALE } from '../src/content/dialogue.js';
+import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 
-function mountDom() {
-    document.body.innerHTML = `
-        <div id="ui-layer" class="hidden">
-            <div id="score-value">0</div>
-            <button id="btn-playtest">dev</button>
-        </div>
-        <div id="game-wrapper">
-            <div id="shop-overlay" class="hidden">
-                <h2 id="shop-title"></h2>
-                <div class="shop-items" id="shop-items"></div>
-                <button id="btn-close-shop">Leave</button>
-            </div>
-        </div>
-        <div id="ui-layer-bottom" class="hidden">
-            <div id="narrative-terminal"></div>
-        </div>
-    `;
-    window.localStorage.clear();
-}
-
-function newGame(width = 400, height = 400) {
-    const canvas = document.createElement('canvas');
-    canvas.width = width;
-    canvas.height = height;
-    const game = new GameEngine(canvas);
-    for (const fn of ['playWub', 'playGlide', 'playDenied', 'playCorruptHit', 'playCrack',
-        'playCrash', 'playBeep', 'playDeath', 'playMaterialize', 'playDoot', 'playBump', 'setDuck', 'setMusicLayer']) {
-        game.audio[fn] = vi.fn();
-    }
-    game.state.gameState = 'PLAYING';
-    return game;
-}
-
-/** Drive exactly one grid step in a given direction. */
-function step(game, dir) {
-    game.input.nextDirection = { ...dir };
-    game.update(1000);
-}
-
-/** Advance every queued dialog (chained onCompletes included) to the end. */
-function finishDialog(game) {
-    let guard = 0;
-    while (game.dialogManager.currentDialog && guard++ < 200) game.dialogManager.advance();
-}
+// Act1 stubs the standard audio set on a 400x400 canvas.
+const newGame = (width = 400, height = 400) => makeGame({ width, height });
 
 // ---------------------------------------------------------------------------------
 describe('The wall ring actually blocks (playtest fix)', () => {
