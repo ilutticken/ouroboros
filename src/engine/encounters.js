@@ -423,6 +423,18 @@ export const EncounterMethods = {
     // Bumping a pursuing/guarding Gate: a SCUFFLE, not an arrest — three segments and
     // three Data (coupled), he's knocked back along your heading and stalls a beat.
     // The pressure valve: you can always fight through him, at a price.
+    // PORT 0's win condition: reaching Gate ENDS the fight. (It used to run the generic
+    // scuffle, which would have charged you 3 segments for winning.) Elsewhere — the
+    // Override's ring — a bump is still a scuffle.
+    npcGateFinal(npc) {
+        if (this.worldManager.currentRoomX === 5 && this.worldManager.currentRoomY === -5
+            && !this.state.unlocked.finaleDone) {
+            this._finaleParadox(npc);
+            return;
+        }
+        this.npcGateScuffle(npc);
+    },
+
     npcGateScuffle(npc) {
         let shed = 0;
         for (let i = 0; i < 3; i++) { if (this.snake.shrink(this.riderCount)) shed++; }
@@ -438,9 +450,11 @@ export const EncounterMethods = {
         const maxY = Math.floor((this.canvas.height - 1) / g) * g;
         const nx = Math.max(0, Math.min(maxX, npc.x + Math.sign(d.x) * 3 * g));
         const ny = Math.max(0, Math.min(maxY, npc.y + Math.sign(d.y) * 3 * g));
-        // Never knock him ONTO anything — furniture, corruption (a shoved Gate on a
-        // Glitch would fire the finale's paradox by accident), the worm, the apple, a
+        // Never knock him ONTO anything — furniture, corruption, the worm, the apple, a
         // stamp, or another NPC. A blocked knockback just leaves him where he stands.
+        // (The old warning here — that shoving Gate onto a Glitch could fire the finale
+        // by accident — is obsolete: the finale keys on you REACHING him, not on
+        // corruption. Kept blocked anyway; a boss inside the scenery is still a bug.)
         const blocked = this._moverBlocked(nx, ny)
             || this.npcs.some(n => n !== npc && n.x === nx && n.y === ny);
         if (!blocked) { npc.x = nx; npc.y = ny; }
@@ -542,34 +556,69 @@ export const EncounterMethods = {
     // forced 180 is GONE (it undid the player's own approach and made the fight read as
     // impossible); the fight is now positioning: bait his goalie line off the door
     // during CAP, then build to gear 3 and breach north inside the window.
+    // THE GATE (v3 — the owner's design). He stops citing and becomes what he is: a gate.
+    // A ring of Gate-blue blocks wraps the room's inner perimeter with ONE aperture a
+    // little wider than a doorway, and the whole ring ROTATES. Touching it is exactly a
+    // wall hit. To leave you must read the rotation, slip the aperture, and breach north
+    // at gear 3 — so the fight is timing on top of the breach you already know.
+    //
+    // Emergent length gate (no `length >= N` check anywhere, as ever): a longer worm needs
+    // the aperture to stay aligned for more ticks, so mass raises the difficulty of the
+    // threading exactly as it lowers the difficulty of the ram.
+    //
+    // The ring can never seal the room: the aperture always exists and always comes back
+    // around, so retreat is permanent and "the world is always traversable" holds.
+    get GATE3_APERTURE() { return 7; },   // cells of gap (a door is 5)
+    get GATE3_TURN_TICKS() { return 2; }, // move-ticks per one cell of rotation
+
+    // The ring path: every cell of the inner perimeter, clockwise from the top-left.
+    _gate3Ring() {
+        const g = this.gridSize;
+        const cols = this._cols, rows = this._rows;
+        const lo = 1, hiC = cols - 2, hiR = rows - 2; // just inside the wall ring
+        const path = [];
+        for (let c = lo; c <= hiC; c++) path.push([c, lo]);          // top, L->R
+        for (let r = lo + 1; r <= hiR; r++) path.push([hiC, r]);     // right, T->B
+        for (let c = hiC - 1; c >= lo; c--) path.push([c, hiR]);     // bottom, R->L
+        for (let r = hiR - 1; r > lo; r--) path.push([lo, r]);       // left, B->T
+        return path.map(([c, r]) => ({ x: c * g, y: r * g }));
+    },
+
     updateGate3() {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -3) return;
         if (this.state.unlocked.gateRematchDone) { this._ovr = null; return; }
         const gate = this.npcs.find(n => n.id === 'gate3');
         if (!gate) { this._ovr = null; return; }
-        if (!this._ovr) this._ovr = { mode: 'seal', t: 0 };
+        const ring = this._gate3Ring();
+        if (!this._ovr) this._ovr = { gap: 0, t: 0, len: ring.length };
         const o = this._ovr;
+        o.len = ring.length;
         o.t++;
-        if (o.mode === 'seal' && o.t >= 5) {
-            o.mode = 'cap'; o.t = 0;
-            this.changeGear(0); // the cap clamps the live gear immediately
-        } else if (o.mode === 'cap' && o.t >= 5) {
-            o.mode = 'recal'; o.t = 0;
-        } else if (o.mode === 'recal' && o.t >= 8) {
-            o.mode = 'seal'; o.t = 0;
-        }
-        if (gate.stun > 0) { gate.stun--; return; }
-        // The exit-goalie: he shadows your column along the north wall.
-        const g = this.gridSize;
-        const hx = this.snake.head.x;
-        let nx = gate.x;
-        if (gate.x < hx) nx = Math.min(gate.x + g, hx);
-        else if (gate.x > hx) nx = Math.max(gate.x - g, hx);
-        if (nx !== gate.x && !this._cellBlocked(nx, gate.y)
-            && !this.npcs.some(n => n !== gate && n.x === nx && n.y === gate.y)
-            && !(this.glitches || []).some(gl => gl.x === nx && gl.y === gate.y)) {
-            gate.x = nx;
-        }
+        if (o.t >= this.GATE3_TURN_TICKS) { o.t = 0; o.gap = (o.gap + 1) % ring.length; }
+
+        // The blocks: every ring cell outside the aperture run.
+        const inGap = (i) => {
+            const d = (i - o.gap + ring.length) % ring.length;
+            return d < this.GATE3_APERTURE;
+        };
+        this._gate3Blocks = ring.filter((_, i) => !inGap(i));
+
+        // Gate himself rides the leading edge of his own aperture — he IS the gatepost.
+        const post = ring[(o.gap + this.GATE3_APERTURE) % ring.length];
+        gate.x = post.x; gate.y = post.y;
+    },
+
+    // Head into a Gate block = a wall hit (owner: "the same penalty as touching a wall"),
+    // so the Crumple Buffer still saves you and death is a border death. Checked from the
+    // move-tick after the head has moved.
+    _gate3Collide() {
+        const blocks = this._gate3Blocks;
+        if (!blocks || !blocks.length) return false;
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -3) return false;
+        const h = this.snake.head;
+        if (!blocks.some(b => b.x === h.x && b.y === h.y)) return false;
+        this.die('border');
+        return true;
     },
 
     // Encounter status -> the BOTTOM RIBBON (owner: no boss-room overlay on the play
@@ -596,11 +645,20 @@ export const EncounterMethods = {
 
     // The active citation, for the ribbon status (never the terminal — a printing log
     // would hang the fight).
+    // The ribbon readout during THE GATE: it flips to ALIGNED while the aperture actually
+    // overlaps the north weak point — the tell that this is the tick to run.
     _citationLabel() {
-        if (!this._ovr) return null;
-        if (this._ovr.mode === 'seal') return GATE_OVERRIDE.citations.seal;
-        if (this._ovr.mode === 'cap') return GATE_OVERRIDE.citations.cap;
-        return GATE_OVERRIDE.citations.invert;
+        if (!this._ovr || !this._gate3Blocks) return null;
+        const wp = this.worldManager.getWeakPoint(5, -3, 'up');
+        if (wp) {
+            const g = this.gridSize;
+            const topRow = g; // the ring's top run
+            const open = [];
+            for (let x = wp.start; x <= wp.end; x += g) open.push(x);
+            const blocked = this._gate3Blocks.some(b => b.y === topRow && open.includes(b.x));
+            if (!blocked) return GATE_OVERRIDE.citations.aligned;
+        }
+        return GATE_OVERRIDE.citations.loop;
     },
 
     // --- PORT 0: the Act I finale ({5,-5}) — the rigidity funnel ------------------------
@@ -609,57 +667,117 @@ export const EncounterMethods = {
     // moves until only the corrupted cell remains; when he's down to ONE clean escape,
     // Denny issues the only genuine deny of his eleven thousand cycles — and the
     // firewall's own rulebook walks him onto the paradox. NO self-bite, NO encircle.
+    // PORT 0 — THE SQUEEZE (v2, the owner's design; the Glitch funnel is CUT).
+    // The old finale keyed on a corrupted cell held still — which Motion Carried later
+    // made impossible, since Glitches drift on your tick. Nothing here touches corruption.
+    //
+    // Gate rewrites SPACE: walls with one or two holes extrude from the north wall and
+    // march south, toward the door you came in by. Denny comes up from the south, slow,
+    // stamping DENIED as he goes, so the floor behind you closes. You are squeezed toward
+    // Gate. REACH HIM and the rulebook does the rest: he panics backwards onto one of
+    // Denny's own stamps.
+    //
+    // Both characters use the verb they already own — Gate rewrites the room, Denny
+    // stamps — and the kill is Denny's, exactly as before, but staged where you can see it.
+    get FINALE_WALL_TICKS() { return 6; },   // move-ticks per row of advance
+    get FINALE_SPAWN_TICKS() { return 22; }, // move-ticks between new walls
+    get FINALE_DENNY_TICKS() { return 4; },  // move-ticks per step of Denny's sweep
+
     updateGateFinal() {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -5) return;
-        if (this.state.unlocked.finaleDone) return;
+        if (this.state.unlocked.finaleDone) { this._finale = null; return; }
         const gate = this.npcs.find(n => n.id === 'gatefinal');
         if (!gate) return;
         const g = this.gridSize;
+        const cols = this._cols, rows = this._rows;
+        if (!this._finale) this._finale = { rows: [], t: 0, spawn: this.FINALE_SPAWN_TICKS - 4 };
+        const f = this._finale;
 
-        const neigh = [[g, 0], [-g, 0], [0, g], [0, -g]].map(([dx, dy]) => ({ x: gate.x + dx, y: gate.y + dy }));
-        const isGlitch = (c) => (this.glitches || []).some(gl => gl.x === c.x && gl.y === c.y);
-        const isBlocked = (c) =>
-            c.x < 0 || c.y < 0 || c.x >= this.canvas.width || c.y >= this.canvas.height
-            || this._cellBlocked(c.x, c.y)
-            || this.npcs.some(n => n !== gate && n.x === c.x && n.y === c.y);
-        const freeClean = neigh.filter(c => !isBlocked(c) && !isGlitch(c));
-        const freeGlitch = neigh.filter(c => !isBlocked(c) && isGlitch(c));
+        // 1) Gate extrudes a new wall at the north edge, with one or two holes. The holes
+        //    are what keep the squeeze survivable — the room never fully closes.
+        f.spawn++;
+        if (f.spawn >= this.FINALE_SPAWN_TICKS) {
+            f.spawn = 0;
+            const holeCount = 1 + Math.floor(Math.random() * 2);
+            const holes = [];
+            for (let i = 0; i < holeCount; i++) {
+                holes.push(2 + Math.floor(Math.random() * Math.max(1, cols - 5)));
+            }
+            f.rows.push({ r: 2, holes });
+            this.audio.playMaterialize(); // the room grows another rule
+        }
 
+        // 2) The walls march south. Any that reach the entry wall dissolve (they've done
+        //    their pushing) so the south end can't silt up permanently.
+        f.t++;
+        if (f.t >= this.FINALE_WALL_TICKS) {
+            f.t = 0;
+            for (const w of f.rows) w.r++;
+            f.rows = f.rows.filter(w => w.r < rows - 2);
+        }
+
+        // 3) Denny SNAKES the floor. He sweeps boustrophedon — left to right, up a row,
+        //    right to left, up a row — laying a DENIED behind every step, so the room
+        //    fills from the south edge northward. Deliberately SLOW (one step per
+        //    FINALE_DENNY_TICKS): a full sweep is minutes of stalling, so the squeeze is
+        //    real pressure without ever being a hidden timer. Stamps do NOT expire — the
+        //    slowness is the safety, not a TTL.
         const denny = this.npcs.find(n => n.id === 'dennyfinal');
-        if (freeClean.length === 1 && freeGlitch.length > 0 && denny && !denny.acted) {
-            denny.acted = true;
-            this.stamps.push({ x: freeClean[0].x, y: freeClean[0].y, ttl: 9999, denied: true });
-            this.audio.playBeep(); // a data-write: the one real stamp
-            return;
-        }
-        if (freeClean.length === 0 && freeGlitch.length > 0) {
-            gate.x = freeGlitch[0].x;
-            gate.y = freeGlitch[0].y;
-            this._finaleParadox(gate);
-            return;
+        if (denny && this._tick % this.FINALE_DENNY_TICKS === 0) {
+            if (denny.sweep === undefined) denny.sweep = 1; // +1 = rightward
+            const prev = { x: denny.x, y: denny.y };
+            const loC = 1, hiC = cols - 2;
+            const nx = denny.x + denny.sweep * g;
+            const nc = nx / g;
+            if (nc >= loC && nc <= hiC) {
+                denny.x = nx;
+                denny.notch = { dx: denny.sweep, dy: 0 };
+            } else {
+                // end of the row: climb one and reverse (he stops under Gate's post)
+                const ny = denny.y - g;
+                if (ny > 2 * g) { denny.y = ny; denny.notch = { dx: 0, dy: -1 }; }
+                denny.sweep *= -1;
+            }
+            // Stamp the cell he just left — never under the worm, the apple, or a boss.
+            const taken = this.stamps.some(s => s.x === prev.x && s.y === prev.y)
+                || this.snake.body.some(s => s.x === prev.x && s.y === prev.y)
+                || (this.apple && this.apple.x === prev.x && this.apple.y === prev.y)
+                || this.npcs.some(n => n !== denny && n.x === prev.x && n.y === prev.y);
+            if (!taken) this.stamps.push({ x: prev.x, y: prev.y, ttl: 9999, denied: true });
         }
 
+        // 4) Gate holds the door, shadowing your column — the thing you're being pushed at.
         if (gate.stun > 0) { gate.stun--; return; }
-        // Duty: hold the door. At post he side-steps to shadow your column (±2 of it).
         const midX = Math.floor(this.canvas.width / 2 / g) * g;
-        const post = { x: midX, y: g };
-        let target = post;
-        if (gate.x === post.x && gate.y === post.y) {
-            const hx = Math.max(midX - 2 * g, Math.min(midX + 2 * g, this.snake.head.x));
-            target = { x: hx, y: g };
+        const hx = Math.max(midX - 4 * g, Math.min(midX + 4 * g, this.snake.head.x));
+        if (gate.x !== hx) {
+            const nx = gate.x + Math.sign(hx - gate.x) * g;
+            if (!this._cellBlocked(nx, gate.y)) { gate.notch = { dx: Math.sign(hx - gate.x), dy: 0 }; gate.x = nx; }
         }
-        const dx = Math.sign(target.x - gate.x) * g;
-        const dy = Math.sign(target.y - gate.y) * g;
-        const tries = Math.abs(target.x - gate.x) >= Math.abs(target.y - gate.y)
-            ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]];
-        for (const [mx, my] of tries) {
-            if (mx === 0 && my === 0) continue;
-            const c = { x: gate.x + mx, y: gate.y + my };
-            if (isBlocked(c) || isGlitch(c)) continue;
-            gate.notch = { dx: Math.sign(mx), dy: Math.sign(my) };
-            gate.x = c.x; gate.y = c.y;
-            break;
+    },
+
+    // The live cells of Gate's advancing walls (collision + render).
+    _finaleWallCells() {
+        if (!this._finale) return [];
+        const g = this.gridSize, cols = this._cols;
+        const out = [];
+        for (const w of this._finale.rows) {
+            for (let c = 1; c <= cols - 2; c++) {
+                if (w.holes.some(h => c >= h && c <= h + 2)) continue; // a 3-cell hole
+                out.push({ x: c * g, y: w.r * g });
+            }
         }
+        return out;
+    },
+
+    // Head into an advancing wall = a wall hit (Crumple still saves you).
+    _finaleCollide() {
+        if (!this._finale) return false;
+        if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -5) return false;
+        const h = this.snake.head;
+        if (!this._finaleWallCells().some(c => c.x === h.x && c.y === h.y)) return false;
+        this.die('border');
+        return true;
     },
 
     // The paradox fires: Gate steps onto the corrupted cell his own rule forbade.
@@ -667,8 +785,16 @@ export const EncounterMethods = {
     // Cadenza's second channel wakes, and Act I is over.
     _finaleParadox(gate) {
         const u = this.state.unlocked;
+        this._finale = null; // the walls stop the moment he does
+        // He panics BACKWARDS onto one of Denny's own stamps — the visible kill. If none
+        // is adjacent (you cornered him early), one lands under him: Denny has been
+        // stamping this whole room, and the rulebook always finds you eventually.
+        const g = this.gridSize;
+        const back = [{ x: gate.x, y: gate.y + g }, { x: gate.x - g, y: gate.y }, { x: gate.x + g, y: gate.y }]
+            .find(c => this.stamps.some(s => s.x === c.x && s.y === c.y));
+        if (back) { gate.x = back.x; gate.y = back.y; }
+        else this.stamps.push({ x: gate.x, y: gate.y, ttl: 9999, denied: true });
         this.spawnBurst([{ x: gate.x, y: gate.y }]);
-        this.glitches = this.glitches.filter(gl => !(gl.x === gate.x && gl.y === gate.y));
         this.npcs = this.npcs.filter(n => n !== gate);
         this.audio.playCrash();
         this.audio.playDeath(); // reserved for a true termination — and this is one

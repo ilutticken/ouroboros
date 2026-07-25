@@ -277,7 +277,9 @@ export class GameEngine {
         this._roomEntryDir = { x: 0, y: 0 }; // which way you moved to ENTER this room (the catch throws you back)
         this._coilNear = null;     // { proximity, dirs } — the Kernel-coil approach (audio duck + deaf twin)
         this.mapPins = {};         // Map-Pins annotations: 'x,y' room key -> pin shape index (persisted)
-        this._ovr = null;          // Gate's active permission override in {5,-3} ({mode, t})
+        this._ovr = null;          // THE GATE's rotating ring state in {5,-3} ({gap, t, len})
+        this._gate3Blocks = null;  // the ring's live block cells (collision + render)
+        this._finale = null;       // Port 0's advancing walls ({rows:[{r,holes}], t})
         this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
         this._argListenMs = 0;     // ms left on the bounce "listening" window (the ARG's little death)
@@ -318,7 +320,7 @@ export class GameEngine {
             lorefrag: (npc) => this.npcSign(npc),
             denny2: (npc) => this.npcDenny2(npc),
             gate3: (npc) => this.npcGateScuffle(npc),
-            gatefinal: (npc) => this.npcGateScuffle(npc),
+            gatefinal: (npc) => this.npcGateFinal(npc),
             dennyfinal: (npc) => this.npcDennyFinal(npc),
             dennyafter: (npc) => this.npcDennyFinal(npc),
             // The refugee economy + the two Localhost intake stations.
@@ -440,10 +442,9 @@ export class GameEngine {
         // 20-29 data: max gear 2
         // 30+ data: max gear 3
         let maxGear = Math.min(3, Math.floor(this.state.score / 10));
-        // Gate's VELOCITY CAP citation (the {5,-3} Override fight): while it holds, the
-        // whole gearbox is administratively capped at 1 — you cannot build breach speed
-        // until his next recalibration window.
-        if (this._ovr && this._ovr.mode === 'cap') maxGear = Math.min(maxGear, 1);
+        // (Gate's old VELOCITY CAP citation is gone with the Override rewrite — THE GATE
+        // is a rotating perimeter loop now, so the fight constrains your ROUTE, not your
+        // gearbox. You need full speed to thread it, so capping it would fight the design.)
 
         this.gear += delta;
         
@@ -1212,16 +1213,9 @@ export class GameEngine {
             this.speed = this.baseSpeed;
             return { stop: true };
         }
-        // Gate's SEAL override (the {5,-3} rematch): while CITATION §7 holds, the north
-        // egress is administratively revoked — a bonk, not a wall. Wait out the cycle.
-        if (isWeakPoint && this._ovr && this._ovr.mode === 'seal'
-            && rx === 5 && ry === -3 && directionStr === 'up') {
-            if (!this._wallBonking) this.audio.playDenied();
-            this._wallBonking = true;
-            this.gear = 0;
-            this.speed = this.baseSpeed;
-            return { stop: true };
-        }
+        // (Gate's old SEAL citation is gone too — the north egress is no longer
+        // administratively revoked. THE GATE's ring is the only thing between you and the
+        // wall, and it is a physical obstacle you time rather than a rule you wait out.)
         if (isWeakPoint) {
             // Smash mechanic: base speed does nothing (non-lethal bonk); sub-max cracks the wall
             // but the impact RESTARTS you (keeping some crack); ONLY a max-gear (gear 3) hit
@@ -1582,6 +1576,12 @@ export class GameEngine {
                     }
                 }
             }
+
+            // THE GATE's rotating ring ({5,-3}) and Port 0's advancing walls ({5,-5}) are
+            // both wall-grade hazards — a hit is a border death (so the Crumple Buffer
+            // still catches it), checked right beside the room's own furniture.
+            if (this._gate3Collide()) return true;
+            if (this._finaleCollide()) return true;
 
             // Diegetic ambient audio: the system's own signals bleeding into your
             // senses as you move through it (corruption proximity, wall friction).
@@ -2275,7 +2275,11 @@ export class GameEngine {
         this.state.headCell = { x: this.snake.head.x, y: this.snake.head.y }; // Heur read-head warning outline
         this.state.stamps = this.stamps;           // Denny's DENIED stamps
         this.state.coilNear = this._coilNear;      // the coil approach (deaf-legible dim + readout)
-        this.state.citation = this._citationLabel(); // Gate's active override banner ({5,-3})
+        this.state.citation = this._citationLabel(); // THE GATE's ribbon readout ({5,-3})
+        // Gate's two space-rewriting hazards, for the Renderer: the Override's rotating
+        // ring and Port 0's advancing walls. Both draw in his firewall blue.
+        this.state.gateBlocks = this._gate3Blocks;
+        this.state.finaleWalls = this._finale ? this._finaleWallCells() : null;
         this.state.mapPins = this.mapPins;         // Map-Pins annotations for the minimap
         this.state.roomX = this.worldManager.currentRoomX; // sector readout + pin-on-current-room
         this.state.roomY = this.worldManager.currentRoomY;

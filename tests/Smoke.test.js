@@ -81,6 +81,29 @@ describe('Boot + draw smoke (every state renders without throwing)', () => {
         frames(game, 3);
     });
 
+    it("Gate's two fights render — the rotating ring and the advancing walls", () => {
+        // THE GATE {5,-3}: the ring must paint (blocks + hatch) and the ribbon must read.
+        const game = bootGame();
+        game.state.gameState = 'PLAYING';
+        game.state.unlocked.ui = true;
+        game.state.unlocked.ascentArmed = true;
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -3;
+        game.apple = { x: 300, y: 300 }; game.glitches = []; game.obstacles = [];
+        game.npcs = [new NPC(200, 40, 20, 'gate3', [])];
+        for (let i = 0; i < 12; i++) { game.updateGate3(); game.draw(); }
+        expect(game.state.gateBlocks.length).toBeGreaterThan(0);
+
+        // PORT 0 {5,-5}: the advancing walls + Denny's stamps.
+        const g2 = bootGame();
+        g2.state.gameState = 'PLAYING';
+        g2.state.unlocked.ui = true;
+        g2.worldManager.currentRoomX = 5; g2.worldManager.currentRoomY = -5;
+        g2.apple = { x: 300, y: 300 }; g2.glitches = []; g2.obstacles = []; g2.stamps = [];
+        g2.npcs = [new NPC(200, 40, 20, 'gatefinal', []), new NPC(200, 340, 20, 'dennyfinal', [])];
+        for (let i = 0; i < 40; i++) { g2._tick++; g2.updateGateFinal(); g2.draw(); }
+        expect(g2.state.finaleWalls.length).toBeGreaterThan(0);
+    });
+
     it('the Heur fight and the Encore render', () => {
         const game = bootGame();
         game.state.gameState = 'PLAYING';

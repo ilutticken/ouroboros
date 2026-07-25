@@ -189,8 +189,35 @@ export class Renderer {
             if (state.cadenzaBeacon) this.drawCadenzaPulse(state.cadenzaBeacon, W, H, rm);
         }
         
-        // Draw Obstacles (Solid Green)
         const bordersOn = !!state.unlocked.borders;
+
+        // GATE'S REWRITTEN SPACE — the Override's rotating ring ({5,-3}) and Port 0's
+        // advancing walls ({5,-5}). Firewall blue, so they read as HIS, and hatched so
+        // they're distinguishable from the room's own furniture without relying on colour
+        // (§2.6). Touching either is a wall hit.
+        const gateHazard = [...(state.gateBlocks || []), ...(state.finaleWalls || [])];
+        if (gateHazard.length) {
+            this.ctx.save();
+            this.ctx.fillStyle = '#4aa3ff';
+            this.ctx.shadowColor = '#4aa3ff';
+            this.ctx.shadowBlur = 8;
+            for (const b of gateHazard) {
+                this.ctx.fillRect(...this._cellRect(b.x, b.y, 1, bordersOn));
+            }
+            // the hatch: a darker slash through each block (texture, not colour)
+            this.ctx.strokeStyle = '#00284d';
+            this.ctx.lineWidth = 2;
+            this.ctx.shadowBlur = 0;
+            for (const b of gateHazard) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(b.x + 3, b.y + this.gridSize - 3);
+                this.ctx.lineTo(b.x + this.gridSize - 3, b.y + 3);
+                this.ctx.stroke();
+            }
+            this.ctx.restore();
+        }
+
+        // Draw Obstacles (Solid Green)
         if (obstacles) {
             this.ctx.fillStyle = P.obstacle;
             this.ctx.shadowColor = P.obstacle;

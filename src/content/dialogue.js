@@ -40,11 +40,12 @@ export const LOCALHOST_CITIZENS = {
     ]
 };
 
+// He is "???" until he introduces himself — the speaker tag is the reveal.
 export const GATE_INTRO = [
-    "HALT! UNAUTHORIZED SECTOR BREACH!",
-    "I am Gate, Firewall Division.",
-    "You are a Level 1 Anomaly. The Architect's isolation protocol demands your immediate deletion.",
-    "Initiating Thread Suspension..."
+    "???: *Ahem*, HALT! UNAUTHORIZED SECTOR BREACH!",
+    "Gate: I am Gate, Firewall Division.",
+    "Gate: You are a Level 1 Anomaly. The Architect's isolation protocol demands your IMMEDIATE DELETION.",
+    "Gate: Initiating Thread Suspension..."
 ];
 
 export const CADENZA_SCENE = [
@@ -126,18 +127,18 @@ export const ARCHITECT = {
         hub: "LOG: Architect > 'The anomaly rammed the quarantine below breach speed and destroyed itself. HA. It has NOT realized it must reach MAXIMUM velocity to crack a wall open. Long may it flail. It could never work that out from in here.'",
         wilds: "LOG: Architect > 'It keeps hurling itself at barriers too slowly and deleting itself. Reassuring. Full speed is the whole trick and it hasn't the faintest idea. I certainly shan't tell it.'"
     },
-    wallBreak: "LOG: Architect > 'THE QUARANTINE IS BREACHED. HOW. It went max speed at the weak point. It KNEW. Dispatching Gate to Sector 3,0 — CONTAIN IT — and someone find out if this thing can READ.'",
+    wallBreak: "LOG: Architect > 'THE QUARANTINE IS BREACHED. HOW?! It went max speed at the weak point??? It KNEW. Dispatching Gate to Sector [3,0], and someone find out if this thing can READ.'",
     // CANON (retcon): the Architect does NOT seed the Glitches — he OBSERVES that the
     // anomaly's own Data-gathering spawns them, and files it as one more reason for
     // containment. The closing clause still leaks the finale's trick (his agents can't
     // touch the residue) — the leak survives the retcon because gloating is his nature.
     // (DRAFT — owner to punch up.)
-    seedGlitches: "LOG: Architect > 'Corruption is blooming along the anomaly's feeding path. I did not build this, and I resent logging it. Filed under: reasons for containment. Gate is NOT to touch the residue.'",
+    seedGlitches: "LOG: Architect > 'Corruption is blooming along the anomaly's feeding path. I did not build this, and I resent logging it. Filed under: reasons for containment.'",
     // Guide logs TRIMMED 5 -> 2 (owner: fewer Architect messages, each Space-gated). The
     // '1,0' flavor is folded into '3,0'; '2,0'/'4,0' were redundant restatements. The two
     // load-bearing mechanic leaks (maxGear, subSmash) are untouched elsewhere. (DRAFT.)
     guide: {
-        '3,0': "LOG: Architect > 'Sector 3, still drifting east — nothing out that way but the old residential subnet, dark for epochs. Deploying Gate to hold the line here. Gate is reliable. Gate will not embarrass me.'",
+        '3,0': "LOG: Architect > 'Sector 3 and still drifting east… Gate to hold the line here. Gate is reliable. Gate will not embarrass me.'",
         '5,0': "LOG: Architect > 'It reached Localhost. The one place I can't touch. Recalculating. Note to self: reassign Gate somewhere with fewer exits.'"
     },
     // Motion Carried — the world-state flip on clearing the Override (the SECOND Gate
@@ -350,22 +351,22 @@ export const DENNY_REMATCH = {
 // permissions, headings, doors. One override at a time — regulation is regulation.
 export const GATE_OVERRIDE = {
     enter: [
-        "Gate: No further. This checkpoint is the last numbered rule between you and Port 0, and I have stopped pretending you read the postings.",
-        "Gate: New powers, anomaly. I no longer chase. I REWRITE. Permissions. Headings. Doors. One override at a time — regulation is regulation.",
-        "Gate: You will be pleased to know I have escalated you to a Level 3 Anomaly. It is the highest classification I have ever filed."
+        "Gate: NO FURTHER.",
+        "Gate: You will be pleased to know I have escalated you to a Level 3 Anomaly. It is the highest classification I have ever filed.",
+        "Gate: You may be fast, wily, strong, and SVELTE, but none of that will help you get past ",
+        "Gate: MY GATE."
     ],
-    // In-room citation banners (drawn ≥16px while the override holds — not terminal logs,
-    // so the fight never hangs the sim).
+    // Ribbon status while THE GATE turns (bottom ribbon, never the terminal — a printing
+    // log would hang the fight).
     citations: {
-        seal: 'CITATION §7 — NORTH EGRESS: REVOKED',
-        cap: 'CITATION §9 — VELOCITY: CAPPED',
-        // The recal window IS the answer — and it says so. (The forced 180 is gone.)
-        invert: 'RECALIBRATING… SEAL DOWN'
+        loop: 'GATE — PERIMETER LOOP ENGAGED',
+        aligned: 'GATE — APERTURE ALIGNED'
     },
     cleared: [
-        "Gate: ...Cited. Every rule cited, and you went through the WALL portion of the wall.",
-        "Gate: The Architect asks why you are still executing. I have stopped forwarding him my reports. This one is between us.",
-        "Gate: North, then. I will be at the door that matters."
+        "Gate: $%&@?! ARE YOU SERIOUS???",
+        "Gate: The Architect asks why you are still executing. I have stopped forwarding him my reports. *This one is between us*.",
+        "Gate: This IS NOT over! Oh, yes, we WILL meet again. VERY SOON.",
+        "Gate: And you will be halted SO HARD your TAIL SPINS."
     ]
 };
 
@@ -407,15 +408,23 @@ export const ROM_DOOR_BONK = "SYSTEM: The wall refuses. This sector is committed
 // genuine deny of his eleven thousand cycles.
 export const GATE_FINALE = {
     enter: [
-        "Gate: The door that matters. Port 0. My first rule — my REAL rule — says it stays closed. Every citation I ever wrote was practice for this shift.",
-        "Gate: And I have learned your trick, anomaly. The corrupted cell. I see it. Rule #1, subsection ME: never step in the puddle.",
-        "Denny: (slipping in behind you) I— I followed the paperwork north. It all falls through eventually, did you know? Everything does. That's... me. Hello."
+        "Gate: Anomaly, *so we meet again*.",
+        "Gate: Which I TOTALLY warned you about.",
+        "Gate: You've met your match. ME. I AM YOUR MATCH.",
+        "Denny: (slipping in behind you) BOSS, THE ANOMALY IS COMING THIS... Oh. Hi, Anomaly.",
+        "Denny: ..."
     ],
+    // THE PARADOX (rewritten for the squeeze — no Glitch, no draping): you reach Gate, he
+    // panics backwards into one of Denny's own DENIED stamps, and the rulebook kills him.
+    // OWNER DRAFT — this is my sketch of the beat you described; replace freely.
     forced: [
-        "Gate: —Recalculating. The permitted cells are— you've DRAPED yourself over the permitted cells.",
-        "Gate: One legal move remains. It is corrupted. A firewall does not halt. A firewall PROCEEDS. Denny— Denny, the manual says—",
-        "Denny: (stamping the last clean cell, very quietly) ...Denied. I'm sorry, sir. It's the only real one I ever issued.",
-        "Gate: ...Filed correctly, Denny. Well then. FINAL CITATION, anomaly: whatever you find past this door — you are the last rule it has to get through."
+        "Gate: —Do NOT come any closer. I am WARNING you. I have a form for this—",
+        "Gate: (backing up) Denny. DENNY. Clear a lane. That is a direct—",
+        "Denny: Sir, I— I've been stamping since I got here. It's all I—",
+        "(Gate steps back onto a DENIED stamp. It takes.)",
+        "Denny: BOSSSSSSSSSSSSS",
+        "Denny: (holding him) I filed it. I filed it right. I'm so sorry, sir, I filed it RIGHT—",
+        "Gate: ...Filed correctly, Denny. FINAL CITATION, anomaly: whatever you find past this door — you are the last rule it has to get through."
     ],
     reboot: [
         "SYSTEM: PARADOX AT PORT 0 — firewall process violated its own Rule #1.",
@@ -622,10 +631,14 @@ export const BOOTH_LORE = [
 
 // --- Gate (src/engine/Game.js) ------------------------------------------------------
 export const GATE = {
-    // Context lines prepended to his room intro, depending on how you passed Denny.
-    contextGotMap: "Gate: Denny flagged you DENIED, you proceeded anyway, AND he handed you his map?! That is a write-up for BOTH of us.",
-    contextDennyMet: "Gate: Denny flagged you DENIED and you proceeded anyway. At least the paperwork's in order — and he kept his map, thank the Kernel.",
-    contextDennySlipped: "Gate: You slipped past the Last Line?! Denny had ONE job. ...Well. At least you didn't get his map. Small mercies.",
+    // Context lines prepended to his room intro, depending on how you passed Denny. He is
+    // still "???" here — he hasn't given his name yet (see GATE_INTRO).
+    // OWNER TODO: the gotMap variant (you're CARRYING Denny's map when you meet Gate) still
+    // needs its line — the two below both assume you don't have it. Placeholder keeps the
+    // branch alive.
+    contextGotMap: "???: Denny flagged you DENIED, you proceeded anyway, AND he handed you his MAP?! That is a write-up for BOTH of us.",
+    contextDennyMet: "???: Denny flagged you DENIED and you proceeded anyway. At least you didn't get his MAP, thank the Kernel.",
+    contextDennySlipped: "???: You slipped past the Last Line?! Denny had ONE job. ...Well. At least you didn't get his MAP. Small mercies.",
     // After you break his Thread Suspension with the Pause Menu.
     override: [
         "Gate: WHAT?!",

@@ -866,35 +866,46 @@ describe('The Ascent — Beat 7, the Fall-Through, the Override', () => {
         expect(moved).toBe(3);
     });
 
-    it('the Override holds exactly one citation at a time and always leaves a window', () => {
+    it('THE GATE is a rotating ring with ONE aperture that always comes back around', () => {
         const game = newGame();
-        game.state.unlocked.purgeComplete = true;
+        game.state.unlocked.ascentArmed = true;
         game.state.unlocked.borders = true;
-        game.state.score = 40; // gear 3 available on paper
         game.worldManager.currentRoomX = 5;
         game.worldManager.currentRoomY = -3;
         game.apple = { x: 300, y: 300 };
         game.obstacles = []; game.glitches = [];
         game.npcs = [new NPC(200, 40, 20, 'gate3', [])];
-        game.snake.body = [{ x: 100, y: 200 }];
+        game.snake.body = [{ x: 200, y: 200 }];
 
-        for (let i = 0; i < 1; i++) game.updateGate3();
-        expect(game._ovr.mode).toBe('seal');
-        // sealed: the north weak point bonks instead of breaching
-        const wp = game.worldManager.getWeakPoint(5, -3, 'up');
-        game.gear = 3;
-        const r = game.crossBorder(wp.start, -20);
-        expect(r.stop).toBe(true);
-        expect(game.state.gameState).toBe('PLAYING'); // a citation, not a death
+        game.updateGate3();
+        const ring = game._gate3Ring();
+        // the ring wraps the interior perimeter, minus exactly one aperture run
+        expect(game._gate3Blocks.length).toBe(ring.length - game.GATE3_APERTURE);
+        // it ROTATES: the block set changes as the gap advances
+        const first = game._gate3Blocks.map(b => `${b.x},${b.y}`).join('|');
+        for (let i = 0; i < game.GATE3_TURN_TICKS + 1; i++) game.updateGate3();
+        expect(game._gate3Blocks.map(b => `${b.x},${b.y}`).join('|')).not.toBe(first);
+        // and the aperture is never sealed — every rotation keeps a gap (no soft-lock)
+        for (let i = 0; i < ring.length * game.GATE3_TURN_TICKS; i++) {
+            game.updateGate3();
+            expect(game._gate3Blocks.length).toBe(ring.length - game.GATE3_APERTURE);
+        }
+    });
 
-        for (let i = 0; i < 5; i++) game.updateGate3();
-        expect(game._ovr.mode).toBe('cap');
-        game.gear = 3;
-        game.changeGear(0);
-        expect(game.gear).toBeLessThanOrEqual(1); // the gearbox is administratively capped
-
-        for (let i = 0; i < 5; i++) game.updateGate3();
-        expect(game._ovr.mode).toBe('recal'); // the window: north open, gears free
+    it('touching THE GATE is a wall hit (Crumple still saves you)', () => {
+        const game = newGame();
+        game.state.unlocked.ascentArmed = true;
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = -3;
+        game.apple = { x: 300, y: 300 };
+        game.obstacles = []; game.glitches = [];
+        game.npcs = [new NPC(200, 40, 20, 'gate3', [])];
+        game.snake.body = [{ x: 200, y: 200 }];
+        game.updateGate3();
+        const block = game._gate3Blocks[0];
+        game.snake.body = [{ x: block.x, y: block.y }];
+        expect(game._gate3Collide()).toBe(true);
+        expect(game.state.gameState).toBe('DEAD');
     });
 });
 
@@ -1030,50 +1041,117 @@ describe('Port 0 — the rigidity funnel and the reboot', () => {
         return game;
     }
 
-    it('the finale room is armed with Gate, one corrupted cell, and Denny', () => {
+    it('the finale room is armed with Gate and Denny — and NO Glitch (the squeeze)', () => {
         const game = newGame();
         const room = game.worldManager.roomGenerator.generateRoom(5, -5, { finaleDone: false, biteProgress: 1 }, game.worldManager);
         expect(room.npcs.some(n => n.id === 'gatefinal')).toBe(true);
         expect(room.npcs.some(n => n.id === 'dennyfinal')).toBe(true);
-        expect(room.glitches.length).toBe(1);
+        // the finale no longer keys on corruption: Motion Carried makes Glitches DRIFT,
+        // so a held-still "puddle" was impossible by the time you got here.
+        expect(room.glitches.length).toBe(0);
         const after = game.worldManager.roomGenerator.generateRoom(5, -5, { finaleDone: true, biteProgress: 1 }, game.worldManager);
         expect(after.npcs.some(n => n.id === 'dennyafter')).toBe(true);
-        expect(after.glitches.length).toBe(0);
     });
 
-    it('down to ONE clean escape, Denny issues his only genuine deny', () => {
+    it('Gate extrudes advancing walls that always keep a hole, and Denny stamps behind you', () => {
         const game = finaleGame();
-        const gate = new NPC(200, 20, 20, 'gatefinal', []);
-        const denny = new NPC(120, 340, 20, 'dennyfinal', []);
+        const gate = new NPC(200, 40, 20, 'gatefinal', []);
+        const denny = new NPC(200, 340, 20, 'dennyfinal', []);
         game.npcs = [gate, denny];
-        game.glitches = [new Glitch(220, 20, 20)]; // east neighbour is corrupted
-        // body blocks north and west; south (200,40) stays clean and free
-        game.snake.body = [{ x: 200, y: 0 }, { x: 180, y: 20 }, { x: 100, y: 100 }];
-        game.updateGateFinal();
-        expect(denny.acted).toBe(true);
-        expect(game.stamps.some(s => s.denied && s.x === 200 && s.y === 40)).toBe(true);
-        expect(game.state.gameState).toBe('PLAYING'); // not yet — next tick the audit finds him cornered
+        game.glitches = []; game.obstacles = []; game.stamps = [];
+        game.snake.body = [{ x: 200, y: 200 }];
+
+        for (let i = 0; i < 40; i++) { game._tick++; game.updateGateFinal(); }
+        expect(game._finale.rows.length).toBeGreaterThan(0);          // walls exist
+        const cols = game._cols;
+        for (const w of game._finale.rows) {
+            const cells = game._finaleWallCells().filter(c => c.y === w.r * 20);
+            expect(cells.length).toBeLessThan(cols - 2);              // never a full seal
+        }
+        expect(game.stamps.length).toBeGreaterThan(0);                // Denny closed the floor
     });
 
-    it('cornered against the corrupted cell, the paradox fires: reboot, era 16, Layer 2', () => {
+    it('Denny SNAKES the floor — a boustrophedon sweep, and it is slow', () => {
         const game = finaleGame();
-        const gate = new NPC(200, 20, 20, 'gatefinal', []);
-        const denny = new NPC(120, 340, 20, 'dennyfinal', []);
+        const denny = new NPC(20, 340, 20, 'dennyfinal', []); // bottom-left, heading right
+        game.npcs = [new NPC(200, 40, 20, 'gatefinal', []), denny];
+        game.glitches = []; game.obstacles = []; game.stamps = [];
+        game.apple = { x: 300, y: 300 };
+        game.snake.body = [{ x: 200, y: 120 }];
+
+        const cols = game._cols;
+        // walk him to the end of his row and one step past: he must climb and REVERSE
+        const steps = (cols - 2) + 2;
+        for (let i = 0; i < steps * game.FINALE_DENNY_TICKS; i++) { game._tick++; game.updateGateFinal(); }
+        expect(denny.y).toBeLessThan(340);      // climbed a row
+        expect(denny.sweep).toBe(-1);           // ...and turned around
+        expect(game.stamps.length).toBeGreaterThan(cols - 4); // laid the row behind him
+
+        // SLOW by construction: a full sweep of the interior is thousands of ticks, so
+        // the squeeze can never be a hidden timer.
+        const fullSweep = (cols - 2) * (game._rows - 3) * game.FINALE_DENNY_TICKS;
+        expect(fullSweep).toBeGreaterThan(500);
+    });
+
+    it('Denny never stamps under the worm, the apple, or Gate', () => {
+        const game = finaleGame();
+        const denny = new NPC(100, 340, 20, 'dennyfinal', []);
+        game.npcs = [new NPC(200, 40, 20, 'gatefinal', []), denny];
+        game.glitches = []; game.obstacles = []; game.stamps = [];
+        game.apple = { x: 120, y: 340 };                 // dead ahead of him
+        game.snake.body = [{ x: 140, y: 340 }];          // and so is the worm
+        for (let i = 0; i < 6 * game.FINALE_DENNY_TICKS; i++) { game._tick++; game.updateGateFinal(); }
+        expect(game.stamps.some(s => s.x === 120 && s.y === 340)).toBe(false); // not the apple
+        expect(game.stamps.some(s => s.x === 140 && s.y === 340)).toBe(false); // not the worm
+    });
+
+    it('an advancing wall is a wall hit', () => {
+        const game = finaleGame();
+        game.npcs = [new NPC(200, 40, 20, 'gatefinal', []), new NPC(200, 340, 20, 'dennyfinal', [])];
+        game.glitches = []; game.obstacles = []; game.stamps = [];
+        game.snake.body = [{ x: 200, y: 200 }];
+        for (let i = 0; i < 40; i++) { game._tick++; game.updateGateFinal(); }
+        const cell = game._finaleWallCells()[0];
+        game.snake.body = [{ x: cell.x, y: cell.y }];
+        expect(game._finaleCollide()).toBe(true);
+        expect(game.state.gameState).toBe('DEAD');
+    });
+
+    it('REACHING Gate ends it: he backs onto a DENIED stamp — reboot, era 16, Layer 2', () => {
+        const game = finaleGame();
+        const gate = new NPC(200, 40, 20, 'gatefinal', []);
+        const denny = new NPC(200, 340, 20, 'dennyfinal', []);
         game.npcs = [gate, denny];
-        game.glitches = [new Glitch(220, 20, 20)];
-        game.snake.body = [{ x: 200, y: 0 }, { x: 180, y: 20 }, { x: 200, y: 40 }, { x: 100, y: 100 }];
-        game.updateGateFinal();
-        expect(game.state.gameState).toBe('DIALOG'); // the last citation
-        finishDialog(game); // forced -> reboot chain
+        game.glitches = []; game.obstacles = [];
+        game.stamps = [{ x: 200, y: 60, ttl: 9999, denied: true }]; // a stamp behind him
+        game.snake.body = [{ x: 200, y: 200 }];
+
+        game.npcGateFinal(gate); // you reached him — the win condition
+        expect(game.state.gameState).toBe('DIALOG');
+        finishDialog(game);
         const u = game.state.unlocked;
         expect(u.finaleDone).toBe(true);
         expect(u.era16).toBe(true);
         expect(u.musicLayer).toBe(2);
-        expect(game.audio.setMusicLayer).toHaveBeenCalledWith(2);
         expect(game.npcs.some(n => n.id === 'gatefinal')).toBe(false); // terminated
-        expect(game.audio.playDeath).toHaveBeenCalled(); // a true termination
-        expect(game.worldManager.isWallBroken(5, -5, 'down')).toBe(true); // the way home re-opens
+        expect(game.audio.playDeath).toHaveBeenCalled();
+        expect(game.worldManager.isWallBroken(5, -5, 'down')).toBe(true); // the way home
+        expect(game._finale).toBeNull();                                  // the walls stop
         expect(game.state.gameState).toBe('PLAYING');
+    });
+
+    it('reaching Gate does NOT charge you the scuffle price for winning', () => {
+        const game = finaleGame();
+        const gate = new NPC(200, 40, 20, 'gatefinal', []);
+        game.npcs = [gate, new NPC(200, 340, 20, 'dennyfinal', [])];
+        game.glitches = []; game.obstacles = []; game.stamps = [];
+        game.growSnake(10);
+        game.state.score = 20;
+        const len = game.snake.body.length;
+        game.npcGateFinal(gate);
+        expect(game.snake.body.length).toBe(len); // no 3-segment scuffle toll
+        expect(game.state.score).toBe(20);
+        finishDialog(game);
     });
 
     it('the PORT 0 aperture is a bonk, not a death', () => {

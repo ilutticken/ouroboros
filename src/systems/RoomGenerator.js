@@ -287,9 +287,11 @@ export class RoomGenerator {
             if (stateUnlocked && stateUnlocked.finaleDone) {
                 npcs.push(new NPC(cx - 3 * this.gridSize, (this.rows - 4) * this.gridSize, this.gridSize, 'dennyafter', []));
             } else {
+                // THE SQUEEZE: Gate holds the door at the north wall; Denny comes up from
+                // the south stamping. NO Glitch — the finale no longer keys on corruption
+                // (Motion Carried made a held-still Glitch impossible; see encounters.js).
                 npcs.push(new NPC(cx, 2 * this.gridSize, this.gridSize, 'gatefinal', []));
-                glitches.push(new Glitch(cx + 2 * this.gridSize, 2 * this.gridSize, this.gridSize));
-                npcs.push(new NPC(cx - 4 * this.gridSize, (this.rows - 3) * this.gridSize, this.gridSize, 'dennyfinal', []));
+                npcs.push(new NPC(cx, (this.rows - 3) * this.gridSize, this.gridSize, 'dennyfinal', []));
             }
         } else {
             // Random Templates
