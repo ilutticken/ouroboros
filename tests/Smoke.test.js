@@ -7,7 +7,6 @@
 // game state with a Proxy canvas context that accepts any call, so ReferenceErrors and
 // TypeErrors in draw code surface here.
 import { describe, it, expect, beforeEach } from 'vitest';
-import { GameEngine } from '../src/engine/Game.js';
 import { NPC } from '../src/entities/NPC.js';
 import { mountDom, makeGame, frames } from './helpers.js';
 

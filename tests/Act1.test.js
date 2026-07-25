@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/engine/Game.js';
 import { Glitch } from '../src/entities/Glitch.js';
 import { NPC } from '../src/entities/NPC.js';
-import { HEUR, GATE_FINALE } from '../src/content/dialogue.js';
+import { HEUR } from '../src/content/dialogue.js';
 import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 
 // Act1 stubs the standard audio set on a 400x400 canvas.

@@ -1,0 +1,43 @@
+# CI for Ouroboros.
+#
+# The game has no build step, so there is nothing to compile and nothing to deploy from
+# here — this workflow exists purely to answer one question on every push: does the thing
+# still work? That's the linter (the only static check a build-free ES-module project
+# gets) and the test suite (~400 tests, ~2s).
+#
+# Node 20 and 22 both run because the suite is the only consumer of Node here; the game
+# itself runs in a browser and never sees it.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: lint + test (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` installs exactly the lockfile — no surprise version drift between a
+      # green local run and a red CI run.
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test:run

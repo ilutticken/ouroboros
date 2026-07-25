@@ -5,7 +5,6 @@
 // These tests pin the *trigger logic* (when playWub / playGlide fire) rather
 // than the Web Audio synthesis, which needs a real AudioContext + user gesture.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { GameEngine } from '../src/engine/Game.js';
 import { AudioEngine } from '../src/engine/Audio.js';
 import { Glitch } from '../src/entities/Glitch.js';
 import { NPC } from '../src/entities/NPC.js';

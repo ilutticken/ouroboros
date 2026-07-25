@@ -10,11 +10,11 @@ import { Glitch } from '../entities/Glitch.js';
 import { ShopManager } from '../systems/ShopManager.js';
 import { WorldManager } from '../systems/WorldManager.js';
 import { SaveManager } from '../systems/SaveManager.js';
-import { TWO_BIT, GATE, DENNY, CACHE, ARCHITECT, CADENZA_ENCORE, CADENZA_SCENE, LOST_VERSE, CADENZA_TITLE,
-         NIBBLE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH, GATE_OVERRIDE,
-         CACHE_CHECKPOINT, ROM_DOOR_BONK, GATE_FINALE, PORT0_COMPILING, UI_MODULES,
-         QUANTCY, REFUGEE_ATTACH, REFUGEE_BUSY, INTAKE, LOCALHOST_CITIZENS,
-         HYDRATIA_CATCH, HYDRATIA_STALL, HYDRATIA_DEATH, INVENTORY_NAMES } from '../content/dialogue.js';
+// Only what the CORE still speaks. The cast's lines left with them when the bump
+// handlers moved to npcs.js and the set-pieces to encounters.js.
+import { TWO_BIT, GATE, ARCHITECT, LOST_VERSE, HEUR, HUSH_INTERCEPT, DENNY_REMATCH,
+         GATE_OVERRIDE, GATE_FINALE, ROM_DOOR_BONK, PORT0_COMPILING,
+         HYDRATIA_DEATH, INVENTORY_NAMES } from '../content/dialogue.js';
 import { classifyRoomBeyond } from '../systems/RoomGenerator.js';
 import { EncounterMethods } from './encounters.js';
 import { BootMethods } from './boot.js';
@@ -442,7 +442,7 @@ export class GameEngine {
         // 10-19 data: max gear 1
         // 20-29 data: max gear 2
         // 30+ data: max gear 3
-        let maxGear = Math.min(3, Math.floor(this.state.score / 10));
+        const maxGear = Math.min(3, Math.floor(this.state.score / 10));
         // (Gate's old VELOCITY CAP citation is gone with the Override rewrite — THE GATE
         // is a rotating perimeter loop now, so the fight constrains your ROUTE, not your
         // gearbox. You need full speed to thread it, so capping it would fight the design.)
@@ -596,7 +596,6 @@ export class GameEngine {
     detectScannerSweep() {
         if (!this.state.upgrades.scanner || !this.state.unlocked.borders) return;
         const g = this.gridSize;
-        const W = this.canvas.width, H = this.canvas.height;
         const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
         const body = this.snake.body;
 

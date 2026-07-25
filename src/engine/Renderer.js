@@ -269,7 +269,6 @@ export class Renderer {
         // lands, a moving Glitch additionally wears a static directional NOTCH — its next
         // step is printed on it (deaf/colour-blind-legible, steady under reduce-motion).
         if (glitches) {
-            const gg = this.gridSize;
             for (const g of glitches) {
                 const [bx, by, bw, bh] = this._cellRect(g.x, g.y, 2, bordersOn);
                 this.ctx.fillStyle = P.glitch;
@@ -321,7 +320,6 @@ export class Renderer {
         // Cache's spare-data motes (Hub only): small Data pips with a cold archival glow,
         // so they read as HERS and as smaller than the main apple.
         if (state.dataMotes && state.dataMotes.length) {
-            const g = this.gridSize;
             const pulse = rm ? 0.8 : 0.6 + 0.4 * Math.abs(Math.sin(Date.now() / 300));
             for (const m of state.dataMotes) {
                 // Salvage Claws' reclaimed mass reads as plain red Data; Cache's spare
@@ -725,7 +723,7 @@ export class Renderer {
 
     // The coil-approach deaf twin: the room dims from the coil side(s) and a ≥16px
     // signal readout counts the world down toward the held breath.
-    drawCoilNear(near, rm) {
+    drawCoilNear(near, _rm) {   // nothing here oscillates, so reduce-motion has nothing to damp
         const W = this.canvas.width, H = this.canvas.height;
         const p = Math.max(0, Math.min(1, near.proximity));
         if (p <= 0) return;
@@ -1412,7 +1410,7 @@ export class Renderer {
     // holds still and a [SPACE] prompt appears. Static per boot — no animation, so there
     // is nothing for reduce-motion to dampen; progress is coded by position + a TRACE
     // counter (never colour alone, §2.6). Silent by design (decision 3: no boot audio).
-    drawHydratia(h, rm) {
+    drawHydratia(h, _rm) {      // static per boot (see above) — nothing for reduce-motion to damp
         const W = this.canvas.width, H = this.canvas.height;
         const y = Math.floor(H * 0.66);
         const R = 13; // playtest: she was a 6px speck 20px off the right edge — unfindable

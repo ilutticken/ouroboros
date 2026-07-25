@@ -68,8 +68,8 @@ export class RoomGenerator {
 
     generateRoom(roomX, roomY, stateUnlocked, worldManager) {
         let obstacles = [];
-        let glitches = [];
-        let npcs = [];
+        const glitches = [];
+        const npcs = [];
         let apple = null;
         
         const cx = Math.floor(this.cols / 2) * this.gridSize;
@@ -149,11 +149,11 @@ export class RoomGenerator {
             const gateCol = Math.floor(this.cols / 2);
             const oCols = [10, this.cols - 10];
             const oRows = [8, this.rows - 8];
-            for (let c of oCols) {
-                for (let r of oRows) {
+            for (const c of oCols) {
+                for (const r of oRows) {
                     if (c === gateCol) continue;
-                    let ox = c * this.gridSize;
-                    let oy = r * this.gridSize;
+                    const ox = c * this.gridSize;
+                    const oy = r * this.gridSize;
                     if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });
                 }
             }
@@ -302,16 +302,16 @@ export class RoomGenerator {
                 for (let i = 10; i < this.cols - 10; i++) {
                     // Leave a 5-tile gap in the middle instead of 3
                     if (i < Math.floor(this.cols / 2) - 2 || i > Math.floor(this.cols / 2) + 2) {
-                        let ox = i * this.gridSize;
-                        let oy = cy;
+                        const ox = i * this.gridSize;
+                        const oy = cy;
                         if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });
                     }
                 }
                 for (let j = 5; j < this.rows - 5; j++) {
                     // Leave a 5-tile gap in the middle instead of 3
                     if (j < Math.floor(this.rows / 2) - 2 || j > Math.floor(this.rows / 2) + 2) {
-                        let ox = cx;
-                        let oy = j * this.gridSize;
+                        const ox = cx;
+                        const oy = j * this.gridSize;
                         if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });
                     }
                 }
@@ -319,17 +319,17 @@ export class RoomGenerator {
                 // The Pillars
                 for (let i = 8; i < this.cols - 8; i += 4) {
                     for (let j = 6; j < this.rows - 6; j += 4) {
-                        let ox = i * this.gridSize;
-                        let oy = j * this.gridSize;
+                        const ox = i * this.gridSize;
+                        const oy = j * this.gridSize;
                         if (!isSafeZone(ox, oy)) obstacles.push({ x: ox, y: oy });
                     }
                 }
             } else if (templateType === 2) {
                 // Glitch Minefield
-                let ox1 = cx - 4*this.gridSize;
-                let oy1 = cy - 4*this.gridSize; // Moved up to avoid center line
-                let ox2 = cx + 4*this.gridSize;
-                let oy2 = cy + 4*this.gridSize; // Moved down to avoid center line
+                const ox1 = cx - 4*this.gridSize;
+                const oy1 = cy - 4*this.gridSize; // Moved up to avoid center line
+                const ox2 = cx + 4*this.gridSize;
+                const oy2 = cy + 4*this.gridSize; // Moved down to avoid center line
                 
                 if (!isSafeZone(ox1, oy1)) obstacles.push({ x: ox1, y: oy1 });
                 if (!isSafeZone(ox2, oy2)) obstacles.push({ x: ox2, y: oy2 });
@@ -342,8 +342,8 @@ export class RoomGenerator {
                     const cHi = Math.max(1, this.cols - 2), rHi = Math.max(1, this.rows - 2);
                     for (let k = 0; k < 5; k++) {
                         // interior only — never in the outer wall ring
-                        let gx = (1 + Math.floor(Math.random() * cHi)) * this.gridSize;
-                        let gy = (1 + Math.floor(Math.random() * rHi)) * this.gridSize;
+                        const gx = (1 + Math.floor(Math.random() * cHi)) * this.gridSize;
+                        const gy = (1 + Math.floor(Math.random() * rHi)) * this.gridSize;
                         glitches.push(new Glitch(gx, gy, this.gridSize));
                     }
                 }

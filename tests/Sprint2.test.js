@@ -7,7 +7,6 @@
 // intake, the Data Mines, Quantcy's Trust, Hydratia (catch / autosave / warm restore),
 // and the death receipt.
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { GameEngine } from '../src/engine/Game.js';
 import { NPC } from '../src/entities/NPC.js';
 import { ARCHITECT, LORE_FRAGS, BOOTH_LORE, CACHE_CHECKPOINT, HYDRATIA_DEATH } from '../src/content/dialogue.js';
 import { classifyRoomBeyond } from '../src/systems/RoomGenerator.js';

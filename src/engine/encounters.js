@@ -7,8 +7,7 @@
 //   * Heur's Decontamination — in-room Breakout with your real body at {5,-1}
 //   * The Ascent: Denny's Fall-Through {5,-2}, Gate's Override {5,-3}, Port 0 {5,-5}
 
-import { NPC } from '../entities/NPC.js';
-import { ARCHITECT, CADENZA_ENCORE, HEUR, DENNY_REMATCH, GATE, GATE_OVERRIDE, GATE_FINALE } from '../content/dialogue.js';
+import { ARCHITECT, CADENZA_ENCORE, HEUR, DENNY_REMATCH, GATE_OVERRIDE, GATE_FINALE } from '../content/dialogue.js';
 
 export const EncounterMethods = {
 
@@ -329,10 +328,10 @@ export const EncounterMethods = {
         const dCell = this._heurClassify(c + dc, r + dr);
 
         // Reflect off any solid neighbour (wall / brick / body), applying its effect.
-        let ndc = dc, ndr = dr, reflected = false;
-        if (hCell) { ndc = -dc; this._heurApplyHit(hCell); reflected = true; }
-        if (vCell) { ndr = -dr; this._heurApplyHit(vCell); reflected = true; }
-        if (!hCell && !vCell && dCell) { ndc = -dc; ndr = -dr; this._heurApplyHit(dCell); reflected = true; }
+        let ndc = dc, ndr = dr;
+        if (hCell) { ndc = -dc; this._heurApplyHit(hCell); }
+        if (vCell) { ndr = -dr; this._heurApplyHit(vCell); }
+        if (!hCell && !vCell && dCell) { ndc = -dc; ndr = -dr; this._heurApplyHit(dCell); }
         // a win may have fired inside _heurApplyHit
         if (!this.heur) return true;
         h.ping.dc = ndc; h.ping.dr = ndr;
@@ -905,7 +904,7 @@ export const EncounterMethods = {
     },
 
     // Denny at Port 0: mid-fight he is officially a clipboard; after, he keeps the vigil.
-    npcDennyFinal(npc) {
+    npcDennyFinal(_npc) {
         this.state.gameState = 'DIALOG';
         const lines = this.state.unlocked.finaleDone ? GATE_FINALE.after : GATE_FINALE.dennyBusy;
         this.dialogManager.start(lines, () => { this.state.gameState = 'PLAYING'; });

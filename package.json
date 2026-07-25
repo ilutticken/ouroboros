@@ -6,13 +6,17 @@
   "scripts": {
     "start": "npx --yes serve -p 8080 .",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check": "npm run lint && npm run test:run"
   },
   "bugs": {
     "url": "https://github.com/ilutticken/ouroboros/issues"
   },
   "homepage": "https://github.com/ilutticken/ouroboros#readme",
   "devDependencies": {
+    "eslint": "^9.39.5",
     "happy-dom": "^20.10.6",
     "vitest": "^4.1.10"
   }

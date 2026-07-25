@@ -1,10 +1,9 @@
 /**
  * @vitest-environment happy-dom
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { GameEngine } from '../src/engine/Game.js';
 import { NPC } from '../src/entities/NPC.js';
-import { Glitch } from '../src/entities/Glitch.js';
 
 describe('GameEngine - NPC Encounters', () => {
     let game;

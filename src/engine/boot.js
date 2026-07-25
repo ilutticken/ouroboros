@@ -101,7 +101,7 @@ export const BootMethods = {
     updateTitleCameo(dt) {
         const c = this.titleCameo;
         if (!c) return;
-        const g = this.gridSize, W = this.canvas.width, H = this.canvas.height;
+        const g = this.gridSize, W = this.canvas.width;
 
         if (c.who === 'cadenza') {
             // She enters from the RIGHT (Cache came from the left), says her piece, then fades.

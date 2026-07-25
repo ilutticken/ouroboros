@@ -52,21 +52,23 @@ state is coded by shape + position, never colour alone; motion is telegraphed by
 
 ## 3. Codebase map
 
-**~9,000 lines of JS across 17 files.** No build step, no runtime dependencies, ES modules straight to
-the browser.
+**9,440 lines of JS across 20 files.** No build step, no runtime dependencies, ES modules straight to
+the browser. The only "server" is `npx serve`, and its only job is satisfying the browser's requirement
+that ES modules arrive over HTTP. The two devDependencies (vitest, happy-dom) plus eslint exist for the
+test suite and the linter; nothing the player loads depends on npm at all.
 
 ```
 index.html (40)  →  src/main.js (22)  →  GameEngine
       │
-      ├── engine/    Game.js 2321  ← core: state machine, move-tick, physics, HUD
-      │              ├─ encounters.js 707   mixin: the set-pieces
+      ├── engine/    Game.js 2344  ← core: state machine, move-tick, physics, HUD
+      │              ├─ encounters.js 912   mixin: the set-pieces
       │              ├─ npcs.js       717   mixin: the cast & the economy
       │              └─ boot.js       533   mixin: boot, menus, persistence
-      │              Renderer.js 1536 · Audio.js 707 · InputHandler.js 83
-      ├── systems/   WorldManager 436 · RoomGenerator 399 · ShopManager 226
-      │              SaveManager 215 · NarrativeManager 196 · DialogManager 51
+      │              Renderer.js 1576 · Audio.js 707 · InputHandler.js 83
+      ├── systems/   WorldManager 436 · RoomGenerator 401 · ShopManager 226
+      │              SaveManager 234 · NarrativeManager 196 · DialogManager 51
       ├── state/     StateManager.js 132
-      ├── content/   dialogue.js 708 · music.js 54
+      ├── content/   dialogue.js 722 · music.js 54
       └── entities/  Snake.js 74 · NPC.js 13 · Glitch.js 7
 ```
 
@@ -132,10 +134,28 @@ When `moveTimer` crosses `speed`, one **move-tick** runs. **The order is load-be
 **State machine (8 values):** `START · PLAYING · DIALOG · SHOP · PAUSED · TRANSITION · DEAD · ENCORE`.
 `isSuspended` is a separate flag (Gate's Thread Suspension) that renders the pause overlay during DIALOG.
 
-> ⚠️ **Ten `window` keydown listeners** fire in registration order, several calling
-> `stopImmediatePropagation()` to be modal (Options → encore → music audition → dev cheat → pause →
-> pivot → ARG recorder → save/load → boot menu → ShopManager → InputHandler last). **This ordering is
-> load-bearing and no test protects it.** It is the most fragile thing in the architecture.
+**Eleven `window` keydown listeners** fire in registration order, several calling
+`stopImmediatePropagation()` to be modal. **A window listener's priority IS its registration order**, so
+this list is the priority table — and it is load-bearing engine behaviour, not incidental:
+
+| # | Listener | Why it sits here |
+|---|---|---|
+| 1 | Options overlay | modal, and must outrank the shop so `O` works *inside* a shop |
+| 2 | Encore (ESC) | leaves Cadenza's performance; arrows fall through to steering |
+| 3 | Music audition (M) | dev preview |
+| 4 | **ShopManager** | while its overlay is up the shop **owns the keyboard** |
+| 5 | Dev cheat (P) | swallowed here so it can't also reach the ARG buffer · *deleted at release* |
+| 6 | Pause toggle (ESC) | below the shop, so closing a shop doesn't also pause |
+| 7 | Pivot Override (SHIFT) | below the shop for the same reason |
+| 8 | CACHE ARG recorder | **must** outrank InputHandler: it reads the key while the state is still `DEAD` |
+| 9 | Save / load / map pins | `PAUSED` only, so `S` still steers in play |
+| 10 | Boot file menu | outranks InputHandler so a menu key never *also* starts a run |
+| 11 | **InputHandler** | steering — **always last**, so anything modal pre-empts it |
+
+ShopManager registers inside its own constructor, which is why it lands at #4 rather than with the
+Game.js block. **[tests/Input.test.js](tests/Input.test.js) pins this manifest** and, more usefully,
+tests the *properties* the order exists to provide. If you add a listener, place it by its modality and
+update the manifest deliberately — do not append to make the test pass.
 
 ---
 
@@ -207,25 +227,33 @@ solid wall and kills you. **Sweep first, then breach.**
 2. **The east spine** — Denny (route around him; take his map), Gate (Thread Suspension → 2-Bit slips you
    the Pause Menu), Localhost.
 3. **Midpoint climb** (`ascentArmed`, set on reaching Localhost with the Pause Menu) — Denny's
-   Fall-Through, Gate's Override, and **Motion Carried**: the world starts moving.
+   Fall-Through, then **Gate's Override**: a ring of his own blocks rotates around the room's perimeter
+   with one gap barely wider than a door, and you must time a gear-3 breach through the moving aperture.
+   Beating him doesn't flip the world; **watching him leave does.** He runs, goes through the side wall,
+   the screen rattles, and **Motion Carried** fires on the impact.
 4. **The detour** — Cadenza's Encore (boots the first music), the Wilds, Nibble's black market, Heur's
    decontamination.
 5. **Finale climb** (`purgeComplete`) — Cache's checkpoint (a committed save is mandatory) → **Port 0**,
-   where Gate's own rulebook walks him onto corruption; the sector crashes, the palette snaps to 16-bit,
-   and the Kernel releases its tail.
+   a two-sided squeeze: Gate spawns holed walls that advance from the far side while Denny sweeps the
+   rear laying DENIED stamps. Reach Gate and he panics backwards into a stamp; Denny screams `BOSSSS-`
+   and holds him. The sector crashes, the palette snaps to 16-bit, and the Kernel releases its tail.
 
 **All five set-pieces are non-lethal by construction, and all are Snake-body puzzles:** Heur is Breakout
-with your body as the paddle · Denny turns *your own trail* into the maze · Gate is a positioning fight
-against administrative law · Port 0 is a body-funnel · Cadenza's Encore is head-as-attack, body-as-sustain
-— with an **emergent length gate** (there is no `length >= N` check anywhere in the game).
+with your body as the paddle · Denny turns *your own trail* into the maze · Gate's Override is a timing
+fight against a moving gap · Port 0 is a closing box you have to cross · Cadenza's Encore is
+head-as-attack, body-as-sustain — with an **emergent length gate** (there is no `length >= N` check
+anywhere in the game).
+
+**Both Gate fights are tuned by constants at the top of their block in `encounters.js`**
+(`GATE3_APERTURE`, `GATE3_TURN_TICKS`, `FINALE_WALL_TICKS`, `FINALE_SPAWN_TICKS`, `FINALE_DENNY_TICKS`)
+— they are placeholder values awaiting playtest.
 
 ---
 
 ## 8. Project health
 
-**Tests:** 329 across 7 files, ~1.3s. Deep on simulation logic; the gaps are the three I/O boundaries —
-rendering is only smoke-tested through a Proxy that swallows every canvas call, audio is fully stubbed,
-and `InputHandler` is never imported directly.
+**Tests:** 398 across 10 files, ~1.6s — 6,253 lines of test against 9,440 of source. **All three I/O
+boundaries are now covered**, each by the technique that boundary needs:
 
 | File | Covers |
 |---|---|
@@ -233,19 +261,37 @@ and `InputHandler` is never imported directly.
 | `Act1.test.js` | The wall ring, the coil, Motion Carried, HUSH, Nibble, Heur, the Ascent, Port 0 |
 | `Sprint2.test.js` | The release latch, the canon retcon, the ARG window, Scanner pockets, the economy, Hydratia |
 | `Smoke.test.js` | **Boot + draw**: drives `update()`+`draw()` through every state so a draw-path typo can't ship green |
+| `Input.test.js` | The **keydown listener manifest** + `InputHandler` directly (steering, gear taps, the consumed-Space contract) |
+| `Audio.test.js` | The **real `AudioEngine`** against a recording fake `AudioContext` — bus topology, the pre-gesture contract, a11y, the wub throttle |
+| `Render.test.js` | The **recording canvas** — save/restore balance, NaN geometry, the shake, the era palette, the §2.6 text floor |
 | `Game.test.js` · `Snake.test.js` · `StateManager.test.js` | Unit-level basics |
 
-**Known debt:**
-- ~~Game.js is a god object~~ — **split** into Game.js (core) + three prototype mixins. Game.js is 2,321 lines.
-- The **ten keydown listeners** have load-bearing ordering with no test.
-- Test helpers (`mountDom` / `newGame` / `step` / `finishDialog`) are **copy-pasted four times** and have
-  already diverged; two fixtures still inject a `btn-playtest` button that no longer exists.
-- No linter, no CI, mixed line endings (no `.gitattributes`).
-- `package.json` `"main"` points at a nonexistent `index.js`.
-- The **`P` dev cheat** (+10 Data) ships until release — one block to delete, marked in code.
+The three boundary suites exist because the swallow-everything Proxy that makes smoke testing possible
+also hides the two render bugs that actually ship: **a NaN coordinate** (draws nothing, throws nothing)
+and **an unbalanced `save`/`restore`** (leaks a clip or transform into every later frame). Both are the
+"green suite, black screen" failure the smoke test was written to catch and structurally cannot.
 
-**Clean:** zero TODO/FIXME markers, no dead dialogue exports, and comments routinely cite the playtest
-that motivated a fix.
+**Tooling.** `npm run lint` (ESLint flat config) is the *only* static check a build-free ES-module
+project gets — there is no compiler between a typo and the browser. The rule set is small and chosen for
+this codebase's real failure modes; style is not policed. `npm run check` = lint + tests, and that is
+exactly what CI runs ([.github/workflows/ci.yml](.github/workflows/ci.yml)) on Node 20 and 22.
+
+**Known debt:**
+- ~~Game.js is a god object~~ — **split** into Game.js (core) + three prototype mixins.
+- ~~The keydown listeners have load-bearing ordering with no test~~ — **pinned** in `Input.test.js`.
+- ~~Test helpers copy-pasted four times~~ — **consolidated** into `tests/helpers.js`.
+- ~~No linter, no CI, mixed line endings~~ — **all three added.**
+- ~~`package.json` `"main"` points at a nonexistent `index.js`~~ — **removed.**
+- The **`P` dev cheat** (+10 Data) ships until release — one block to delete, marked in code. *(Held
+  deliberately: it's how the owner fast-forwards a playtest run.)*
+- **§2.6 gap:** the PAUSED overlay's body text is 12px, under the stated 16px floor. The map's own
+  6–7px room labels are fine (a diagram, not prose), but the menu text isn't. `Render.test.js` pins the
+  floor on START and DEAD and deliberately excludes PAUSED rather than locking the gap in.
+- **Latent:** the dev cheat's handler allows `SHOP`, but ShopManager (#4) swallows the key before it
+  (#5) ever runs, so `P` doesn't actually work in a shop. Harmless, and moot at release.
+
+**Clean:** zero TODO/FIXME markers, lint-clean, no dead imports or dialogue exports, and comments
+routinely cite the playtest that motivated a fix.
 
 ---
 
@@ -253,8 +299,9 @@ that motivated a fix.
 
 ```bash
 npm start      # npx serve -p 8080 .   → http://localhost:8080
-npm test       # vitest (329 tests, ~1.3s)
-npx vitest run # single pass
+npm test       # vitest, watch mode
+npm run check  # lint + tests — what CI runs (398 tests, ~1.6s)
+npm run lint   # eslint . (add :fix to auto-fix)
 ```
 
 ES modules require a real server — opening `index.html` over `file://` will not work.

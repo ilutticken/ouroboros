@@ -226,7 +226,7 @@ export const NpcMethods = {
     },
 
     // Pick up Denny's map: it rides your tail as a Module (unlocks the Module Slot).
-    npcMapItem(npc) {
+    npcMapItem(_npc) {
         this.npcs = this.npcs.filter(n => n.id !== 'mapitem');
         this.carriedModule = 'map';
         this.state.unlocked.moduleSlot = true;
@@ -264,7 +264,7 @@ export const NpcMethods = {
 
     // --- Nibble's black market ({11,-4}) --------------------------------------------
     // A real stall like 2-Bit's — her lineup lives in ShopManager.vendors.nibble.
-    npcNibble(npc) {
+    npcNibble(_npc) {
         this.openNibbleShop();
     },
 
@@ -569,7 +569,7 @@ export const NpcMethods = {
     // before ever doing the Hub CACHE puzzle. Meeting her here retires the Hub apparition
     // (cacheStage 3) and, if you never got the Save Function, she installs it now (given a
     // Pause Menu to file it into). Coherent regardless of the puzzle. New lines are DRAFTS.
-    talkToCacheHome(npc) {
+    talkToCacheHome(_npc) {
         const u = this.state.unlocked;
         let lines;
 
