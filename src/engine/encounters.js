@@ -8,7 +8,7 @@
 //   * The Ascent: Denny's Fall-Through {5,-2}, Gate's Override {5,-3}, Port 0 {5,-5}
 
 import { NPC } from '../entities/NPC.js';
-import { ARCHITECT, CADENZA_ENCORE, HEUR, DENNY_REMATCH, GATE_OVERRIDE, GATE_FINALE } from '../content/dialogue.js';
+import { ARCHITECT, CADENZA_ENCORE, HEUR, DENNY_REMATCH, GATE, GATE_OVERRIDE, GATE_FINALE } from '../content/dialogue.js';
 
 export const EncounterMethods = {
 
@@ -586,9 +586,14 @@ export const EncounterMethods = {
 
     updateGate3() {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -3) return;
-        if (this.state.unlocked.gateRematchDone) { this._ovr = null; return; }
+        if (this.state.unlocked.gateRematchDone && !this._gate3Fleeing()) {
+            this._ovr = null; this._gate3Blocks = null; return;
+        }
         const gate = this.npcs.find(n => n.id === 'gate3');
-        if (!gate) { this._ovr = null; return; }
+        if (!gate) { this._ovr = null; this._gate3Blocks = null; return; }
+        // HIS EXIT: beaten, he bolts across the room and smashes his way out the side —
+        // the same flee grammar you saw at {3,0}, so it reads instantly as "Gate runs".
+        if (gate.leaving) { this._gate3Flee(gate); return; }
         const ring = this._gate3Ring();
         if (!this._ovr) this._ovr = { gap: 0, t: 0, len: ring.length };
         const o = this._ovr;
@@ -606,6 +611,64 @@ export const EncounterMethods = {
         // Gate himself rides the leading edge of his own aperture — he IS the gatepost.
         const post = ring[(o.gap + this.GATE3_APERTURE) % ring.length];
         gate.x = post.x; gate.y = post.y;
+    },
+
+    _gate3Fleeing() {
+        const g = this.npcs && this.npcs.find(n => n.id === 'gate3');
+        return !!(g && g.leaving);
+    },
+
+    // THE GATE FALLS. Breaching his north wall at gear 3 ends the Override **in the room**
+    // rather than in the next sector: the ring collapses, he delivers his lines, and then
+    // he physically RUNS — across the room and out through a side wall he smashes himself.
+    // (Winning used to be detected in shiftScreen, which meant his defeat played out in a
+    // room you had already left. That path survives as a fallback; this is the staged one.)
+    gate3Defeat() {
+        const u = this.state.unlocked;
+        if (u.gateRematchDone) return;
+        u.gateRematchDone = true;
+        this._ovr = null;
+        this._gate3Blocks = null; // his ring dies with his authority
+        const gate = this.npcs.find(n => n.id === 'gate3');
+        if (gate) {
+            const g = this.gridSize;
+            // He runs AWAY from you — the long way across the room, which is the dramatic
+            // way — and aims at a real weak point so the hole he leaves is followable.
+            const midX = this.canvas.width / 2;
+            const dir = this.snake.head.x < midX ? 'right' : 'left';
+            const wp = this.worldManager.getWeakPoint(5, -3, dir);
+            gate.leaving = true;
+            gate.exitDir = dir;
+            gate.exitX = dir === 'right' ? Math.floor((this.canvas.width - 1) / g) * g : 0;
+            gate.exitY = wp ? wp.start + 2 * g : Math.floor(this.canvas.height / 2 / g) * g;
+            gate.stun = 0;
+        }
+        // MOTION CARRIED rides the Override clear (it used to fire from shiftScreen's
+        // detection, which no longer runs for this path), followed by the canRead payoff.
+        if (!u.motionCarried) {
+            u.motionCarried = true;
+            this.narrative.printMessage(ARCHITECT.motionCarried);
+            this.narrative.printMessage(ARCHITECT.canRead);
+        }
+        this.state.gameState = 'DIALOG';
+        this.dialogManager.start(GATE_OVERRIDE.cleared, () => { this.state.gameState = 'PLAYING'; });
+    },
+
+    // One step of his run: clamp toward the exit cell, then smash through and be gone.
+    _gate3Flee(gate) {
+        const g = this.gridSize;
+        if (gate.x < gate.exitX) gate.x = Math.min(gate.x + g, gate.exitX);
+        else if (gate.x > gate.exitX) gate.x = Math.max(gate.x - g, gate.exitX);
+        if (gate.y < gate.exitY) gate.y = Math.min(gate.y + g, gate.exitY);
+        else if (gate.y > gate.exitY) gate.y = Math.max(gate.y - g, gate.exitY);
+        gate.notch = { dx: Math.sign(gate.exitX - gate.x), dy: Math.sign(gate.exitY - gate.y) };
+        if (gate.x === gate.exitX && gate.y === gate.exitY) {
+            this.worldManager.breakWall(5, -3, gate.exitDir);
+            this.audio.playCrash();
+            this.narrative.printMessage(GATE.breachIntercept);
+            this.npcs = this.npcs.filter(n => n.id !== 'gate3');
+            this.worldManager.saveRoom(this.apple, this.glitches, this.npcs, this.obstacles);
+        }
     },
 
     // Head into a Gate block = a wall hit (owner: "the same penalty as touching a wall"),

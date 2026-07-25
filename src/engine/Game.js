@@ -1236,6 +1236,15 @@ export class GameEngine {
                     this.state.unlocked.wallBroken = true;
                     this.narrative.onWallBreak();
                 }
+                // THE GATE FALLS — breaking his north wall ends the Override HERE, so his
+                // defeat and his run happen in front of you. We deliberately do NOT shift:
+                // the door now stands open and you walk out under your own power, after
+                // watching him go.
+                if (rx === 5 && ry === -3 && directionStr === 'up'
+                    && this.state.unlocked.ascentArmed && !this.state.unlocked.gateRematchDone) {
+                    this.gate3Defeat();
+                    return { stop: true };
+                }
                 this.shiftScreen(dx, dy);
                 return { stop: false, shifted: true, dx, dy };
             }

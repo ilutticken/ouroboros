@@ -633,9 +633,6 @@ export const BOOTH_LORE = [
 export const GATE = {
     // Context lines prepended to his room intro, depending on how you passed Denny. He is
     // still "???" here — he hasn't given his name yet (see GATE_INTRO).
-    // OWNER TODO: the gotMap variant (you're CARRYING Denny's map when you meet Gate) still
-    // needs its line — the two below both assume you don't have it. Placeholder keeps the
-    // branch alive.
     contextGotMap: "???: Denny flagged you DENIED, you proceeded anyway, AND he handed you his MAP?! That is a write-up for BOTH of us.",
     contextDennyMet: "???: Denny flagged you DENIED and you proceeded anyway. At least you didn't get his MAP, thank the Kernel.",
     contextDennySlipped: "???: You slipped past the Last Line?! Denny had ONE job. ...Well. At least you didn't get his MAP. Small mercies.",

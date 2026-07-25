@@ -892,6 +892,35 @@ describe('The Ascent — Beat 7, the Fall-Through, the Override', () => {
         }
     });
 
+    it('beating THE GATE stages his defeat IN the room — he runs and smashes his way out', () => {
+        const game = newGame();
+        const u = game.state.unlocked;
+        u.ascentArmed = true; u.borders = true;
+        game.state.score = 40;
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -3;
+        game.apple = { x: 300, y: 300 }; game.obstacles = []; game.glitches = [];
+        const gate = new NPC(200, 40, 20, 'gate3', []);
+        game.npcs = [gate];
+        game.snake.body = [{ x: 40, y: 200 }]; // west side, so he flees EAST
+        game.gear = 3;
+
+        const wp = game.worldManager.getWeakPoint(5, -3, 'up');
+        const r = game.crossBorder(wp.start, -20); // breach north at full speed
+        expect(r.stop).toBe(true);                 // you do NOT leave — you watch
+        expect(u.gateRematchDone).toBe(true);
+        expect(u.motionCarried).toBe(true);        // Motion Carried rides the clear
+        expect(game.worldManager.isWallBroken(5, -3, 'up')).toBe(true); // door stands open
+        expect(gate.leaving).toBe(true);
+        expect(gate.exitDir).toBe('right');        // away from you, the long way
+        expect(game._gate3Blocks).toBeNull();      // the ring dies with his authority
+        finishDialog(game);
+
+        // he runs, then smashes out and is gone
+        for (let i = 0; i < 60 && game.npcs.some(n => n.id === 'gate3'); i++) game.updateGate3();
+        expect(game.npcs.some(n => n.id === 'gate3')).toBe(false);
+        expect(game.worldManager.isWallBroken(5, -3, 'right')).toBe(true);
+    });
+
     it('touching THE GATE is a wall hit (Crumple still saves you)', () => {
         const game = newGame();
         game.state.unlocked.ascentArmed = true;
