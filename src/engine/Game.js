@@ -279,6 +279,7 @@ export class GameEngine {
         this.mapPins = {};         // Map-Pins annotations: 'x,y' room key -> pin shape index (persisted)
         this._ovr = null;          // THE GATE's rotating ring state in {5,-3} ({gap, t, len})
         this._gate3Blocks = null;  // the ring's live block cells (collision + render)
+        this._shakeMs = 0;         // screen-shake remaining (impacts; reduce-motion-exempt)
         this._finale = null;       // Port 0's advancing walls ({rows:[{r,holes}], t})
         this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
@@ -680,20 +681,17 @@ export class GameEngine {
                 this.state.unlocked.dennyRematchDone = true;
                 clearedDialog = DENNY_REMATCH.cleared;
             } else if (fromX === 5 && fromY === -3 && !this.state.unlocked.gateRematchDone) {
+                // FALLBACK ONLY. The staged path is crossBorder -> gate3Defeat (you beat
+                // him in the room and watch him go). This catches leaving {5,-3} north by
+                // any other route — e.g. the door was already broken by a prior attempt.
                 this.state.unlocked.gateRematchDone = true;
                 clearedDialog = GATE_OVERRIDE.cleared;
-                // MOTION CARRIED — the SECOND Gate run-in is the moment the Architect's
-                // white-knuckle grip on the world's clock slips. One-way; from here the
-                // Wilds move on your tick. The committee memo doubles as the telegraph
-                // (one merged log — one Space). And the Override clear is the LAST moment
-                // Gate still forwards him reports, so the 'can it READ?' fuse from the
-                // Hub breach pays off here, before the severance.
-                if (!this.state.unlocked.motionCarried) {
-                    this.state.unlocked.motionCarried = true;
-                    this.narrative.printMessage(ARCHITECT.motionCarried);
-                    this.narrative.printMessage(ARCHITECT.canRead);
-                }
+                this.fireMotionCarried();
             }
+        }
+        // ...and if you walk out on him mid-run, the sector still shook loose behind you.
+        if (fromX === 5 && fromY === -3 && this.state.unlocked.gateRematchDone) {
+            this.fireMotionCarried();
         }
 
         // Leaving a room resets its transient battle state: Denny's stamps, Gate's
@@ -2285,6 +2283,7 @@ export class GameEngine {
         this.state.stamps = this.stamps;           // Denny's DENIED stamps
         this.state.coilNear = this._coilNear;      // the coil approach (deaf-legible dim + readout)
         this.state.citation = this._citationLabel(); // THE GATE's ribbon readout ({5,-3})
+        this.state.shake = this.settings.reduceMotion ? 0 : this._shakeMs; // impact rattle
         // Gate's two space-rewriting hazards, for the Renderer: the Override's rotating
         // ring and Port 0's advancing walls. Both draw in his firewall blue.
         this.state.gateBlocks = this._gate3Blocks;
@@ -2309,6 +2308,7 @@ export class GameEngine {
 
         if (this._saveFlash > 0) this._saveFlash = Math.max(0, this._saveFlash - dt); // fade the toast
         if (this._argListenMs > 0) this._argListenMs = Math.max(0, this._argListenMs - dt); // close the bounce listen window
+        if (this._shakeMs > 0) this._shakeMs = Math.max(0, this._shakeMs - dt);             // settle the screen shake
 
         this.update(dt);
         this.draw();

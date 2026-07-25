@@ -362,6 +362,10 @@ export const GATE_OVERRIDE = {
         loop: 'GATE — PERIMETER LOOP ENGAGED',
         aligned: 'GATE — APERTURE ALIGNED'
     },
+    // He hits the side wall hard enough to shake the sector loose — THIS impact is what
+    // fires Motion Carried, so the world starts moving because you watched it happen.
+    // (DRAFT — owner to punch up.)
+    smash: "SYSTEM: Firewall unit 'Gate' forced the sector boundary on his way out. Impact registered sector-wide — something has come loose.",
     cleared: [
         "Gate: $%&@?! ARE YOU SERIOUS???",
         "Gate: The Architect asks why you are still executing. I have stopped forwarding him my reports. *This one is between us*.",

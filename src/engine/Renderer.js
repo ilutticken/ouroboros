@@ -38,6 +38,19 @@ export class Renderer {
         // Clear screen (The Void)
         this.ctx.fillStyle = P.bg;
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // IMPACT SHAKE. An in-world blow (Gate going through a wall) rattles the whole
+        // frame, decaying to nothing. Game.draw already zeroes state.shake under
+        // reduce-motion, and every shake is paired with a sound + a SYSTEM line, so the
+        // information survives without it (§2.6). Applied AFTER the clear so the void
+        // stays flush to the edges and no seam shows.
+        const shake = state.shake || 0;
+        this._shaking = shake > 0;
+        if (this._shaking) {
+            const amp = Math.min(6, shake / 90);
+            this.ctx.save();
+            this.ctx.translate((Math.random() - 0.5) * 2 * amp, (Math.random() - 0.5) * 2 * amp);
+        }
         
         // Neon Glow effect
         this.ctx.shadowBlur = this._frameGlow(state);
@@ -638,6 +651,8 @@ export class Renderer {
 
         // Accessibility / Options overlay — drawn last, on top of everything.
         if (state.options) this.drawOptions(state);
+
+        if (this._shaking) { this.ctx.restore(); this._shaking = false; } // settle the frame
     }
 
     // One coil wall: the Kernel's body as segmented deep-red blocks that creep slowly

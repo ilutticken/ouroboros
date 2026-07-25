@@ -643,15 +643,28 @@ export const EncounterMethods = {
             gate.exitY = wp ? wp.start + 2 * g : Math.floor(this.canvas.height / 2 / g) * g;
             gate.stun = 0;
         }
-        // MOTION CARRIED rides the Override clear (it used to fire from shiftScreen's
-        // detection, which no longer runs for this path), followed by the canRead payoff.
-        if (!u.motionCarried) {
-            u.motionCarried = true;
-            this.narrative.printMessage(ARCHITECT.motionCarried);
-            this.narrative.printMessage(ARCHITECT.canRead);
-        }
+        // NOTE: Motion Carried does NOT fire here. It fires on the IMPACT, when he smashes
+        // out through the side wall (_gate3Flee) — so the world starts moving because you
+        // watched something shake it loose, not because a flag flipped.
         this.state.gameState = 'DIALOG';
         this.dialogManager.start(GATE_OVERRIDE.cleared, () => { this.state.gameState = 'PLAYING'; });
+    },
+
+    // A physical impact rattles the sector. Purely additive feedback: every shake is
+    // paired with a sound AND a SYSTEM line, so reduce-motion can suppress it with
+    // nothing lost — §2.6 (see Game.draw, which zeroes it under the setting).
+    shakeScreen(ms = 500) { this._shakeMs = Math.max(this._shakeMs, ms); },
+
+    // MOTION CARRIED — the one-way world-wakes flip. Routed through one place so it can
+    // never be skipped: the intended trigger is Gate's exit impact, but leaving {5,-3}
+    // early (or the Port 0 paradox) will fire it too.
+    fireMotionCarried() {
+        const u = this.state.unlocked;
+        if (u.motionCarried) return false;
+        u.motionCarried = true;
+        this.narrative.printMessage(ARCHITECT.motionCarried);
+        this.narrative.printMessage(ARCHITECT.canRead);
+        return true;
     },
 
     // One step of his run: clamp toward the exit cell, then smash through and be gone.
@@ -663,9 +676,13 @@ export const EncounterMethods = {
         else if (gate.y > gate.exitY) gate.y = Math.max(gate.y - g, gate.exitY);
         gate.notch = { dx: Math.sign(gate.exitX - gate.x), dy: Math.sign(gate.exitY - gate.y) };
         if (gate.x === gate.exitX && gate.y === gate.exitY) {
+            // THE IMPACT. He goes through the wall, the sector rings like a struck bell,
+            // and THAT is what shakes the world loose: Motion Carried fires here.
             this.worldManager.breakWall(5, -3, gate.exitDir);
             this.audio.playCrash();
-            this.narrative.printMessage(GATE.breachIntercept);
+            this.shakeScreen(600);
+            this.narrative.printMessage(GATE_OVERRIDE.smash);
+            this.fireMotionCarried();
             this.npcs = this.npcs.filter(n => n.id !== 'gate3');
             this.worldManager.saveRoom(this.apple, this.glitches, this.npcs, this.obstacles);
         }

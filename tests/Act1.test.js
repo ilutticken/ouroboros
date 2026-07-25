@@ -908,17 +908,44 @@ describe('The Ascent — Beat 7, the Fall-Through, the Override', () => {
         const r = game.crossBorder(wp.start, -20); // breach north at full speed
         expect(r.stop).toBe(true);                 // you do NOT leave — you watch
         expect(u.gateRematchDone).toBe(true);
-        expect(u.motionCarried).toBe(true);        // Motion Carried rides the clear
         expect(game.worldManager.isWallBroken(5, -3, 'up')).toBe(true); // door stands open
         expect(gate.leaving).toBe(true);
         expect(gate.exitDir).toBe('right');        // away from you, the long way
         expect(game._gate3Blocks).toBeNull();      // the ring dies with his authority
         finishDialog(game);
 
+        // THE WORLD IS STILL STILL. Motion Carried is caused by the IMPACT, not by the
+        // breach — nothing has shaken anything loose yet.
+        expect(u.motionCarried).toBe(false);
+
         // he runs, then smashes out and is gone
         for (let i = 0; i < 60 && game.npcs.some(n => n.id === 'gate3'); i++) game.updateGate3();
         expect(game.npcs.some(n => n.id === 'gate3')).toBe(false);
         expect(game.worldManager.isWallBroken(5, -3, 'right')).toBe(true);
+        // ...and THAT is what wakes the world, with a rattle you can see.
+        expect(u.motionCarried).toBe(true);
+        expect(game._shakeMs).toBeGreaterThan(0);
+    });
+
+    it('the shake is suppressed under reduce-motion (the SYSTEM line carries it instead)', () => {
+        const game = makeGame({ ctx: true }); // draw() needs a canvas context
+        game.shakeScreen(600);
+        game.settings.reduceMotion = true;
+        game.draw();
+        expect(game.state.shake).toBe(0);
+        game.settings.reduceMotion = false;
+        game.draw();
+        expect(game.state.shake).toBeGreaterThan(0);
+    });
+
+    it('walking out on Gate mid-run still shakes the sector loose (no skippable flip)', () => {
+        const game = newGame();
+        const u = game.state.unlocked;
+        u.ascentArmed = true; u.gateRematchDone = true; u.motionCarried = false;
+        game.apple = { x: 300, y: 300 }; game.obstacles = []; game.glitches = []; game.npcs = [];
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -3;
+        game.shiftScreen(0, -1);
+        expect(u.motionCarried).toBe(true);
     });
 
     it('touching THE GATE is a wall hit (Crumple still saves you)', () => {
