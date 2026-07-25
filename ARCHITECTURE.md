@@ -58,7 +58,11 @@ the browser.
 ```
 index.html (40)  →  src/main.js (22)  →  GameEngine
       │
-      ├── engine/    Game.js 4123 · Renderer.js 1519 · Audio.js 707 · InputHandler.js 83
+      ├── engine/    Game.js 2321  ← core: state machine, move-tick, physics, HUD
+      │              ├─ encounters.js 707   mixin: the set-pieces
+      │              ├─ npcs.js       717   mixin: the cast & the economy
+      │              └─ boot.js       533   mixin: boot, menus, persistence
+      │              Renderer.js 1536 · Audio.js 707 · InputHandler.js 83
       ├── systems/   WorldManager 436 · RoomGenerator 399 · ShopManager 226
       │              SaveManager 215 · NarrativeManager 196 · DialogManager 51
       ├── state/     StateManager.js 132
@@ -66,11 +70,27 @@ index.html (40)  →  src/main.js (22)  →  GameEngine
       └── entities/  Snake.js 74 · NPC.js 13 · Glitch.js 7
 ```
 
-The shape is **one god object plus thin services**:
+**The engine is one class assembled from four files.** `GameEngine` was a 4,137-line god object; three
+cohesive layers were lifted into **mixin modules** and grafted back onto the prototype at the bottom of
+Game.js:
 
-- **[Game.js](src/engine/Game.js)** — 4,123 lines, 136 methods, ~46% of all source. Boot wiring, the
-  state machine, the move-tick, every NPC handler, all four boss encounters, save/load, the boot menu,
-  the HUD refreshers. *This is the file to split if anything gets split.*
+```js
+Object.defineProperties(GameEngine.prototype, Object.getOwnPropertyDescriptors(EncounterMethods));
+```
+
+`defineProperties` + `getOwnPropertyDescriptors` (not `Object.assign`) is deliberate — it preserves
+**getters as getters**. `this` is still the engine inside every method, so no call site changes and the
+prototype exposes the same 153 members it always did. **To add a method, put it in the module for its
+layer** (object-literal syntax — comma-separated).
+
+- **[Game.js](src/engine/Game.js)** — the core: constructor wiring, the state machine, the frame loop,
+  the move-tick, collision/boundary physics, Data=segments, death/bounce, the HUD refreshers, `draw()`.
+- **[encounters.js](src/engine/encounters.js)** — Cadenza's Encore, HUSH, Heur's Bay, Denny's
+  Fall-Through, Gate's Override, the Port 0 finale.
+- **[npcs.js](src/engine/npcs.js)** — every bump handler, both shops, Cache's questline, the refugee
+  economy, Quantcy, Hydratia's stall.
+- **[boot.js](src/engine/boot.js)** — `start()`, the title cameos, the file-select menu, the Options
+  overlay, serialize/applySave/save/load.
 - **[Renderer.js](src/engine/Renderer.js)** — a stateless immediate-mode painter. Never mutates game
   state. Two era palettes (8-bit → 16-bit at the finale), with a reduce-motion flag threaded through
   every oscillating value.
@@ -216,7 +236,7 @@ and `InputHandler` is never imported directly.
 | `Game.test.js` · `Snake.test.js` · `StateManager.test.js` | Unit-level basics |
 
 **Known debt:**
-- **Game.js is a god object** (4,123 lines / 136 methods).
+- ~~Game.js is a god object~~ — **split** into Game.js (core) + three prototype mixins. Game.js is 2,321 lines.
 - The **ten keydown listeners** have load-bearing ordering with no test.
 - Test helpers (`mountDom` / `newGame` / `step` / `finishDialog`) are **copy-pasted four times** and have
   already diverged; two fixtures still inject a `btn-playtest` button that no longer exists.
