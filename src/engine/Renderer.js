@@ -787,12 +787,28 @@ export class Renderer {
         for (const b of h.bricks) {
             const [bx, by, bw, bh] = this._cellRect(b.c * g, b.r * g, 1, bordersOn);
             if (b.heur) {
-                this.ctx.fillStyle = '#e8f4ff';
+                // HEUR HIMSELF — brick-SHAPED, so he reads as part of his own database,
+                // but a warm amber against the database's cold blue and marked with SEAL
+                // PIPS instead of perforation. Shape + colour + a pip count that
+                // extinguishes per hit, so the objective survives a colour-blind read
+                // (§2.6) and the countdown is visible on the thing itself, not just the
+                // ribbon.
+                this.ctx.fillStyle = '#ffc46b';
                 this.ctx.fillRect(bx, by, bw, bh);
-                this.ctx.fillStyle = '#26404d';
+                this.ctx.fillStyle = '#3a2400';
                 this.ctx.font = 'bold ' + Math.max(7, Math.floor(g * 0.32)) + 'px "Press Start 2P", monospace';
                 this.ctx.textAlign = 'center';
-                this.ctx.fillText('H', b.c * g + g / 2, b.r * g + g * 0.66);
+                this.ctx.fillText('H', b.c * g + g / 2, b.r * g + g * 0.55);
+                const seals = Math.max(0, b.hp || 0);
+                const pipW = Math.max(2, Math.floor(g * 0.16));
+                const gap = Math.max(1, Math.floor(g * 0.06));
+                const span = seals * pipW + Math.max(0, seals - 1) * gap;
+                let px = b.c * g + (g - span) / 2;
+                const py = b.r * g + g - Math.max(3, Math.floor(g * 0.22));
+                for (let s = 0; s < seals; s++) {
+                    this.ctx.fillRect(px, py, pipW, Math.max(2, Math.floor(g * 0.12)));
+                    px += pipW + gap;
+                }
             } else {
                 this.ctx.fillStyle = '#7fd4ff';
                 this.ctx.fillRect(bx, by, bw, bh);

@@ -280,6 +280,8 @@ export class GameEngine {
         this._ovr = null;          // THE GATE's rotating ring state in {5,-3} ({gap, t, len})
         this._gate3Blocks = null;  // the ring's live block cells (collision + render)
         this._shakeMs = 0;         // screen-shake remaining (impacts; reduce-motion-exempt)
+        this._worldTimer = 0;      // ms accumulated toward the next ambient world step
+        this._worldStep = 0;       // ambient world steps taken (drives drift cadence + shove cooldowns)
         this._finale = null;       // Port 0's advancing walls ({rows:[{r,holes}], t})
         this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
@@ -882,17 +884,27 @@ export class GameEngine {
     // to the Ascent. Only while flagged (you carry the Glitch Shunt) and not yet
     // decontaminated. Returns true if it took over the transition.
     get heurBay() { return { x: 5, y: -1 }; }
-    _heurInterceptHere(dx, dy) {
+    // (dx/dy are the crossing vector — kept in the signature because every other
+    // crossBorder hook takes it, and the rematch will need it to orient horizontally.)
+    _heurInterceptHere(_dx, _dy) {
         const u = this.state.unlocked;
         if (!this.state.upgrades.corruptHandler || u.purgeComplete) return false;
         const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
         if (rx !== this.heurBay.x || ry !== this.heurBay.y) return false;
-        // The far wall (bricks + the door that opens on a win) is the way you were
-        // heading; the entry you came through is the retreat. Default to heading NORTH
-        // (up the spine) if you somehow entered without a heading.
-        const far = dx > 0 ? 'right' : dx < 0 ? 'left' : dy > 0 ? 'down' : 'up';
+        // THE FIRST BAY IS ALWAYS VERTICAL (owner: first encounter vertical, the Act II
+        // rematch horizontal). Pinned rather than inferred from your heading, because the
+        // orientation decides the whole shape of the fight — a vertical band spans the
+        // room's WIDTH (a wide, shallow database) where a horizontal one spans its HEIGHT
+        // (narrower, but a longer tunnel to him). Inferring it meant approaching from the
+        // north built the fight backwards, with the far door pointing back at Localhost.
+        // startHeurFight stays general so the rematch can be handed 'left'/'right'.
+        const far = 'up';
         this.state.gameState = 'DIALOG';
-        this.dialogManager.start(HEUR.intercept, () => { this.startHeurFight(far); this.state.gameState = 'PLAYING'; });
+        // He only performs the full protocol once. Retreat and come back and the whole
+        // scene compresses to one word.
+        const lines = u.heurMet ? HEUR.reentry : HEUR.intercept;
+        u.heurMet = true;
+        this.dialogManager.start(lines, () => { this.startHeurFight(far); this.state.gameState = 'PLAYING'; });
         return true;
     }
 
@@ -1467,6 +1479,8 @@ export class GameEngine {
         this.updateCadenzaBeacon(dt);
         this.worldManager.tickReveals(dt); // fade out expiring Scanner reveals
         this.updateDenny2Chase(dt);        // the Fall-Through runs on his own clock
+        this.updateWorldMotion(dt);        // ...and so does the world (WORLD_STEP ms/cell)
+        if (this.heur) this._heurTick(dt); // ...and so does Heur's scan-ping (HEUR_PING_MS)
 
         this.moveTimer += dt;
 
@@ -1475,13 +1489,8 @@ export class GameEngine {
             this._tick++;
             // The move-tick body is a helper so its many early exits (die, room-cross,
             // obstacle, apple, glitch, NPC bump, wall-bonk) return from the HELPER, not
-            // update() — that lets Heur's ping advance every tick unconditionally below,
-            // even on a tick where you bonked a sealed wall or ate the room's apple.
-            const ended = this._moveTick();
-            // Heur's ping advances every move-tick during the fight — whether or not you
-            // moved (or bonked) — so the ball keeps pressure while you reposition. Skip
-            // only if the tick ended the run (a death nulls this.heur anyway).
-            if (this.heur && !ended) this._heurTick();
+            // update().
+            this._moveTick();
         }
     }
 
@@ -1503,7 +1512,9 @@ export class GameEngine {
         this.updateGate();
         this.updateDenny();
         this.updateHush();          // the feedback-suppressor's turn-locked pursuit (its room only)
-        this.updateWorldMotion();   // Motion Carried: Glitches drift, villagers wiggle, furniture lists
+        // NOTE: updateWorldMotion is NOT here. Ambient drift runs on the WORLD's own
+        // wall-clock (see update()), not on your move-tick — going faster must not make
+        // the world faster.
         this.updateDenny2();        // the Fall-Through — lagged DENIED stamps on your trail
         this.updateGate3();         // the Override — one permission rewrite at a time
         this.updateGateFinal();     // Port 0 — the rigidity funnel
@@ -1588,6 +1599,10 @@ export class GameEngine {
             // still catches it), checked right beside the room's own furniture.
             if (this._gate3Collide()) return true;
             if (this._finaleCollide()) return true;
+            // Heur's signature database is the same grade of hazard (owner: "touching Heur
+            // or the bricks should act like a wall touch"), which is what stops you simply
+            // swimming through his barrier to the far door.
+            if (this._heurCollide()) return true;
 
             // Diegetic ambient audio: the system's own signals bleeding into your
             // senses as you move through it (corruption proximity, wall friction).
@@ -1806,11 +1821,12 @@ export class GameEngine {
         this.audio.setDuck(1 - 0.95 * best); // near-silence pressed against the sleeper
     }
 
-    // --- MOTION CARRIED: the world moves on your tick ----------------------------------
-    // One-way world-state flip (set when Gate's first confrontation resolves): Glitches
-    // drift on deterministic patterns, villagers wander, room furniture lists. Everything
-    // is turn-locked — one cell per YOUR move-tick, never faster than you, telegraphed by
-    // a static directional notch (a11y: motion is coded by shape + position, never colour).
+    // --- MOTION CARRIED: the world moves on ITS OWN clock ------------------------------
+    // One-way world-state flip (set when Gate smashes his way out of the Override):
+    // Glitches drift on deterministic patterns, villagers wander, room furniture lists.
+    // Everything is turn-locked to the WORLD step (WORLD_STEP ms/cell), not to yours —
+    // shifting up must not make the world faster — and telegraphed by a static directional
+    // notch (a11y: motion is coded by shape + position, never colour).
 
     _glitchMotionFor(i, rx, ry) {
         const h = (Math.imul((rx * 73856093) ^ (ry * 19349663) ^ ((i + 1) * 83492791), 2654435761)) >>> 0;
@@ -1832,8 +1848,74 @@ export class GameEngine {
         return false;
     }
 
-    updateWorldMotion() {
+    // THE WORLD'S OWN CLOCK. Ambient drift used to ride the player's move-tick, which
+    // meant shifting up made the whole world faster — at gear 3 (30ms/cell) a drifting
+    // Glitch stepped every 60ms, well under human reaction time, so nothing that moved
+    // could ever fairly touch you. Decoupling it fixes that at the root and pays the gear
+    // system a dividend it never had: SPEED IS NOW EVASION. Cruise and you outpace the
+    // world; brake to 200ms and the world outpaces YOU.
+    //
+    // Precedent: Denny's Fall-Through already chases on his own 40ms clock, and it's the
+    // fight that reads best. Ambient drift is the slow half of the same idea; PURSUERS
+    // (HUSH, Denny) keep their own faster clocks, because being chased is the point.
+    get WORLD_STEP() { return 180; }        // ms per cell of ambient drift — just slower than gear 0
+    get ENCROACH_COST() { return 1; }       // segments shed when the world runs into you
+    get ENCROACH_COOLDOWN() { return 3; }   // world steps before the SAME mover can hit again
+
+    _snakeAt(x, y) { return this.snake.body.some(s => s.x === x && s.y === y); }
+
+    // ENCROACHMENT — something in the moving world ran into YOU.
+    //
+    // THE ASYMMETRY LAW: you moved into it, it can cost you; it moved into you, it costs
+    // you no MORE, it never clears the hazard, and it may never end your run. A head-first
+    // bite is 3 segments (1 with Reinforced Segments) AND splices the Glitch out of the
+    // room for good; a shove is a flat 1 and leaves the drifter alive to come back after
+    // the cooldown. So with Reinforced the two costs are equal in segments — what you buy
+    // by charging corruption deliberately is that it stays dead.
+    //
+    // The cooldown is what stops a drifter pinned against a long body from machine-gunning
+    // it one segment per step.
+    _encroach(mover, { salvage = true } = {}) {
+        // THE WORLD MAY BRUISE YOU, BUT IT MAY NOT REVOKE YOUR GEARBOX.
+        // changeGear(0) below re-clamps to floor(score/10). A shove that crosses a 10-Data
+        // boundary silently drops you out of gear 3 — and gear 3 is the ONLY clean wall
+        // breach, so crossBorder then reads a ram you had already committed to as a
+        // SUB-MAX SMASH, which IS die('border'). "Encroachment never kills" would have
+        // held only in the letter: an ambient drifter could end a run with zero player
+        // agency, and 29 Data cannot re-buy the gear to recover. Refuse those shoves.
+        // (Verified by probe: at 30 Data in gear 3, charging a doorway, EVERY world-clock
+        // phase offset ended in death before this guard.)
+        const after = Math.max(0, this.state.score - this.ENCROACH_COST);
+        if (Math.floor(after / 10) < Math.max(0, this.gear)) return false;
+        if (mover._hitAt !== undefined && this._worldStep - mover._hitAt < this.ENCROACH_COOLDOWN) return false;
+        mover._hitAt = this._worldStep;
+        const shed = [];
+        for (let i = 0; i < this.ENCROACH_COST; i++) {
+            const tail = this.snake.body[this.snake.body.length - 1];
+            if (this.snake.shrink(this.riderCount)) shed.push({ ...tail });
+            else break; // the floor is passengers — the shove stops there, it never kills
+        }
+        if (!shed.length) return false;
+        this.state.score = Math.max(0, this.state.score - shed.length); // Data = segments
+        this.refreshScore();
+        this.changeGear(0);          // re-clamp: no ghost max speed on lowered mass
+        this.audio.playCorruptHit(); // §2.6: the shove is audible as well as visible
+        // Nibble's Claws catch what corruption tears off — but HALF-RATE AND FLOORED, so a
+        // shove is never refunded 1-for-1. dropSalvage pays ceil(n/2), which at
+        // ENCROACH_COST 1 would hand the whole segment straight back and make the shove
+        // free for any Claws owner. (A head-first bite still pays its 2-of-3.)
+        if (salvage) this.dropSalvage(shed, Math.floor(shed.length / 2));
+        return true;
+    }
+
+    updateWorldMotion(dt = 0) {
         if (!this.state.unlocked.motionCarried) return;
+        // One step per frame at most, matching how moveTimer is driven — no burst-stepping
+        // after a long frame, which would teleport hazards past the telegraph.
+        this._worldTimer += dt;
+        if (this._worldTimer < this.WORLD_STEP) return;
+        this._worldTimer = 0;
+        this._worldStep++;
         const g = this.gridSize;
         const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
         const cx = Math.floor(this.canvas.width / 2 / g) * g;
@@ -1848,15 +1930,23 @@ export class GameEngine {
         const chkRoom = rx === 5 && ry === -4 && this.state.unlocked.checkpointOpen;
         const spawnAnchorY = chkRoom ? Math.min(cy + 3 * g, this.canvas.height - g) : cy;
         const guardSpawn = inHub || chkRoom;
-        if (!finaleRoom && this._tick % 2 === 0 && this.glitches && this.glitches.length) {
-            // Half your cadence — the drift menaces without racing you.
+        if (!finaleRoom && this.glitches && this.glitches.length) {
+            // Every world step — the drift menaces on its own clock, never on yours.
             for (let i = 0; i < this.glitches.length; i++) {
                 const gl = this.glitches[i];
                 if (!gl._m) gl._m = this._glitchMotionFor(i, rx, ry);
                 const m = gl._m;
                 const nx = gl.x + m.dx * g, ny = gl.y + m.dy * g;
                 const nearSpawn = guardSpawn && Math.max(Math.abs(nx - cx), Math.abs(ny - spawnAnchorY)) <= 2 * g;
-                if (nearSpawn || this._moverBlocked(nx, ny)) {
+                // CORRUPTION RUNNING INTO YOU. It bites and recoils — it does not pass
+                // through, and it does not enter your cell. Note this fires with the
+                // Glitch Shunt installed too: the Shunt is a MOUTH, not armour. You eat
+                // corruption by driving into it on purpose; corruption that blindsides
+                // you is biting you.
+                if (!nearSpawn && this._snakeAt(nx, ny)) {
+                    this._encroach(gl);
+                    m.dx = -m.dx; m.dy = -m.dy; m.step = 0;
+                } else if (nearSpawn || this._moverBlocked(nx, ny)) {
                     m.dx = -m.dx; m.dy = -m.dy; m.step = 0; // bounce; step next tick
                 } else {
                     gl.x = nx; gl.y = ny; m.step++;
@@ -1869,7 +1959,9 @@ export class GameEngine {
 
         // 2) Villagers WIGGLE — mostly still, an occasional single-cell shuffle around
         // home (radius 1, home-biased so they oscillate in place rather than roam).
-        if (this._tick % 4 === 0) {
+        // Every 2nd world step. NO encroachment: they are people, and a neighbour
+        // shuffling into you is not an attack. They simply don't take your cell.
+        if (this._worldStep % 2 === 0) {
             for (const npc of this.npcs) {
                 if (npc.id !== 'citizen' || npc.leaving) continue;
                 if (!npc._home) npc._home = { x: npc.x, y: npc.y };
@@ -1891,19 +1983,36 @@ export class GameEngine {
             }
         }
 
-        // 3) Room furniture LISTS — every 8th tick one obstacle shifts a cell, never
-        // into a doorway lane and never beside the head (the head's next cell must
-        // stay fair — no untelegraphed same-tick obstacle death), so layouts drift
-        // without ever sealing a route or ambushing anyone.
-        if (this.obstacles && this.obstacles.length && this._tick % 8 === 0) {
-            const idx = Math.floor(this._tick / 8) % this.obstacles.length;
+        // 3) Room furniture LISTS — every 4th world step one obstacle shifts a cell, never
+        // into a doorway lane and never beside the head, so layouts drift without ever
+        // sealing a route or ambushing anyone.
+        //
+        // The head keep-out STAYS, and it is doing something the shove rule cannot: head
+        // contact with an obstacle is `die('obstacle')` on your next move-tick, so letting
+        // furniture reach the head would be an unavoidable death rather than a shove.
+        // Against your FLANK it just shunts you — it costs a segment and holds position.
+        if (this.obstacles && this.obstacles.length && this._worldStep % 4 === 0) {
+            const idx = Math.floor(this._worldStep / 4) % this.obstacles.length;
             const o = this.obstacles[idx];
             const h = ((o.x * 31 + o.y * 17 + rx * 7 + ry * 3) >>> 0);
             const dirs = [[g, 0], [-g, 0], [0, g], [0, -g]];
             const [dx, dy] = dirs[h % 4];
             const nx = o.x + dx, ny = o.y + dy;
-            const nearHead = Math.abs(nx - this.snake.head.x) + Math.abs(ny - this.snake.head.y) <= g;
-            if (!nearHead && !this._moverBlocked(nx, ny) && !this._inDoorLane(nx, ny)) {
+            const hx = this.snake.head.x, hy = this.snake.head.y, d = this.input.direction;
+            const nearHead = Math.abs(nx - hx) + Math.abs(ny - hy) <= g;
+            // ...AND NEVER INTO THE LANE YOU ARE ALREADY DRIVING DOWN, at any distance.
+            // The Manhattan keep-out above still left head+2 open, and at gear 3 that is
+            // 60ms of warning for something that kills on contact (die('obstacle')) and —
+            // unlike a Glitch — carries NO directional notch, so it is drawn identically
+            // whether it is about to move or not. A block may drift across the room all it
+            // likes; it may not step into your path ahead of you.
+            const inLane = (d.x !== 0 && ny === hy && Math.sign(nx - hx) === Math.sign(d.x))
+                        || (d.y !== 0 && nx === hx && Math.sign(ny - hy) === Math.sign(d.y));
+            if (nearHead || inLane) {
+                // stay put — never crowd the head, never enter its lane
+            } else if (this._snakeAt(nx, ny)) {
+                this._encroach(o, { salvage: false }); // furniture isn't corruption; no Claws
+            } else if (!this._moverBlocked(nx, ny) && !this._inDoorLane(nx, ny)) {
                 o.x = nx; o.y = ny;
             }
         }
@@ -1927,14 +2036,25 @@ export class GameEngine {
 
     // --- HEUR'S DECONTAMINATION: BREAKOUT WITH YOUR BODY (in-room, dedicated Bay {5,-1}) ---
     // NOT a modal minigame — you play as your normal snake in the SEALED bay. Heur's
-    // scan-ping (the ball) ricochets off its signature-database BRICKS, YOUR BODY (a safe
-    // deflector), and EVERY wall — it is fully CONTAINED (no pass-through, no clearances,
-    // no reseal, NO fail/restart). Deflect it into every brick (Heur's own signature is
-    // unbreakable until last) to open the FAR DOOR (the way you were heading) and progress;
-    // if you can't, you simply don't progress and may RETREAT back out the way you came
-    // (crossBorder's seal lets the entry door through, ending the fight with no penalty).
-    // The ping reading your HEAD docks up to 2 segments + 2 Data (coupled), floored — the
-    // only stakes, always non-lethal.
+    // scan-ping (the ball) ricochets off its signature-database BRICKS, YOUR BODY, and
+    // EVERY wall. The ping is fully CONTAINED — it can never be lost past you (owner:
+    // the goal wall stays shut), so the tension is not "don't miss".
+    //
+    // WHAT MAKES YOU PLAY, then, is the ARMING RULE: a seal on Heur only breaks while the
+    // ping is still carrying YOUR contact (HEUR_HOT steps since it last touched your
+    // body). You cannot win by standing back and letting it rattle. Your body's job is to
+    // ARM and AIM, not to save — and the aim is real: the struck segment's index sets the
+    // ping's angle (_heurSpin), so catching it nearer the head throws it flatter.
+    //
+    // THE STAKES ARE LETHAL (owner). The ping reading your HEAD is a wall touch, and so is
+    // driving your head into any brick — the database is solid, you cannot swim through
+    // it. Both route through die('border'), so the Crumple Buffer still catches them. The
+    // ping steps on its OWN 150ms clock, never your gearbox, which is what keeps a lethal
+    // head fair at any speed.
+    //
+    // Losing is therefore possible, but never mandatory: you may always RETREAT back out
+    // the way you came (crossBorder's seal lets the entry door through, ending the fight
+    // with no penalty) and re-enter — he says "Encore." and rebuilds it.
 
 
 

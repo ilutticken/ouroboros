@@ -209,6 +209,23 @@ export const EncounterMethods = {
         this._hushClamp(npc);
     },
 
+    // --- HEUR'S DECONTAMINATION — tuning ------------------------------------------------
+    // All playtest placeholders, Gate-style.
+    get HEUR_PING_MS() { return 150; },  // ms per ping step — ITS OWN CLOCK, not your gearbox
+    get HEUR_SEALS() { return 3; },      // hits it takes to break Heur himself
+    // ARMING. A seal only breaks while the ping is still carrying YOUR contact. Without
+    // this a parked player still won on a lucky orbit — measured, 106 steps with the worm
+    // in a corner — which would leave the paddle optional all over again. It is also the
+    // written fiction: "I scan. You block." His ping can only flag his own database once
+    // it is carrying your signature. 16 steps is just over the bay's longest direct shot,
+    // so a clean throw always arrives armed and an aimless rattle never does.
+    get HEUR_HOT() { return 16; },
+    // Spin by struck segment: catch the ping nearer the HEAD and it comes off flatter.
+    // Since the head is the lethal end, the dangerous end is also the powerful end — and
+    // body length becomes the difficulty knob with no `length >= N` check anywhere: a worm
+    // under 4 segments physically cannot produce anything but 45 degrees.
+    _heurSpin(i) { return i <= 2 ? 3 : i <= 4 ? 2 : i <= 7 ? 1 : 0; },
+
     startHeurFight(entryDir) {
         const g = this.gridSize;
         const cols = Math.floor(this.canvas.width / g), rows = Math.floor(this.canvas.height / g);
@@ -228,8 +245,8 @@ export const EncounterMethods = {
         this.heur = {
             cols, rows, far, goal,
             bricks: this._heurBuildBricks(cols, rows, far),
-            ping: { c: 0, r: 0, dc: 0, dr: 0 },
-            brickHits: 0, tick: 0, warnHead: false,
+            ping: { c: 0, r: 0, sc: 0, sr: 0, k: 0, axis: 'h', phase: 0, hot: 0 },
+            brickHits: 0, tick: 0, warnHead: false, pingMs: 0,
         };
         this._heurLaunchPing();
         // Keep the player in play (PLAYING); the seal (crossBorder) + the ping run in the
@@ -237,12 +254,16 @@ export const EncounterMethods = {
         // intercept dialog's onComplete, so it already has).
     },
 
-    // Build Heur's signature database: a sparse brick band a couple cells in from the far
-    // wall, spanning the cross-axis, plus ONE Heur-signature brick at the band's centre
-    // (unbreakable until every other entry is gone). Bricks are individual cells
-    // {c,r,hp,heur} — orientation-agnostic.
+    // Build Heur's signature database: a brick band a couple cells in from the far wall,
+    // spanning the cross-axis, plus ONE Heur-signature brick at the REAR line's centre.
+    // Bricks are individual cells {c,r,hp,heur} — orientation-agnostic.
+    //
+    // depth[0] is the line NEAREST THE FAR WALL, i.e. the deepest from the player — so
+    // Heur has always sat in the last layer, behind everything else. (The old name for it
+    // was `frontDepth`, which read as the opposite and misled two passes of design work.)
     _heurBuildBricks(cols, rows, far) {
         const bricks = [];
+        const g = this.gridSize;
         const horizontal = (far === 'left' || far === 'right');
         // the two "depth" lines just inside the far wall
         const depth = far === 'right' ? [cols - 3, cols - 4]
@@ -251,21 +272,42 @@ export const EncounterMethods = {
                     :                   [2, 3]; // up
         const crossLo = 2, crossHi = (horizontal ? rows : cols) - 3;
         const crossMid = Math.floor((horizontal ? rows : cols) / 2);
+        // NEVER SPAWN A BRICK ON THE WORM. The intercept fires from crossBorder, so at
+        // this instant your head is at the far wall and your body trails back through
+        // exactly the rows the band wants. Bricks are solid now (head contact is a wall
+        // touch), so materialising one around your body would entomb you — an unavoidable
+        // death on the first move. The gaps it leaves read as displaced signatures.
+        const onWorm = (c, r) => this.snake.body.some(s => s.x === c * g && s.y === r * g);
         for (const d of depth) {
             for (let x = crossLo; x <= crossHi; x += 2) {
                 const c = horizontal ? d : x;
                 const r = horizontal ? x : d;
+                if (onWorm(c, r)) continue;
                 bricks.push({ c, r, hp: 1, heur: false });
             }
         }
-        // Heur's own signature — front-and-centre of the band.
-        const frontDepth = depth[0];
-        const hc = horizontal ? frontDepth : crossMid;
-        const hr = horizontal ? crossMid : frontDepth;
-        // ensure it isn't a duplicate of a normal brick cell
+        // Heur's own signature — centre of the REAR line, behind the database. He is
+        // placed AFTER the comb, so he needs the same keep-off-the-worm guard: he is the
+        // win condition AND he is solid, so materialising him around a segment would both
+        // entomb you and put the objective inside your own body. If the centre is taken,
+        // he slides along the rear line to the nearest free cell.
+        const rearDepth = depth[0];
+        let cross = crossMid;
+        const crossSpan = (horizontal ? rows : cols);
+        for (let d = 0; d < crossSpan; d++) {
+            const cand = [crossMid - d, crossMid + d].find(x => {
+                if (x < crossLo || x > crossHi) return false;
+                const c = horizontal ? rearDepth : x;
+                const r = horizontal ? x : rearDepth;
+                return !onWorm(c, r);
+            });
+            if (cand !== undefined) { cross = cand; break; }
+        }
+        const hc = horizontal ? rearDepth : cross;
+        const hr = horizontal ? cross : rearDepth;
         const existing = bricks.find(b => b.c === hc && b.r === hr);
-        if (existing) existing.heur = true;
-        else bricks.push({ c: hc, r: hr, hp: 1, heur: true });
+        if (existing) { existing.heur = true; existing.hp = this.HEUR_SEALS; }
+        else bricks.push({ c: hc, r: hr, hp: this.HEUR_SEALS, heur: true });
         return bricks;
     },
 
@@ -279,22 +321,50 @@ export const EncounterMethods = {
         if (horizontal) {
             h.ping.c = h.far === 'right' ? h.cols - 6 : 5;
             h.ping.r = Math.floor(h.rows / 2);
-            h.ping.dc = toGoalC; h.ping.dr = 1;
+            h.ping.sc = toGoalC; h.ping.sr = 1;
         } else {
             h.ping.r = h.far === 'down' ? h.rows - 6 : 5;
             h.ping.c = Math.floor(h.cols / 2);
-            h.ping.dr = toGoalR; h.ping.dc = 1;
+            h.ping.sr = toGoalR; h.ping.sc = 1;
         }
+        h.ping.k = 0; h.ping.axis = horizontal ? 'h' : 'v'; h.ping.phase = 0;
     },
 
-    // Advance the ping each move-tick (1 cell, 2 after it's warmed up). Runs during
-    // PLAYING while a Heur fight is active — independent of whether the snake moved.
-    _heurTick() {
+    // ONE step of the ping's travel, as a grid pattern rather than a pure diagonal.
+    // k = 0 is 45 degrees; k = 1,2,3 give 2:1, 3:1, 4:1 — `k` straight steps along `axis`
+    // for every diagonal one. Always exactly ONE CELL PER STEP whatever the angle, so the
+    // reaction window is a fixed number of milliseconds at every heading. That constant
+    // window is what makes a lethal head legal.
+    //
+    // It also breaks the old orbit lock. The ping used to move strictly diagonally and its
+    // vector was only ever negated, so (c+r) parity was invariant and the ball lived in a
+    // finite state space — measured, it settled into closed orbits that missed the
+    // survivors and then nothing changed again for 200,000 steps. The straight steps flip
+    // parity, so no orbit is permanent.
+    _heurStepVec() {
+        const p = this.heur.ping;
+        if (p.k === 0 || p.phase >= p.k) return [p.sc, p.sr];
+        return p.axis === 'h' ? [p.sc, 0] : [0, p.sr];
+    },
+
+    _heurAdvancePhase() {
+        const p = this.heur.ping;
+        p.phase = (p.phase + 1) % (p.k + 1);
+    },
+
+    // Advance the ping on ITS OWN wall clock. It used to ride the move-tick, so shifting
+    // gear made the ball faster — measured at 10 steps/sec in gear 0 against 33 in gear 3,
+    // from a single direction tap. Same mistake the ambient world movers had. Now your
+    // gearbox is an evasion tool inside the fight and nothing more.
+    _heurTick(dt = 0) {
         const h = this.heur;
         if (!h) return;
+        h.pingMs += dt;
+        if (h.pingMs < this.HEUR_PING_MS) return;
+        h.pingMs = 0;
         h.tick++;
-        const steps = (h.brickHits >= 6 || h.tick >= 40) ? 2 : 1;
-        for (let s = 0; s < steps; s++) {
+        if (h.ping.hot > 0) h.ping.hot--; // the signature cools as it travels
+        {
             if (this._heurPingStep()) return; // the win consumed the fight
         }
         // read-head proximity warning (deaf-legible outline flash on the head cell)
@@ -308,64 +378,122 @@ export const EncounterMethods = {
     // the sealed bay; only breaking the whole database opens the far door. So there is no
     // "lose" — if you can't break through you simply don't progress, and can retreat the
     // way you came (see crossBorder's Heur seal).
+    // Classify a cell for the ping: null = free, or a reflector {wall} | {brick} | {head}
+    // | {body, i}. `i` is the struck segment's index from the head — the ping's spin reads
+    // it, which is how "aim with your body" finally becomes true.
+    //
+    // A body segment SHIELDS a brick on the same cell — EXCEPT Heur's own. He is the
+    // scanner; he does not get to hide behind the thing he is scanning, and letting him
+    // would make the win condition silently unreachable while you stood on him.
     _heurClassify(c, r) {
         const h = this.heur, g = this.gridSize;
         if (c < 0 || c >= h.cols || r < 0 || r >= h.rows) return { wall: true };
         const brick = h.bricks.find(b => b.c === c && b.r === r);
-        // a body segment SHIELDS a brick on the same cell (deflect off you, no break)
+        if (brick && brick.heur) return { brick };
         const px = c * g, py = r * g;
         if (this.snake.head.x === px && this.snake.head.y === py) return { head: true };
-        if (this.snake.body.some((s, i) => i > 0 && s.x === px && s.y === py)) return { body: true };
+        const i = this.snake.body.findIndex((s, n) => n > 0 && s.x === px && s.y === py);
+        if (i > 0) return { body: true, i };
         if (brick) return { brick };
         return null;
     },
 
     _heurPingStep() {
         const h = this.heur;
-        const c = h.ping.c, r = h.ping.r, dc = h.ping.dc, dr = h.ping.dr;
+        const c = h.ping.c, r = h.ping.r;
+        const [dc, dr] = this._heurStepVec();
         const hCell = dc !== 0 ? this._heurClassify(c + dc, r) : null;
         const vCell = dr !== 0 ? this._heurClassify(c, r + dr) : null;
-        const dCell = this._heurClassify(c + dc, r + dr);
+        const dCell = (dc !== 0 && dr !== 0) ? this._heurClassify(c + dc, r + dr) : null;
 
         // Reflect off any solid neighbour (wall / brick / body), applying its effect.
-        let ndc = dc, ndr = dr;
-        if (hCell) { ndc = -dc; this._heurApplyHit(hCell); }
-        if (vCell) { ndr = -dr; this._heurApplyHit(vCell); }
-        if (!hCell && !vCell && dCell) { ndc = -dc; ndr = -dr; this._heurApplyHit(dCell); }
-        // a win may have fired inside _heurApplyHit
+        let nsc = h.ping.sc, nsr = h.ping.sr, hit = null;
+        if (hCell) { nsc = -h.ping.sc; hit = hCell; }
+        if (vCell) { nsr = -h.ping.sr; hit = vCell; }
+        if (!hCell && !vCell && dCell) { nsc = -h.ping.sc; nsr = -h.ping.sr; hit = dCell; }
+
+        if (hCell) this._heurApplyHit(hCell);
+        if (this.heur && vCell) this._heurApplyHit(vCell);      // the win (or a death) may have fired above
+        if (this.heur && !hCell && !vCell && dCell) this._heurApplyHit(dCell);
         if (!this.heur) return true;
-        h.ping.dc = ndc; h.ping.dr = ndr;
-        h.ping.c = c + ndc; h.ping.r = r + ndr; // reflected dir points away from the block — safe to advance
+
+        h.ping.sc = nsc; h.ping.sr = nsr;
+        // SPIN: a body strike re-angles the ping off the struck segment's index, and the
+        // tangent (the axis that did NOT flip) is the one the extra straight steps run on.
+        if (hit && hit.body) {
+            h.ping.k = this._heurSpin(hit.i);
+            h.ping.axis = hCell ? 'v' : 'h';
+            h.ping.phase = 0;
+        }
+
+        // ADVANCE — but classify the DESTINATION first. The old code assumed "the
+        // reflected direction points away from the block, so it's safe", which only holds
+        // when BOTH components flipped. On a single-axis reflection the destination was
+        // never tested, so the ping could land inside a live brick or on the head with no
+        // hit ever firing.
+        const [ndc, ndr] = this._heurStepVec();
+        const dest = this._heurClassify(c + ndc, r + ndr);
+        if (dest) {
+            this._heurApplyHit(dest);   // spend the tick in place rather than enter a solid
+            if (!this.heur) return true;
+            this._heurAdvancePhase();
+            return false;
+        }
+        h.ping.c = c + ndc; h.ping.r = r + ndr;
+        this._heurAdvancePhase();
         return false;
     },
 
     _heurApplyHit(cell) {
         const h = this.heur;
+        if (!h) return;
         if (cell.brick) {
             const b = cell.brick;
-            const othersExist = h.bricks.some(x => !x.heur);
-            if (b.heur && othersExist) { this.audio.playDoot(); return; } // locked until last
-            h.bricks = h.bricks.filter(x => x !== b);
+            b.hp = (b.hp || 1) - 1;
+            if (b.heur) {
+                // HIS OWN SIGNATURE. No longer locked behind clearing the database — he
+                // IS the win condition, and every seal is a countdown the player can read.
+                // But it only counts if the ping is ARMED (see HEUR_HOT): a ball that has
+                // been rattling off walls carries no signature to flag him with.
+                if (!(h.ping.hot > 0)) { b.hp += 1; this.audio.playDoot(); return; } // refused
+                h.ping.hot = 0;          // the strike spends your signature
+                this.audio.playCrash();
+                if (b.hp <= 0) { h.bricks = h.bricks.filter(x => x !== b); this._heurWin(); }
+                return;
+            }
+            if (b.hp <= 0) h.bricks = h.bricks.filter(x => x !== b);
             h.brickHits++;
             this.audio.playCrack();
-            if (!h.bricks.length) { this._heurWin(); }
             return;
         }
         if (cell.head) {
-            // the ping reads your flagged read-head: 2 segments + 2 Data (coupled),
-            // floored at head + passenger seats (enforced by shrink itself).
-            let docked = 0;
-            for (let i = 0; i < 2; i++) { if (this.snake.shrink(this.riderCount)) docked++; }
-            if (docked) {
-                this.state.score = Math.max(0, this.state.score - docked);
-                this.refreshScore();
-                this.changeGear(0);
-            }
+            // THE READ-HEAD. Owner's call: this hits exactly like a wall. The head is a
+            // one-cell target and the ping steps on a fixed 150ms clock, so being caught
+            // by it means you drove into it. die('border') routes through the Crumple
+            // Buffer for free, same contract as Gate's ring (_gate3Collide).
             this.audio.playCorruptHit();
+            this.die('border');
             return;
         }
-        if (cell.body) { this.audio.playDoot(); return; } // clean deflect off your body
+        if (cell.body) {
+            h.ping.hot = this.HEUR_HOT; // ARMED — it now carries your signature
+            this.audio.playDoot();
+            return;
+        }
         // wall: a soft tick (no effect)
+    },
+
+    // Head into a brick — Heur's or an ordinary signature — is a WALL TOUCH (owner).
+    // Checked from the move-tick after the head has moved, exactly like _gate3Collide.
+    // This is also what makes the database a real barrier: you cannot swim through it.
+    _heurCollide() {
+        const h = this.heur;
+        if (!h || !h.bricks.length) return false;
+        const g = this.gridSize;
+        const hd = this.snake.head;
+        if (!h.bricks.some(b => b.c * g === hd.x && b.r * g === hd.y)) return false;
+        this.die('border');
+        return true;
     },
 
     _heurWin() {
@@ -391,9 +519,11 @@ export const EncounterMethods = {
         const h = this.heur;
         return {
             cols: h.cols, rows: h.rows, far: h.far, goal: h.goal,
-            ping: { c: h.ping.c, r: h.ping.r, dc: h.ping.dc, dr: h.ping.dr },
-            bricks: h.bricks.map(b => ({ c: b.c, r: b.r, heur: b.heur })),
+            // dc/dr are the ping's CURRENT step (its notch), derived from the pattern.
+            ping: (() => { const [dc, dr] = this._heurStepVec(); return { c: h.ping.c, r: h.ping.r, dc, dr, hot: h.ping.hot }; })(),
+            bricks: h.bricks.map(b => ({ c: b.c, r: b.r, heur: b.heur, hp: b.hp })),
             bricksLeft: h.bricks.length, warnHead: h.warnHead,
+            seals: (h.bricks.find(b => b.heur) || { hp: 0 }).hp, // the real objective readout
         };
     },
 
@@ -569,6 +699,7 @@ export const EncounterMethods = {
     // around, so retreat is permanent and "the world is always traversable" holds.
     get GATE3_APERTURE() { return 7; },   // cells of gap (a door is 5)
     get GATE3_TURN_TICKS() { return 2; }, // move-ticks per one cell of rotation
+    get GATE3_ENTRY_HOLD() { return 3; }, // ticks the ring stands still after you arrive
 
     // The ring path: every cell of the inner perimeter, clockwise from the top-left.
     _gate3Ring() {
@@ -594,11 +725,37 @@ export const EncounterMethods = {
         // the same flee grammar you saw at {3,0}, so it reads instantly as "Gate runs".
         if (gate.leaving) { this._gate3Flee(gate); return; }
         const ring = this._gate3Ring();
-        if (!this._ovr) this._ovr = { gap: 0, t: 0, len: ring.length };
+        // THE APERTURE STARTS ON YOUR DOOR. The ring is built on the first move-tick you
+        // spend in the room — which is AFTER the entry transition and his enter dialog,
+        // so it did not exist (and was not drawn) while you were arriving. Seeding it at
+        // index 0 put the gap on the top edge while you were entering from the bottom,
+        // and the bottom lane is solid corner to corner: your first step north walked
+        // into a block that had never been on screen. An unavoidable death, and no column
+        // saved you. (Same class as Denny's forced-death stamp; same fix, from the front.)
+        //
+        // Centring the gap on the ring cell nearest your head means Gate is caught
+        // mid-rotation with YOUR door still open — he closes it while you watch, which is
+        // a better opening beat than a seal that was already shut.
+        if (!this._ovr) {
+            const h = this.snake.head;
+            let near = 0, best = Infinity;
+            ring.forEach((c, i) => {
+                const d = Math.abs(c.x - h.x) + Math.abs(c.y - h.y);
+                if (d < best) { best = d; near = i; }
+            });
+            const gap = (near - Math.floor(this.GATE3_APERTURE / 2) + ring.length) % ring.length;
+            // ...and it holds still for a few ticks, so the first rotation is one you have
+            // actually seen. Nothing may move on the tick it first becomes visible.
+            this._ovr = { gap, t: 0, len: ring.length, hold: this.GATE3_ENTRY_HOLD };
+        }
         const o = this._ovr;
         o.len = ring.length;
-        o.t++;
-        if (o.t >= this.GATE3_TURN_TICKS) { o.t = 0; o.gap = (o.gap + 1) % ring.length; }
+        if (o.hold > 0) {
+            o.hold--;
+        } else {
+            o.t++;
+            if (o.t >= this.GATE3_TURN_TICKS) { o.t = 0; o.gap = (o.gap + 1) % ring.length; }
+        }
 
         // The blocks: every ring cell outside the aperture run.
         const inGap = (i) => {
@@ -708,7 +865,12 @@ export const EncounterMethods = {
         if (!el) return;
         let txt = '', heur = false;
         if (this.heur) {
-            txt = `DECONTAMINATION\nSIGNATURES LEFT: ${this.heur.bricks.length}`;
+            // SEALS is the objective now, not the brick count — and ARMED/COLD is the
+            // deaf-legible half of the arming rule (§2.6: never a colour cue alone).
+            const hb = this.heur.bricks.find(b => b.heur);
+            const seals = hb ? hb.hp : 0;
+            const armed = this.heur.ping.hot > 0 ? 'ARMED' : 'COLD';
+            txt = `DECONTAMINATION — ${armed}\nHEUR SEALS: ${'#'.repeat(seals)}${'-'.repeat(Math.max(0, this.HEUR_SEALS - seals))}`;
             heur = true;
         } else {
             const c = this._citationLabel();

@@ -591,6 +591,41 @@ Reach Gate and he **panics backwards into one of Denny's own stamps.** Denny scr
 
 *Gotcha, from a bug I shipped and had to fix:* the first version of Denny's sweep could spin you into a stamp laid on the very same tick — a forced, unavoidable death. Stamps within range of the player are now voided on placement, and `_stampStun` covers the frame after. **Nothing Denny does may kill you.** He is not a hazard; he is scenery with feelings.
 
+### Heur's Decontamination, rebuilt (IMPLEMENTED) — the ping that needs your signature
+**Owner-directed, and it supersedes every earlier description of this fight — including the "5 passes → non-lethal reseal" version in the notes above, which was never as-built.** The owner's report was "it doesn't play like a modern Brick Breaker game at all," and measurement said it was worse than that: the fight was frequently **unwinnable**, and the one instruction the scene gave you was the losing move.
+
+**What was actually wrong** (all measured headlessly, not eyeballed):
+- **The ping was a deterministic diagonal billiard.** Its vector was only ever *negated*, so `(c+r)` parity was a permanent invariant and it lived in a finite state space. Parked player, 200,000 steps: **six of eight body-position × entry-direction combinations never finished.** Whether the fight was winnable depended on where your body happened to be, and nothing told you.
+- **Obeying the dialogue was the stall.** Bodies shielded the bricks behind them, so laying yourself flat as "the shield" — the literal reading of *"Your body is the shield. Aim with it."* — guaranteed a permanent stall.
+- **You could not aim.** Thirteen strike points along a flat body wall, **one outgoing vector, byte-identical.** There was no code path by which contact position could matter, so the line promised a mechanic that was never implemented.
+- **The ball rode your gearbox.** 10 steps/sec in gear 0, **33 in gear 3**, from a single direction tap — a fast-forward button, not a difficulty choice. The same mistake the ambient world movers had.
+- **The database was a comb, not a wall** — bricks every other cell, so a diagonal walker could never tunnel through it, and tunnelling is Breakout's central pleasure.
+- The head-read penalty **floored out to a total no-op** after about five hits.
+
+**As rebuilt:**
+
+**The ping keeps its own clock** (`HEUR_PING_MS = 150`), like the ambient world and Denny's chase. Your gear is now an evasion tool inside the fight and nothing more — and that fixed clock is what makes a lethal head fair at any speed.
+
+**It moves in step patterns, not pure diagonals.** `k = 0..3` gives 45° / 2:1 / 3:1 / 4:1, always **one cell per step** whatever the angle, so the reaction window is a constant number of milliseconds at every heading. The straight steps flip parity, which is what permanently breaks the orbit lock.
+
+**You aim with your body, and now that is literally true.** `_heurClassify` was already finding the struck segment and discarding the index; it returns it, and `_heurSpin` maps it to the outgoing angle. **Catch the ping nearer the head and it comes off flatter.** Since the head is the lethal end, *the dangerous end is the powerful end* — and body length becomes the difficulty knob for free, with no `length >= N` check anywhere: a worm under four segments physically cannot produce anything but 45°.
+
+**Heur is the win condition.** He is brick-*shaped* but amber against the database's cold blue, marked with `H` plus **seal pips that extinguish per hit**. Three seals ends it; ordinary signatures still break in one, so there is always visible progress. (He was already the deepest brick in all four orientations — the old name for that line was `frontDepth`, which read as the opposite and misled two passes of design work.)
+
+**THE ARMING RULE — the reason you have to play.** The owner decided the goal wall stays **shut**: the ping is fully contained and can never be lost past you, so "don't miss" cannot be the tension. Instead, **a seal only breaks while the ping is still carrying your contact** (`HEUR_HOT` steps since it last touched your body). Standing back and letting it rattle wins nothing. This is the written fiction doing mechanical work — *"I scan. You block."* — his ping can only flag his own database once it is carrying your signature.
+
+**The stakes are lethal, and that is a deliberate exception to a standing rule.** The read-head hit is a wall touch, and the database is **solid** — you cannot swim through it to the far door. Both route through `die('border')`, so the Crumple Buffer catches them. Retreat out the entry door is always open, so losing is possible but never mandatory. *(Owner: "Your head is a small target, so if the Ping hits it you were playing spectacularly poorly." And on the crumple worry: the ping has to cross the bay and come back, and you re-extrude a segment per move-tick, so you are most of the way back to full length before it returns.)*
+
+**Two gotchas found by building it:**
+- **Bricks may never spawn on the worm.** The intercept fires from `crossBorder`, so at that instant your head is at the far wall and your body trails back through exactly the rows the band wants. With solid bricks, materialising one around your body is an unavoidable death on the first move. Heur needed the same guard *and did not get it in the first pass* — a regression test caught him spawning inside a body segment, entombing the player around the objective. He now slides along the rear line to the nearest free cell.
+- **Heur's own cell is never masked by your body**, unlike ordinary bricks. He is the scanner; he does not get to hide behind the thing he is scanning, and letting him would make the win condition silently unreachable while you stood on him.
+
+**Orientation is pinned, not inferred.** The first Bay is always **vertical** (a wide, shallow database spanning the room's width); the Act II rematch will be **horizontal** (narrower, a longer tunnel to him). Inferring it from your heading meant approaching from the north built the fight backwards with the far door pointing home.
+
+**The dialogue is now 100% unglossed French**, with the mechanics moved onto the English `SYSTEM:` channel — the bay's annunciator is a different speaker, exactly as `HUSH_INTERCEPT` carries HUSH's whole rule while HUSH never speaks. Better diegesis than an exterminator reciting your control scheme, and §2.6 is satisfied because its actual requirement is that no *load-bearing* signal is lost. `Heur : ` keeps the French space before the colon. Re-entry compresses the whole scene to one word: **"Encore."**
+
+**Constants (playtest placeholders):** `HEUR_PING_MS 150` · `HEUR_SEALS 3` · `HEUR_HOT 16`. Known soft spot: some geometries still resolve with a parked player whose body happens to sit in the ball's path and keeps re-arming it. `HEUR_HOT` is the knob.
+
 ### PENDING — Localhost upgrades with Data spent
 Still open (owner-flagged): sinking Data in Localhost should visibly **rebuild the village** (more citizens/structures/services), a Phase-4 idle hook and a diegetic reason the Safe Zone matters.
 
@@ -601,5 +636,5 @@ Still open (owner-flagged): sinking Data in Localhost should visibly **rebuild t
 4. ✅ **Cache = localStorage save/load** (+ the 3-file boot select).
 5. ✅ Content: Cadenza's Sound Test minigame; ✅ the finite Wilds + coil; ✅ Motion Carried; ✅ HUSH + the Booth; ✅ Nibble's stall (Glitch Shunt v1); ✅ Heur's Purge; ✅ the Ascent + Port 0 finale (Act I is playable end-to-end).
 6. ✅ The Midpoint Pass (`ascentArmed`, the unblocked first meetings, the terminal release latch); ✅ the compounding economy (Quantcy + the Data Mines + the refugee relocation); ✅ Hydratia (the catch, the tiered Shadow Copy, the death receipt); ✅ Scanner value (two upgrade pockets, the ROM-Vault prize, the "beyond" read); ✅ the presentation pass (ribbon HUD, gear-linked glow, the Pause inventory, the sprite grammar).
-7. ✅ **Gate's two fights rebuilt** (the rotating aperture, the flee, the Port 0 squeeze) + **Motion Carried retimed to his impact**; ✅ **project health**: the codebase split into prototype mixins, all three I/O boundaries under test (398 tests), a linter, and CI.
+7. ✅ **Gate's two fights rebuilt** (the rotating aperture, the flee, the Port 0 squeeze) + **Motion Carried retimed to his impact**; ✅ **project health**: the codebase split into prototype mixins, all three I/O boundaries under test, a linter, and CI; ✅ **the world moves on its own clock** (ambient drift decoupled from player speed, with encroachment damage); ✅ **Heur's Decontamination rebuilt** (own ping clock, step patterns, aim-by-segment, 3 seals, the arming rule, lethal head + solid database). 429 tests.
 8. NEXT: **dialogue punch-up of every DRAFT block** (everything below `dialogue.js` ~L257 — the owner's pass; keep it *short and subtle*, the mystery unrolls over hours); the Trading-Sequence chain seeded in the ROM vault {1,-5}; Nibble's Corruption currency; Localhost-grows-with-Data; **Encryption Keys** (a carryable key that rides the tail and opens gated doors — the next Zelda verb); Act II (Beat 9+) against the 16-bit era.

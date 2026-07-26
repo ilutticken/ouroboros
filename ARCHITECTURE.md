@@ -238,11 +238,16 @@ solid wall and kills you. **Sweep first, then breach.**
    rear laying DENIED stamps. Reach Gate and he panics backwards into a stamp; Denny screams `BOSSSS-`
    and holds him. The sector crashes, the palette snaps to 16-bit, and the Kernel releases its tail.
 
-**All five set-pieces are non-lethal by construction, and all are Snake-body puzzles:** Heur is Breakout
-with your body as the paddle · Denny turns *your own trail* into the maze · Gate's Override is a timing
-fight against a moving gap · Port 0 is a closing box you have to cross · Cadenza's Encore is
-head-as-attack, body-as-sustain — with an **emergent length gate** (there is no `length >= N` check
-anywhere in the game).
+**All five set-pieces are Snake-body puzzles:** Heur is Breakout with your body as the paddle · Denny
+turns *your own trail* into the maze · Gate's Override is a timing fight against a moving gap · Port 0
+is a closing box you have to cross · Cadenza's Encore is head-as-attack, body-as-sustain — with an
+**emergent length gate** (there is no `length >= N` check anywhere in the game).
+
+**Four of the five are non-lethal by construction. Heur is not** — his scan-ping reading your head is a
+wall touch, and his signature database is solid, so driving into it kills too. That is deliberate
+(owner): the head is a one-cell target and the ping steps on its own fixed clock, so being caught by it
+means you drove into it. Retreat back out the entry door is always open, so losing is possible but never
+mandatory. **The no-UNAVOIDABLE-death law still holds everywhere; "non-lethal" no longer does.**
 
 **Both Gate fights are tuned by constants at the top of their block in `encounters.js`**
 (`GATE3_APERTURE`, `GATE3_TURN_TICKS`, `FINALE_WALL_TICKS`, `FINALE_SPAWN_TICKS`, `FINALE_DENNY_TICKS`)
@@ -252,8 +257,8 @@ anywhere in the game).
 
 ## 8. Project health
 
-**Tests:** 398 across 10 files, ~1.6s — 6,253 lines of test against 9,440 of source. **All three I/O
-boundaries are now covered**, each by the technique that boundary needs:
+**Tests:** 429 across 10 files, ~1.7s. **All three I/O boundaries are now covered**, each by the
+technique that boundary needs:
 
 | File | Covers |
 |---|---|

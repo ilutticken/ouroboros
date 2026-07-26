@@ -144,7 +144,11 @@ export const ARCHITECT = {
     // Motion Carried — the world-state flip on clearing the Override (the SECOND Gate
     // run-in, now at the act midpoint). Single merged log (was two back-to-back) so the
     // moment costs one Space, not two. The tail leaks the a11y notch. (DRAFT.)
-    motionCarried: "LOG: Architect > 'Motion before the Scheduling Committee: bind hazard scheduling to the anomaly's own tick. Carried, unanimous. I am the only member. I abstained. ...Who labeled the drift vectors?'",
+    // ^ the clause was inverted: it used to read "bind hazard scheduling to the anomaly's
+    // own tick", which is the exact rule the world clock deleted — the world now keeps its
+    // own time so your speed can't set the world's. Under Total Diegesis the log has to
+    // generate the mechanic, not contradict it. (STILL DRAFT — owner's punch-up pending.)
+    motionCarried: "LOG: Architect > 'Motion before the Scheduling Committee: hazard scheduling gets its OWN clock. The anomaly does not get to set the pace by running. Carried, unanimous. I am the only member. I abstained. ...Who labeled the drift vectors?'",
     // The 'can it READ?' payoff — fires at the Override clear, the last moment Gate still
     // forwards him reports (before the {5,-3} cleared-dialog severance line). (DRAFT.)
     canRead: "LOG: Architect > 'Re: my standing question of whether it can read. It braked for the citations. ...Who set my log to PUBLIC?'",
@@ -322,24 +326,38 @@ export const NIBBLE = {
 // Heur — the janitorial antivirus daemon. Extremely short sentences; the French is
 // never meaning-critical (a11y: always glossed or cognate). Courtly and terrifying —
 // a sommelier performing surgery. It never says what you are. It cannot.
+// HEUR SPEAKS ONLY FRENCH, AND IT IS NOT GLOSSED. The mechanics ride the English
+// SYSTEM: channel instead — the bay's annunciator is a different speaker, exactly as
+// HUSH_INTERCEPT carries HUSH's whole rule while HUSH never speaks. Better diegesis than
+// an exterminator reciting your control scheme, and it satisfies §2.6, whose actual
+// requirement is that no LOAD-BEARING signal is lost: every instruction is in English,
+// and the unrecoverable French ("au bout du compte", "piège", "je reviendrai pour toi")
+// is pure flavour. Note "Heur : " — the space before the colon is correct French
+// typography, and it is free characterisation. Keep it.
 export const HEUR = {
     intercept: [
-        "SYSTEM: DECONTAMINATION BAY — FORWARD EGRESS SEALED",
-        "Heur: Tenez-vous tranquille. (Hold still.)",
-        "Heur: You carry corruption. It does not burn you. Noted. Flagged. Regrettable.",
-        "Heur: Le protocole: I scan. You block. My signature database stands between you and the door ahead. Breach every entry, and it opens.",
-        "Heur: The ping does not hurt. The ping, to the HEAD, hurts. Guard the head. Your body is the shield. Aim with it.",
-        "Heur: You may leave the way you came, always. But you do not go FORWARD until you are clean. Commençons. (We begin.)"
+        "SYSTEM: DECONTAMINATION BAY — BEGIN SEALING FORWARD EGRESS",
+        "Heur : Restez immobile.",
+        "Heur : *ANALYSE EN COURS* — Comportement aberrant détecté.",
+        "Heur : Regrettable.",
+        "Heur : Protocole : Confinement et suppression.",
+        "SYSTEM: SCAN-PING ARMED — BODY MASS DEFLECTS. READ-HEAD DOES NOT.",
+        "SYSTEM: SIGNATURE DATABASE IS SOLID. REAR EGRESS REMAINS OPEN.",
+        "Heur : Renforcement de la barrière en cours. Je suis désolé, Petit Dévoreur."
+    ],
+    // Leaving the bay and coming back rebuilds the fight from scratch. He does not do the
+    // whole speech twice — that is the joke, and it is one word.
+    reentry: [
+        "Heur : Encore.",
+        "SYSTEM: DECONTAMINATION BAY — BEGIN SEALING FORWARD EGRESS"
     ],
     win: [
-        "Heur: ...Aucune correspondance. (No match.)",
-        "Heur: Every signature breached. Even mine. Especially mine. There is a form for this. There has never been a need for the form.",
-        "Heur: You are released. Not cleared — released. Pour l'instant. (For now.)",
-        "SYSTEM: DECONTAMINATION CYCLE COMPLETE — SEAL RETRACTED"
-    ],
-    idle: [
-        "Heur: Vous encore. (You again.)",
-        "Heur: I filed you under 'pending'. The file grows. Portez-vous bien. (Keep well.)"
+        "Heur : Victime de mon propre piège.",
+        "Heur : Au bout du compte,",
+        "Heur : Tout est contenu.",
+        "Heur : Contenu, ou effacé. Je reviendrai pour toi, Petit Dévoreur.",
+        "SYSTEM: BARRIER INCOMPLETE. DECONTAMINATION CYCLE... INCOMPLETE",
+        "SYSTEM: FORWARD SEAL RETRACTED"
     ]
 };
 

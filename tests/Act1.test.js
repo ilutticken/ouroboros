@@ -260,7 +260,7 @@ describe('The finite Wilds — the Kernel\'s coil', () => {
 });
 
 // ---------------------------------------------------------------------------------
-describe('Motion Carried — the world moves on your tick', () => {
+describe('Motion Carried — the world moves on ITS OWN clock', () => {
     beforeEach(mountDom);
 
     function motionGame() {
@@ -285,8 +285,44 @@ describe('Motion Carried — the world moves on your tick', () => {
         const before = { x: game.glitches[0].x, y: game.glitches[0].y };
         step(game, { x: 20, y: 0 });
         const moved = Math.abs(game.glitches[0].x - before.x) + Math.abs(game.glitches[0].y - before.y);
-        expect(moved).toBe(20); // exactly one cell per move-tick
+        expect(moved).toBe(20); // exactly one cell per WORLD step
         expect(game.glitches[0]._m).toBeTruthy(); // and it wears its drift pattern (the notch)
+    });
+
+    // THE POINT OF THE WORLD CLOCK: shifting up must not make the world faster. Ambient
+    // drift used to ride the move-tick, so at gear 3 (30ms/cell) a Glitch stepped every
+    // 60ms — under human reaction time, which is why nothing that moved could fairly
+    // touch you. Now speed is EVASION: cruise and you outpace the world.
+    it('drift is wall-clock, so going faster does NOT speed the world up', () => {
+        const slow = motionGame();
+        const fast = motionGame();
+        for (const game of [slow, fast]) {
+            game.state.unlocked.motionCarried = true;
+            game.glitches = [new Glitch(200, 100, 20)];
+            game.snake.body = [{ x: 40, y: 300 }];
+        }
+        // Same wall-clock elapsed, wildly different player speeds.
+        slow.speed = 200;   // braked
+        fast.speed = 30;    // gear 3
+        const ELAPSED = 900;
+        for (let i = 0; i < ELAPSED / 30; i++) { slow.update(30); fast.update(30); }
+
+        expect(slow._worldStep).toBe(fast._worldStep);
+        expect(slow._worldStep).toBe(Math.floor(ELAPSED / slow.WORLD_STEP));
+        // ...and the gear-3 worm took far more move-ticks over the same wall time.
+        expect(fast._tick).toBeGreaterThan(slow._tick * 3);
+    });
+
+    it('the world does not move at all while text has the game stopped', () => {
+        const game = motionGame();
+        game.state.unlocked.motionCarried = true;
+        game.glitches = [new Glitch(200, 100, 20)];
+        game.snake.body = [{ x: 40, y: 300 }];
+        const before = { x: game.glitches[0].x, y: game.glitches[0].y };
+        game.state.gameState = 'DIALOG';
+        for (let i = 0; i < 20; i++) game.update(100);
+        expect(game.glitches[0]).toMatchObject(before);
+        expect(game._worldStep).toBe(0);
     });
 
     it('drift patterns are deterministic per room and index', () => {
@@ -296,18 +332,177 @@ describe('Motion Carried — the world moves on your tick', () => {
         expect(g1._glitchMotionFor(1, 4, 2)).not.toEqual(g1._glitchMotionFor(0, 4, 2));
     });
 
-    it('a mover never steps onto the worm — it bounces instead', () => {
+    it('a mover never steps ONTO the worm — it bites and recoils', () => {
         const game = motionGame();
         game.state.unlocked.motionCarried = true;
         game.glitches = [new Glitch(200, 100, 20)];
-        // wall the glitch's whole row with worm so any horizontal step is blocked
+        // box the glitch in with worm so every step runs into you
         game.snake.body = [
             { x: 180, y: 100 }, { x: 220, y: 100 }, { x: 200, y: 80 }, { x: 200, y: 120 },
         ];
         const before = { x: game.glitches[0].x, y: game.glitches[0].y };
-        game.update(1000); // no direction: the world still ticks
-        game.update(1000); // include an even tick (movers step on evens)
-        expect(game.glitches[0]).toMatchObject(before); // fully boxed: it can only bounce in place
+        game.update(1000);
+        game.update(1000);
+        expect(game.glitches[0]).toMatchObject(before); // never enters your cell
+    });
+
+    // ENCROACHMENT — the owner's rule: "if things running into you don't affect you, then
+    // the world moving is just cosmetic."
+    describe('encroachment (the world runs into YOU)', () => {
+        const boxedIn = () => {
+            const game = motionGame();
+            game.state.unlocked.motionCarried = true;
+            game.state.score = 20;
+            game.growSnake(20);
+            game.glitches = [new Glitch(200, 100, 20)];
+            // a wall of worm all round it, so whichever way it drifts it finds you
+            game.snake.body = [
+                { x: 180, y: 100 }, { x: 220, y: 100 }, { x: 200, y: 80 }, { x: 200, y: 120 },
+            ];
+            for (let i = 0; i < 18; i++) game.snake.body.push({ x: 20, y: 20 + i * 20 });
+            return game;
+        };
+
+        it('corruption that runs into you sheds a segment AND the matching Data', () => {
+            const game = boxedIn();
+            const len = game.snake.body.length, score = game.state.score;
+            game.update(1000);
+            expect(game.snake.body.length).toBe(len - game.ENCROACH_COST);
+            expect(game.state.score).toBe(score - game.ENCROACH_COST); // Data = segments holds
+        });
+
+        it('never costs MORE than driving your own head into it (the asymmetry law)', () => {
+            const shoved = boxedIn();
+            shoved.update(1000);
+            const shoveCost = 20 - shoved.state.score;
+
+            const bitten = motionGame();
+            bitten.state.score = 20; bitten.growSnake(20);
+            bitten.glitches = [new Glitch(bitten.snake.head.x, bitten.snake.head.y, 20)];
+            bitten.hitGlitch();
+            const biteCost = 20 - bitten.state.score;
+
+            expect(shoveCost).toBeLessThanOrEqual(biteCost);
+        });
+
+        it('a shove leaves the drifter alive; a head bite clears it for good', () => {
+            // This is the real asymmetry once you own Reinforced Segments, where both
+            // cost exactly 1 segment: charging corruption deliberately is what makes it
+            // STAY dead. Being shoved just resets a cooldown.
+            const shoved = boxedIn();
+            shoved.update(1000);
+            expect(shoved.glitches).toHaveLength(1);
+
+            const bitten = motionGame();
+            bitten.state.score = 20; bitten.growSnake(20);
+            bitten.glitches = [new Glitch(bitten.snake.head.x, bitten.snake.head.y, 20)];
+            bitten.hitGlitch();
+            expect(bitten.glitches).toHaveLength(0);
+        });
+
+        // LAW VIOLATION, found by adversarial review and proven by probe: _encroach never
+        // called die(), but its changeGear(0) re-clamp dropped you out of gear 3 when a
+        // shove crossed a 10-Data boundary — and gear 3 is the only clean wall breach, so
+        // crossBorder read an already-committed ram as a sub-max smash, which IS a death.
+        // "Never kills" held only in the letter.
+        it('a shove may never revoke the gear you are holding', () => {
+            const game = boxedIn();
+            game.state.score = 30;
+            game.changeGear(3);
+            expect(game.gear).toBe(3);
+
+            for (let i = 0; i < 20; i++) game.update(1000);
+
+            expect(game.gear).toBe(3);                       // gearbox intact
+            expect(game.state.score).toBeGreaterThanOrEqual(30); // and the Data licensing it
+        });
+
+        it('...but a shove that costs no gear still lands', () => {
+            const game = boxedIn();
+            game.state.score = 35;
+            game.changeGear(3);
+            game.update(1000);
+            expect(game.state.score).toBe(34); // shaved, still licensed
+            expect(game.gear).toBe(3);
+        });
+
+        it('Salvage Claws never refund a shove one-for-one', () => {
+            const game = boxedIn();
+            game.state.upgrades.salvage = true;
+            const score = game.state.score;
+            game.update(1000);
+            const motes = (game.dataMotes || []).length;
+            expect(score - game.state.score).toBe(game.ENCROACH_COST);
+            expect(motes).toBeLessThan(game.ENCROACH_COST + 1); // not a full refund
+        });
+        it('NEVER kills — a floored worm just absorbs the shove', () => {
+            const game = motionGame();
+            game.state.unlocked.motionCarried = true;
+            game.state.score = 0;
+            game.snake.body = [
+                { x: 180, y: 100 }, { x: 220, y: 100 }, { x: 200, y: 80 }, { x: 200, y: 120 },
+            ];
+            game.glitches = [new Glitch(200, 100, 20)];
+            let died = false;
+            game.die = () => { died = true; };
+            for (let i = 0; i < 40; i++) game.update(1000);
+            expect(died).toBe(false);
+            expect(game.snake.body.length).toBeGreaterThanOrEqual(1);
+        });
+
+        it('a single mover cannot machine-gun you — the cooldown holds', () => {
+            const game = boxedIn();
+            const len = game.snake.body.length;
+            // Fewer world steps than the cooldown allows hits.
+            for (let i = 0; i < game.ENCROACH_COOLDOWN; i++) game.update(game.WORLD_STEP);
+            expect(len - game.snake.body.length).toBe(game.ENCROACH_COST); // exactly one hit
+        });
+
+        it('villagers do NOT shove you — they are people, not hazards', () => {
+            const game = motionGame();
+            game.state.unlocked.motionCarried = true;
+            game.state.score = 20; game.growSnake(20);
+            game.npcs = [new NPC(200, 200, 20, 'citizen', ['hi'])];
+            game.snake.body = [
+                { x: 180, y: 200 }, { x: 220, y: 200 }, { x: 200, y: 180 }, { x: 200, y: 220 },
+            ];
+            const len = game.snake.body.length;
+            for (let i = 0; i < 40; i++) game.update(1000);
+            expect(game.snake.body.length).toBe(len);
+        });
+
+        it('the Glitch Shunt is a MOUTH, not armour — being run into still bites', () => {
+            const game = boxedIn();
+            game.state.upgrades.corruptHandler = true;
+            const len = game.snake.body.length;
+            game.update(1000);
+            expect(game.snake.body.length).toBe(len - game.ENCROACH_COST);
+        });
+
+        it('nothing shoves you before the world starts moving', () => {
+            const game = boxedIn();
+            game.state.unlocked.motionCarried = false;
+            const len = game.snake.body.length;
+            for (let i = 0; i < 40; i++) game.update(1000);
+            expect(game.snake.body.length).toBe(len);
+        });
+    });
+
+    // Furniture carries no directional notch and kills on contact, so it may never step
+    // into the lane the head is already committed to. The old Manhattan<=1 keep-out left
+    // head+2 open — 60ms of warning at gear 3, for something drawn identically whether or
+    // not it is about to move.
+    it('listing furniture never steps into the head\'s travel lane, at any distance', () => {
+        const game = motionGame();
+        game.state.unlocked.motionCarried = true;
+        game.snake.body = [{ x: 200, y: 200 }];
+        game.input.direction = { x: 20, y: 0 }; // driving east
+        game.obstacles = [];
+        for (let c = 3; c < 12; c++) game.obstacles.push({ x: c * 20, y: 180 });
+
+        for (let i = 0; i < 200; i++) game.update(100);
+
+        expect(game.obstacles.filter(o => o.y === 200 && o.x > 200)).toEqual([]);
     });
 
     it('villagers wiggle in place — never more than one cell from home', () => {
@@ -344,6 +539,68 @@ describe('Motion Carried — the world moves on your tick', () => {
         game.shiftScreen(0, -1);
         expect(game.state.unlocked.gateRematchDone).toBe(true);
         expect(game.state.unlocked.motionCarried).toBe(true);
+    });
+
+    // REGRESSION: walking into the Override used to be an unavoidable death.
+    //
+    // The ring is built on the first move-tick IN the room, which is after the entry
+    // transition and after Gate's enter dialog — so while you were arriving it did not
+    // exist and the Renderer drew nothing. It then seeded at index 0, putting the
+    // aperture on the TOP edge while you entered from the bottom, and the bottom lane is
+    // solid corner to corner. Your first step north walked into a block that had never
+    // been on screen, at a column that could not have saved you, having been unable to
+    // pre-steer (canSteer is PLAYING-only, so a turn during the dialog is dropped).
+    it('entering the Override from the south is survivable — the aperture starts on YOUR door', () => {
+        const game = motionGame();
+        const g = game.gridSize;
+        game.state.unlocked.ascentArmed = true;
+        game.state.unlocked.dennyRematchDone = true;
+        game.state.score = 40;
+        game.growSnake(40);
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = -2;
+        const room = game.worldManager.getOrCreateRoom(game.state.unlocked);
+        game.apple = room.apple; game.glitches = []; game.npcs = room.npcs; game.obstacles = [];
+
+        // Stand in the doorway of his south wall, at the gear the breach requires.
+        const wp = game.worldManager.getWeakPoint(5, -2, 'up');
+        const col = wp ? Math.floor(((wp.start + wp.end) / 2) / g) : 10;
+        game.snake.body = [{ x: col * g, y: 1 * g }];
+        for (let i = 1; i < 6; i++) game.snake.body.push({ x: col * g, y: (1 + i) * g });
+        game.gear = 3; game.speed = 30;
+        game.input.direction = { x: 0, y: -g };
+
+        let died = false;
+        const realDie = game.die.bind(game);
+        game.die = (cause) => { died = true; return realDie(cause); };
+
+        // Drive straight on, the way you were already heading, for longer than the ring
+        // takes to form. A player who does nothing wrong must not be killed by arriving.
+        for (let i = 0; i < 8; i++) {
+            finishDialog(game);
+            if (game.state.gameState !== 'DEAD') game.state.gameState = 'PLAYING';
+            game.input.nextDirection = { x: 0, y: -g };
+            game.update(1000);
+        }
+
+        expect(died).toBe(false);
+        expect(game.worldManager.currentRoomY).toBe(-3); // still in his room, alive
+    });
+
+    it('the ring holds still for its first few ticks, so no rotation is unseen', () => {
+        const game = motionGame();
+        game.worldManager.currentRoomX = 5;
+        game.worldManager.currentRoomY = -3;
+        game.npcs = [new NPC(200, 40, 20, 'gate3', [])];
+        game._ovr = null;
+
+        game.updateGate3();
+        const seeded = game._ovr.gap;
+        for (let i = 0; i < game.GATE3_ENTRY_HOLD; i++) game.updateGate3();
+        expect(game._ovr.gap).toBe(seeded); // still parked on your door
+
+        for (let i = 0; i < game.GATE3_TURN_TICKS + 1; i++) game.updateGate3();
+        expect(game._ovr.gap).not.toBe(seeded); // and then it turns
     });
 
     it('reaching Localhost after Gate arrests you arms the early climb', () => {
@@ -721,32 +978,88 @@ describe('Heur\'s Decontamination — in-room Breakout', () => {
         expect(game.heur).toBeNull(); // retreated: fight over, no restart, no penalty
     });
 
-    it('the ping reads the HEAD for 2 segments + 2 Data (coupled), and deflects off the body', () => {
-        const game = newGame();
-        game.state.score = 10; game.growSnake(10);
-        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
-        game.startHeurFight('right');
-        game.heur.bricks = []; // isolate: no accidental win
-        const g = game.gridSize;
-        // a length-5 body so the head-read can shed the full 2
-        game.snake.body = [{ x: 5 * g, y: 5 * g }, { x: 6 * g, y: 5 * g }, { x: 7 * g, y: 5 * g }, { x: 8 * g, y: 5 * g }, { x: 9 * g, y: 5 * g }];
-        game.heur.ping = { c: 4, r: 5, dc: 1, dr: 0 }; // about to step onto the head cell
-        game._heurPingStep();
-        expect(game.state.score).toBe(8); // -2 (coupled)
-        expect(game.snake.body.length).toBe(3); // 5 -> 3
-        expect(game.audio.playCorruptHit).toHaveBeenCalled();
+    // OWNER REWORK: the read-head no longer docks segments (measured: it floored out to a
+    // total no-op after five reads). It hits exactly like a wall — the head is a one-cell
+    // target on a fixed 150ms ping clock, so being caught by it means you drove into it.
+    it('the ping reading the HEAD is a WALL TOUCH — death, or a Crumple bounce', () => {
+        const g = 20;
+        const aimAtHead = (game) => {
+            game.heur.bricks = []; // isolate: no accidental win
+            game.snake.body = [{ x: 5 * g, y: 5 * g }, { x: 6 * g, y: 5 * g }, { x: 7 * g, y: 5 * g }];
+            game.heur.ping.c = 4; game.heur.ping.r = 5;
+            game.heur.ping.sc = 1; game.heur.ping.sr = 0; game.heur.ping.k = 0;
+        };
+
+        const lethal = newGame();
+        lethal.state.score = 10; lethal.growSnake(10);
+        lethal.worldManager.currentRoomX = 8; lethal.worldManager.currentRoomY = 1;
+        lethal.startHeurFight('right');
+        aimAtHead(lethal);
+        lethal._heurPingStep();
+        expect(lethal.state.gameState).toBe('DEAD');
+
+        const buffered = newGame();
+        buffered.state.upgrades.crumpleLevel = 1;
+        buffered.state.score = 20; buffered.growSnake(20);
+        buffered.worldManager.currentRoomX = 8; buffered.worldManager.currentRoomY = 1;
+        buffered.startHeurFight('right');
+        aimAtHead(buffered);
+        buffered._heurPingStep();
+        expect(buffered.state.gameState).toBe('PLAYING'); // bounced, not dead
     });
 
-    it('Heur\'s own signature is unbreakable until every other brick is gone', () => {
+    it('Heur takes HEUR_SEALS hits and only then falls — ordinary bricks break in one', () => {
         const game = newGame();
         game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
         game.startHeurFight('right');
+        game.snake.body = [{ x: 0, y: 0 }]; // body out of the way
         const heur = game.heur.bricks.find(b => b.heur);
-        game.snake.body = [{ x: 0, y: 0 }]; // keep the body out of the way
-        // aim the ping into the heur brick from the left
-        game.heur.ping = { c: heur.c - 1, r: heur.r, dc: 1, dr: 0 };
-        game._heurPingStep();
-        expect(game.heur.bricks.some(b => b.heur)).toBe(true); // still there
+        expect(heur.hp).toBe(game.HEUR_SEALS);
+
+        for (let i = 1; i < game.HEUR_SEALS; i++) {
+            game.heur.ping.hot = game.HEUR_HOT; // armed off your body
+            game._heurApplyHit({ brick: heur });
+            expect(game.heur, `fight ended after ${i} seal(s)`).toBeTruthy();
+            expect(heur.hp).toBe(game.HEUR_SEALS - i);
+        }
+        game.heur.ping.hot = game.HEUR_HOT;
+        game._heurApplyHit({ brick: heur });
+        expect(game.heur).toBeNull(); // the last seal ends it
+    });
+
+    // THE ARMING RULE. A ball that has only been rattling off walls carries no signature
+    // to flag him with. Without this, a parked player still won on a lucky orbit —
+    // measured at 106 ping steps — which left the paddle optional.
+    it('an UNARMED ping cannot break a seal, however often it strikes him', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right');
+        game.snake.body = [{ x: 0, y: 0 }];
+        const heur = game.heur.bricks.find(b => b.heur);
+
+        game.heur.ping.hot = 0;
+        for (let i = 0; i < 30; i++) game._heurApplyHit({ brick: heur });
+        expect(heur.hp).toBe(game.HEUR_SEALS); // untouched
+        expect(game.heur).toBeTruthy();
+
+        // ...but one touch of your body arms it, and the next strike lands.
+        game._heurApplyHit({ body: true, i: 3 });
+        expect(game.heur.ping.hot).toBe(game.HEUR_HOT);
+        game._heurApplyHit({ brick: heur });
+        expect(heur.hp).toBe(game.HEUR_SEALS - 1);
+        expect(game.heur.ping.hot).toBe(0); // and the strike spent it
+    });
+
+    it('the arming cools as the ping travels, so a stale contact stops counting', () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
+        game.startHeurFight('right');
+        game.snake.body = [{ x: 0, y: 0 }];
+        game.heur.bricks = [game.heur.bricks.find(b => b.heur)];
+        game._heurApplyHit({ body: true, i: 3 });
+        expect(game.heur.ping.hot).toBe(game.HEUR_HOT);
+        for (let i = 0; i < game.HEUR_HOT; i++) game._heurTick(game.HEUR_PING_MS);
+        expect(game.heur && game.heur.ping.hot).toBe(0);
     });
 
     it('the ping is CONTAINED — it bounces off every wall (no pass, no restart)', () => {
@@ -756,23 +1069,27 @@ describe('Heur\'s Decontamination — in-room Breakout', () => {
         game.snake.body = [{ x: 0, y: 0 }]; // body out of the way
         game.heur.bricks = [game.heur.bricks.find(b => b.heur)]; // isolate: no accidental win
         // drive the ping into the LEFT wall (the retreat side) — it must reflect, not leave
-        game.heur.ping = { c: 0, r: 5, dc: -1, dr: 0 };
+        game.heur.ping.c = 0; game.heur.ping.r = 5;
+        game.heur.ping.sc = -1; game.heur.ping.sr = 0; game.heur.ping.k = 0;
         game._heurPingStep();
         expect(game.heur).toBeTruthy();          // still fighting (no reseal, no restart)
-        expect(game.heur.ping.dc).toBe(1);       // reflected back into the room
+        expect(game.heur.ping.sc).toBe(1);       // reflected back into the room
         expect(game.heur.ping.c).toBeGreaterThanOrEqual(0); // never left the bay
     });
 
-    it('breaking the whole database WINS: the far door opens, the seal lifts, the Ascent arms', () => {
+    it('breaking HEUR wins: the far door opens, the seal lifts, the Ascent arms', () => {
         const game = newGame();
         game.state.unlocked.borders = true;
         game.worldManager.currentRoomX = 8; game.worldManager.currentRoomY = 1;
         game.startHeurFight('right'); // far = right door
         game.snake.body = [{ x: 0, y: 0 }];
         const heur = game.heur.bricks.find(b => b.heur);
-        game.heur.bricks = [heur]; // only his signature remains
-        game.heur.ping = { c: heur.c - 1, r: heur.r, dc: 1, dr: 0 };
-        game._heurPingStep();
+        game.heur.bricks = [heur];
+        for (let i = 0; i < game.HEUR_SEALS; i++) {
+            if (!game.heur) break;
+            game.heur.ping.hot = game.HEUR_HOT; // armed off your body
+            game._heurApplyHit({ brick: heur });
+        }
         expect(game.heur).toBeNull(); // seal lifted
         expect(game.state.unlocked.purgeComplete).toBe(true);
         expect(game.worldManager.isWallBroken(8, 1, 'right')).toBe(true); // far door opened
@@ -781,6 +1098,120 @@ describe('Heur\'s Decontamination — in-room Breakout', () => {
         expect(game.state.gameState).toBe('PLAYING');
         // and now you can actually leave through the far door
         expect(game.worldManager.getWeakPoint(8, 1, 'right')).toBeTruthy();
+    });
+
+    // THE REWORK'S LOAD-BEARING PROPERTIES. Each of these was a measured defect before.
+    describe('the rework', () => {
+        const inBay = (dir = 'up') => {
+            const game = newGame();
+            game.state.unlocked.borders = true;
+            game.state.unlocked.tailRider = true;
+            game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -1;
+            game.apple = { x: 300, y: 300 }; game.npcs = []; game.glitches = []; game.obstacles = [];
+            game.state.score = 40; game.growSnake(40);
+            game.startHeurFight(dir);
+            return game;
+        };
+
+        it('the ping keeps its OWN clock — gear does not speed it up', () => {
+            const count = (gear) => {
+                const game = inBay();
+                game.state.score = 40;
+                game.changeGear(gear);
+                let steps = 0, prev = `${game.heur.ping.c},${game.heur.ping.r}`;
+                for (let ms = 0; ms < 3000 && game.heur; ms += 16) {
+                    game.update(16);
+                    if (!game.heur) break;
+                    const now = `${game.heur.ping.c},${game.heur.ping.r}`;
+                    if (now !== prev) { steps++; prev = now; }
+                }
+                return steps;
+            };
+            // Measured before the fix: 10 steps/sec in gear 0 against 33 in gear 3.
+            expect(count(0)).toBe(count(3));
+        });
+
+        it('striking different body segments produces different angles (aiming exists)', () => {
+            const ks = new Set();
+            for (const idx of [1, 3, 6, 10]) {
+                const game = inBay();
+                game.heur.bricks = [];
+                game.snake.body = [];
+                for (let i = 0; i < 14; i++) game.snake.body.push({ x: (3 + i) * 20, y: 15 * 20 });
+                game.heur.ping.c = game.snake.body[idx].x / 20; game.heur.ping.r = 14;
+                game.heur.ping.sc = 1; game.heur.ping.sr = 1; game.heur.ping.k = 0;
+                game._heurPingStep();
+                ks.add(game.heur.ping.k);
+            }
+            // Before: 13 strike points, ONE outgoing vector, byte-identical.
+            expect(ks.size).toBeGreaterThan(1);
+        });
+
+        it('the ping visits BOTH cell parities — the old orbit lock is broken', () => {
+            const game = inBay();
+            game.snake.body = [10, 11, 12, 13, 14].map(c => ({ x: c * 20, y: 15 * 20 }));
+            const par = { 0: 0, 1: 0 };
+            for (let i = 0; i < 2000 && game.heur && game.state.gameState !== 'DEAD'; i++) {
+                game._heurTick(game.HEUR_PING_MS);
+                if (game.heur) par[Math.abs((game.heur.ping.c + game.heur.ping.r) % 2)]++;
+            }
+            // Diagonal-only motion made (c+r) parity invariant, so the ball lived on one
+            // colour of the checkerboard and settled into closed orbits it never left.
+            expect(par[0]).toBeGreaterThan(0);
+            expect(par[1]).toBeGreaterThan(0);
+        });
+
+        it('the database is SOLID — driving the head into a brick is a wall touch', () => {
+            const game = inBay();
+            const b = game.heur.bricks.find(x => !x.heur) || game.heur.bricks[0];
+            game.snake.body = [{ x: b.c * 20, y: (b.r + 1) * 20 }];
+            game.input.direction = { x: 0, y: -20 };
+            game.input.nextDirection = { x: 0, y: -20 };
+            game.update(1000);
+            expect(game.state.gameState).toBe('DEAD');
+        });
+
+        it('a brick NEVER spawns on the worm (the intercept leaves you in the band)', () => {
+            // The intercept fires from crossBorder, so your body trails back through
+            // exactly the rows the band wants. Entombing it would be an unavoidable death
+            // on the first move now that bricks are solid.
+            const game = newGame();
+            game.state.unlocked.borders = true;
+            game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -1;
+            game.snake.body = [];
+            for (let r = 1; r < 8; r++) game.snake.body.push({ x: 10 * 20, y: r * 20 });
+            game.startHeurFight('up');
+            for (const b of game.heur.bricks) {
+                const clash = game.snake.body.some(s => s.x === b.c * 20 && s.y === b.r * 20);
+                expect(clash, `brick at ${b.c},${b.r} spawned inside the worm`).toBe(false);
+            }
+        });
+
+        it('Heur is never masked by your body — he is the scanner, he cannot hide', () => {
+            const game = inBay();
+            const hb = game.heur.bricks.find(b => b.heur);
+            game.snake.body = [
+                { x: 2 * 20, y: 17 * 20 },
+                { x: 3 * 20, y: 17 * 20 },
+                { x: hb.c * 20, y: hb.r * 20 }, // draped over him
+            ];
+            expect(game._heurClassify(hb.c, hb.r).brick).toBe(hb);
+        });
+
+        it('he performs the full protocol once; coming back is one word', () => {
+            const game = newGame();
+            game.state.upgrades.corruptHandler = true;
+            game.state.unlocked.borders = true;
+            game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = -1;
+
+            expect(game._heurInterceptHere(0, -1)).toBe(true);
+            expect(game.dialogManager.currentDialog).toBe(HEUR.intercept);
+            finishDialog(game);
+
+            game.heur = null;
+            expect(game._heurInterceptHere(0, -1)).toBe(true);
+            expect(game.dialogManager.currentDialog).toBe(HEUR.reentry);
+        });
     });
 
     it('the ping never freezes in a corner against the locked signature', () => {
@@ -841,11 +1272,12 @@ describe('Heur\'s Decontamination — in-room Breakout', () => {
         game.snake.body = [{ x: 0, y: 0 }];
         game.heur.bricks = [game.heur.bricks.find(b => b.heur)];
         const hb = game.heur.bricks[0];
-        // deliver the ping onto the last brick
-        game.heur.ping = { c: hb.c - 1, r: hb.r, dc: 1, dr: 0 };
-        // some far dirs need a different approach vector; brute-force a hit
-        for (let i = 0; i < 400 && game.heur; i++) {
+        // deliver the ping onto the last brick — HEUR_SEALS times now, not once
+        game.heur.ping.c = hb.c - 1; game.heur.ping.r = hb.r;
+        game.heur.ping.sc = 1; game.heur.ping.sr = 0; game.heur.ping.k = 0;
+        for (let i = 0; i < 1200 && game.heur; i++) {
             game.snake.body = [{ x: 0, y: 0 }];
+            game.heur.ping.hot = game.HEUR_HOT; // stand in for a player who keeps deflecting
             game._heurPingStep();
         }
         expect(game.heur).toBeNull();
@@ -963,8 +1395,11 @@ describe('The Ascent — Beat 7, the Fall-Through, the Override', () => {
         const ring = game._gate3Ring();
         // the ring wraps the interior perimeter, minus exactly one aperture run
         expect(game._gate3Blocks.length).toBe(ring.length - game.GATE3_APERTURE);
-        // it ROTATES: the block set changes as the gap advances
+        // it ROTATES: the block set changes as the gap advances — but only AFTER the
+        // entry hold, which parks the aperture on the door you came in through.
         const first = game._gate3Blocks.map(b => `${b.x},${b.y}`).join('|');
+        for (let i = 0; i < game.GATE3_ENTRY_HOLD; i++) game.updateGate3();
+        expect(game._gate3Blocks.map(b => `${b.x},${b.y}`).join('|')).toBe(first);
         for (let i = 0; i < game.GATE3_TURN_TICKS + 1; i++) game.updateGate3();
         expect(game._gate3Blocks.map(b => `${b.x},${b.y}`).join('|')).not.toBe(first);
         // and the aperture is never sealed — every rotation keeps a gap (no soft-lock)
