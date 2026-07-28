@@ -13,7 +13,10 @@ export class NarrativeManager {
         this.online = false;
         this.skipRequested = false;
         this.unknownDeathCount = 0; // deaths with no specific cause (glitch drain) — for the escalating lines
-        this.deathByCause = { self: 0, border: 0, obstacle: 0, unknown: 0 }; // per-cause tallies (Hydratia's hint tiers)
+        // Per-cause tallies (Hydratia's hint tiers escalate on the cause actually killing
+        // you). One key per distinguishable death, so a boss match no longer reports as a
+        // quarantine-wall impact.
+        this.deathByCause = { self: 0, wall: 0, weak: 0, obstacle: 0, stamp: 0, glitch: 0, gate: 0, finale: 0, heur: 0, unknown: 0 };
         this._generation = 0;       // bumped by reset() to abandon an in-flight typewriter loop
         // THE RELEASE LATCH (owner decision 5: text STOPS the game, and each log must be
         // Space-barred through). A finished log no longer releases on a timer — it waits
@@ -31,7 +34,7 @@ export class NarrativeManager {
         this.awaitingRelease = false; // a stuck latch here would boot a New Game frozen
         this.deathCount = 0;
         this.unknownDeathCount = 0;
-        this.deathByCause = { self: 0, border: 0, obstacle: 0, unknown: 0 };
+        this.deathByCause = { self: 0, wall: 0, weak: 0, obstacle: 0, stamp: 0, glitch: 0, gate: 0, finale: 0, heur: 0, unknown: 0 };
         this._bitePairGloated = false; // the met-but-not-carried gloat re-arms per run
         this.online = false;
         this._generation++; // any in-flight processQueue loop is now stale and will bail
@@ -139,12 +142,33 @@ export class NarrativeManager {
             this.printMessage(ARCHITECT.death.nearBite);
             return;
         }
-        if (cause === 'self') {
-            this.printMessage(ARCHITECT.death.self);
-        } else if (cause === 'border') {
-            this.printMessage(ARCHITECT.death.border);
-        } else if (cause === 'obstacle') {
-            this.printMessage(ARCHITECT.death.obstacle);
+        // THE LEADS (owner): while Cache and Hydratia are unmet, a death is an excuse for
+        // him to gloat about the two programs that could have saved you — and in gloating,
+        // to tell you they exist. Rationed to every 4th death of a given kind so it stays a
+        // rumour rather than a signpost, and it never survives meeting them.
+        const leads = [];
+        if (opts.unlocked && !opts.unlocked.saveFunction) leads.push(ARCHITECT.death.hintCache);
+        if (opts.unlocked && !opts.unlocked.hydratiaFound) leads.push(ARCHITECT.death.hintHydratia);
+        if (leads.length && this.deathCount % 4 === 0) {
+            this.printMessage(leads[(this.deathCount / 4 - 1) % leads.length]);
+            return;
+        }
+        // Per-cause lines. `border` is kept as an alias so any caller I missed still lands
+        // on the wall gloat rather than silently falling through to the unknown counter.
+        const byCause = {
+            self: ARCHITECT.death.self,
+            wall: ARCHITECT.death.wall,
+            border: ARCHITECT.death.wall,
+            weak: null, // handled by onSubSmash, which already spoke this tick
+            obstacle: ARCHITECT.death.obstacle,
+            stamp: ARCHITECT.death.stamp,
+            glitch: ARCHITECT.death.glitch,
+            gate: ARCHITECT.death.gate,
+            finale: ARCHITECT.death.finale,
+            heur: ARCHITECT.death.heur,
+        };
+        if (cause in byCause) {
+            if (byCause[cause]) this.printMessage(byCause[cause]);
         } else {
             // Cause-less deaths (a Glitch draining you to nothing). Gate on a SEPARATE
             // counter — keying these on the global deathCount made them unreachable
@@ -180,11 +204,15 @@ export class NarrativeManager {
 
     // The Architect's relief that you sub-smashed instead of going max speed — and,
     // by gloating in his log, he hands you exactly the trick he's hiding. Fires once.
-    onSubSmash(inHub, unlockedFlags) {
+    // A weak point missed for want of speed. In the Hub it is the TUTORIAL — the only
+    // place the game says out loud that maximum velocity is what cracks a wall — so it
+    // branches on whether you actually had the mass: `heavy` leaks the rule, `light` says
+    // you were never going to make it. Out in the Wilds he has stopped being surprised.
+    onSubSmash(inHub, unlockedFlags, heavy = true) {
         if (unlockedFlags.subSmashRevealed) return;
         unlockedFlags.subSmashRevealed = true;
         if (inHub) {
-            this.printMessage(ARCHITECT.subSmash.hub);
+            this.printMessage(heavy ? ARCHITECT.subSmash.heavy : ARCHITECT.subSmash.light);
         } else {
             this.printMessage(ARCHITECT.subSmash.wilds);
         }

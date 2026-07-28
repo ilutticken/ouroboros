@@ -1261,8 +1261,13 @@ export class GameEngine {
             // The Architect, gloating in his log, reveals that max speed is the trick.
             this.worldManager.damageWall(rx, ry, directionStr, dmg, this.worldManager.wallBreakThreshold - 1);
             this.audio.playCrack();
-            this.narrative.onSubSmash(inHub, this.state.unlocked);
-            this.die('border');
+            // `heavy` = it HAD the mass to breach and blew the approach; `light` = it could
+            // never have made it. Two different gloats, and the mass threshold is the same
+            // one the gearbox uses (30 Data licenses gear 3).
+            this.narrative.onSubSmash(inHub, this.state.unlocked, this.state.score >= 30);
+            // A WEAK POINT missed for want of speed — a different failure from walking
+            // into a solid wall, and the Architect's best gloat, so it gets its own cause.
+            this.die('weak');
             return { stop: true };
         }
         // PORT 0 — the aperture in the top coil out of {5,-5}. The central span is the
@@ -1426,7 +1431,7 @@ export class GameEngine {
                         // Drained to nothing: consume the killer FIRST so die()'s saveRoom
                         // doesn't bake it into the cell to camp respawns.
                         this.glitches.splice(i, 1);
-                        this.die();
+                        this.die('glitch');
                         return true;
                     } else {
                         break; // the floor is passengers, not Data — the bite stops there
@@ -1588,7 +1593,7 @@ export class GameEngine {
             if (this.stamps.length) {
                 for (const s of this.stamps) {
                     if (this.snake.head.x === s.x && this.snake.head.y === s.y) {
-                        this.die('obstacle');
+                        this.die('stamp');
                         return true;
                     }
                 }
@@ -2268,6 +2273,7 @@ export class GameEngine {
         // out cooperation; fires once per run).
         this.narrative.onDeath(cause, {
             nearBite: this.state.unlocked.biteProgress >= 1 && !this.state.unlocked.tailRider,
+            unlocked: this.state.unlocked, // so he can gloat about the leads you haven't found
         });
 
         // HYDRATIA'S RECEIPT — the DEAD overlay's second voice (the Architect keeps his

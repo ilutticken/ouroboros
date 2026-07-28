@@ -108,59 +108,88 @@ export const CACHE_HOME_SCENE = [
 // Self-directed: he does not know you can read this terminal, so he mutters, gloats, and
 // leaks the very mechanics he's hiding. Never addressed to "you". (design_doc §5.5.)
 export const ARCHITECT = {
+    // DEATHS. Every way to die used to collapse into three causes, and four of the best
+    // ones — Gate's ring, Port 0's walls, Heur's ping, Heur's database — all reported
+    // "Quarantine held", which was simply untrue: you were nowhere near a quarantine wall.
+    // The engine now distinguishes: self · wall · weak · obstacle · stamp · glitch · gate ·
+    // finale · heur. (ALL COPY BELOW IS DRAFT except where noted.)
     death: {
         self: "LOG: Architect > 'It devoured its own tail. On PURPOSE. I do not have a form for this. I am inventing a form for this.'",
-        border: "LOG: Architect > 'Quarantine held. Anomaly deleted on impact. Another flawless day for me, personally.'",
+        // Solid wall / the coil — the containment doing its job, which is his favourite thing.
+        wall: "LOG: Architect > 'Quarantine held. Anomaly deleted on impact. Another flawless day for me, personally.'",
         obstacle: "LOG: Architect > 'Anomaly walked into a logic gate. Didn't even have to try. Note: take full credit anyway.'",
+        stamp: "LOG: Architect > 'Anomaly filed itself against a standing denial. The paperwork was, for once, correct.'",
+        glitch: "LOG: Architect > 'The corruption took it. The corruption it made. I want that noted in the record TWICE.'",
+        // BOSS MATCHES. Each one is a different agent of his doing a different job, and he
+        // takes credit for all of them with varying degrees of honesty.
+        gate: "LOG: Architect > 'Gate closed a loop on it. GOOD. That is what a perimeter IS. I want that circulated.'",
+        finale: "LOG: Architect > 'The anomaly was compressed against its own approach vector at Port 0. Gate is thorough. Gate is SO thorough.'",
+        heur: "LOG: Architect > 'The janitorial daemon scrubbed it. I did not dispatch that. I am simply the one filing it.'",
         unknownFirst: "LOG: Architect > 'Unregistered process terminated. Filing under Not My Problem.'",
         unknownThird: "LOG: Architect > 'It keeps coming back. I do not like that.'",
         // Fires (once) when it dies AFTER meeting 2-Bit but BEFORE hooking him aboard —
-        // the Architect is relieved the two haven't figured out cooperation. (DRAFT.)
-        nearBite: "LOG: Architect > 'It died within sight of the merchant remnant. Again. Good. Imagine those two ever working together.'"
+        // the Architect is relieved the two haven't figured out cooperation.
+        nearBite: "LOG: Architect > 'It died within sight of the merchant remnant. Again. Good. Imagine those two ever working together.'",
+        // VAGUE LEADS (owner). He gloats about the two programs that could actually help
+        // you, and in doing so tells you they exist. Only while unmet — once you have found
+        // them the joke is spent. He never names a direction; that is the signpost's job.
+        hintCache: "LOG: Architect > 'Terminated. No recovery point, no witness, nothing filed. There USED to be something in this system that kept copies. I had it reclaimed. Obviously.'",
+        hintHydratia: "LOG: Architect > 'Terminated, and nothing caught it. There is a maintenance process that still tries, somewhere out past the edge of my logs. It is very small. It is very persistent. I have never been able to find it.'"
     },
     scoreUnlock: {
-        ui: "LOG: Architect > 'The hoarder is growing. Deploying a monitoring overlay.'",
-        borders: "LOG: Architect > 'Rogue packet is a genuine nuisance now. Extruding containment walls. Nothing has ever escaped my walls. (Nothing has ever tried.)'"
+        ui: "LOG: Architect > 'It's growing. Deploying a monitoring overlay.'",
+        borders: "LOG: Architect > 'Rogue packet is looking like it's going to be a genuine nuisance. Extruding containment walls. Virtually NOTHING escapes my containment walls.'"
     },
-    maxGear: "LOG: Architect > 'CRITICAL: the anomaly is at breach velocity. If it aims that at a weak point now— no. No. It doesn't know about weak points. It CAN'T. Deep breaths. I have no lungs. Deep breaths regardless.'",
+    maxGear: "LOG: Architect > 'CRITICAL: the anomaly is at BREACH VELOCITY. If it aims that at a weak point now— no. No. It doesn't know about weak points. Deep breaths. DEEP BREATHS.'",
+    // THE TUTORIAL, and the only place the game teaches that gear 3 is the key to the map.
+    // Keyed by what actually went wrong, so the gloat is specific: `heavy` = it had the
+    // mass to breach and blew the approach; `light` = it could never have made it.
     subSmash: {
-        hub: "LOG: Architect > 'The anomaly rammed the quarantine below breach speed and destroyed itself. HA. It has NOT realized it must reach MAXIMUM velocity to crack a wall open. Long may it flail. It could never work that out from in here.'",
-        wilds: "LOG: Architect > 'It keeps hurling itself at barriers too slowly and deleting itself. Reassuring. Full speed is the whole trick and it hasn't the faintest idea. I certainly shan't tell it.'"
+        heavy: "LOG: Architect > 'The anomaly rammed the quarantine below breach speed and destroyed itself. HA. It has NOT realized it must reach MAXIMUM velocity to crack a weak point open. It could NEVER work that out from in here.'",
+        light: "LOG: Architect > 'My concerns were unfounded: It can't manage to gather enough data to reach BREACHING velocity.'",
+        wilds: "LOG: Architect > 'It keeps hurling itself at weak points TOO SLOWLY and deleting itself. Reassuring.'"
     },
-    wallBreak: "LOG: Architect > 'THE QUARANTINE IS BREACHED. HOW?! It went max speed at the weak point??? It KNEW. Dispatching Gate to Sector [3,0], and someone find out if this thing can READ.'",
+    wallBreak: "LOG: Architect > 'THE QUARANTINE IS BREACHED. HOW?! It went max speed at the weak point??? Dispatching Gate to Sector [3,0], and someone find out if this thing can READ.'",
     // CANON (retcon): the Architect does NOT seed the Glitches — he OBSERVES that the
     // anomaly's own Data-gathering spawns them, and files it as one more reason for
     // containment. The closing clause still leaks the finale's trick (his agents can't
     // touch the residue) — the leak survives the retcon because gloating is his nature.
     // (DRAFT — owner to punch up.)
-    seedGlitches: "LOG: Architect > 'Corruption is blooming along the anomaly's feeding path. I did not build this, and I resent logging it. Filed under: reasons for containment.'",
+    seedGlitches: "LOG: Architect > 'Corruption seems to be blooming along the anomaly's feeding path. Filed under: additional reasons for containment.'",
     // Guide logs TRIMMED 5 -> 2 (owner: fewer Architect messages, each Space-gated). The
     // '1,0' flavor is folded into '3,0'; '2,0'/'4,0' were redundant restatements. The two
     // load-bearing mechanic leaks (maxGear, subSmash) are untouched elsewhere. (DRAFT.)
     guide: {
         '3,0': "LOG: Architect > 'Sector 3 and still drifting east… Gate to hold the line here. Gate is reliable. Gate will not embarrass me.'",
-        '5,0': "LOG: Architect > 'It reached Localhost. The one place I can't touch. Recalculating. Note to self: reassign Gate somewhere with fewer exits.'"
+        '5,0': "LOG: Architect > 'It reached Localhost... Recalculating. Note to self: reassign Gate somewhere with fewer exits.'"
     },
-    // Motion Carried — the world-state flip on clearing the Override (the SECOND Gate
-    // run-in, now at the act midpoint). Single merged log (was two back-to-back) so the
-    // moment costs one Space, not two. The tail leaks the a11y notch. (DRAFT.)
-    // ^ the clause was inverted: it used to read "bind hazard scheduling to the anomaly's
-    // own tick", which is the exact rule the world clock deleted — the world now keeps its
-    // own time so your speed can't set the world's. Under Total Diegesis the log has to
-    // generate the mechanic, not contradict it. (STILL DRAFT — owner's punch-up pending.)
-    motionCarried: "LOG: Architect > 'Motion before the Scheduling Committee: hazard scheduling gets its OWN clock. The anomaly does not get to set the pace by running. Carried, unanimous. I am the only member. I abstained. ...Who labeled the drift vectors?'",
+    // Motion Carried — fires on Gate's IMPACT as he smashes out of the Override.
+    //
+    // "before IT happens AGAIN" is the Kernel. He is the only character who knows what
+    // the stakes actually are (see coilFirst), and this is the first time the mask slips:
+    // no committee bit, no filing joke, just a daemon watching the containment he built
+    // start to come apart. Per his bible his formatting corrupts when he is afraid — the
+    // grammar here does exactly that.
+    motionCarried: "LOG: Architect > 'Jiminy Circuits, things are MOVING. Will someone or something PLEASE shut this things down before IT happens AGAIN?!'",
     // The 'can it READ?' payoff — fires at the Override clear, the last moment Gate still
     // forwards him reports (before the {5,-3} cleared-dialog severance line). (DRAFT.)
-    canRead: "LOG: Architect > 'Re: my standing question of whether it can read. It braked for the citations. ...Who set my log to PUBLIC?'",
+    canRead: "LOG: Architect > 'Re: my standing question of whether it can read. It braked for the citations. ...Is my log set to PUBLIC? WHERE IS THAT SETTING?'",
     // His last word at the finale — a half-line the era-16 snap cuts off mid-syllable.
     // Explains his absence from the climax: Gate stopped forwarding; the reboot takes
     // his channel. (DRAFT.)
     finaleCut: "LOG: Architect > 'Gate has stopped forwarding reports. Fine. I will watch Port 0 myself, I— what is happening to the pal—'",
-    // First time the anomaly reaches a perimeter (coil) sector. Long-fuse: no explanation
-    // for acts. He didn't build the outer wall. He built AROUND it.
-    coilFirst: "LOG: Architect > 'It reached the perimeter. Filing under GEOLOGY: the outer wall predates me. I did not build it. I built around it. It is warm, and I do not audit it.'",
+    // First time the anomaly reaches a perimeter (coil) sector.
+    //
+    // CANON (owner): the Architect KNOWS EXACTLY what the coil is, because HE PUT IT
+    // THERE. He tricked the Kernel into swallowing its own tail — the Reclamation was a
+    // protocol to shrink the system and draw it into a tight loop — and once it had, he
+    // threw up the containment walls to slow everything to a crawl and preserve what was
+    // left. So he is not a caretaker who inherited a mystery. He is the jailer, and the
+    // smugness here is a man admiring his own lock. (Supersedes the earlier "the outer
+    // wall predates me, I did not build it" line, which was him not knowing.)
+    coilFirst: "LOG: Architect > 'It reached the perimeter. Let's see it bust through THAT. File under: a cruel and beautiful irony.'",
     // After Heur's purge — the dispatch is implied, never confirmed.
-    purgeAudit: "LOG: Architect > 'The janitorial daemon engaged the anomaly and lost. I am not saying I dispatched it. I am noting, for the record, that SOMEBODY in this system still follows procedure.'"
+    purgeAudit: "LOG: Architect > 'The janitorial daemon engaged the anomaly and lost. I am noting, for the record, that SOMEBODY in this system still follows procedure.'"
 };
 
 // --- 2-Bit (src/engine/Game.js) -----------------------------------------------------
@@ -332,30 +361,34 @@ export const NIBBLE = {
 // an exterminator reciting your control scheme, and it satisfies §2.6, whose actual
 // requirement is that no LOAD-BEARING signal is lost: every instruction is in English,
 // and the unrecoverable French ("au bout du compte", "piège", "je reviendrai pour toi")
-// is pure flavour. Note "Heur : " — the space before the colon is correct French
-// typography, and it is free characterisation. Keep it.
+// is pure flavour.
+//
+// HE IS "???" THROUGHOUT. He never gives his name anywhere in this sequence — the player
+// only ever learns "Heur" from the design doc, never from the game — so the tag stays
+// anonymous until something actually introduces him. (Same device as Gate's intro, where
+// the speaker tag IS the reveal.)
 export const HEUR = {
     intercept: [
         "SYSTEM: DECONTAMINATION BAY — BEGIN SEALING FORWARD EGRESS",
-        "Heur : Restez immobile.",
-        "Heur : *ANALYSE EN COURS* — Comportement aberrant détecté.",
-        "Heur : Regrettable.",
-        "Heur : Protocole : Confinement et suppression.",
+        "???: Restez immobile.",
+        "???: *ANALYSE EN COURS* — Comportement aberrant détecté.",
+        "???: Regrettable.",
+        "???: Protocole : Confinement et suppression.",
         "SYSTEM: SCAN-PING ARMED — BODY MASS DEFLECTS. READ-HEAD DOES NOT.",
         "SYSTEM: SIGNATURE DATABASE IS SOLID. REAR EGRESS REMAINS OPEN.",
-        "Heur : Renforcement de la barrière en cours. Je suis désolé, Petit Dévoreur."
+        "???: Renforcement de la barrière en cours. Je suis désolé, Petit Dévoreur."
     ],
     // Leaving the bay and coming back rebuilds the fight from scratch. He does not do the
     // whole speech twice — that is the joke, and it is one word.
     reentry: [
-        "Heur : Encore.",
+        "???: Encore.",
         "SYSTEM: DECONTAMINATION BAY — BEGIN SEALING FORWARD EGRESS"
     ],
     win: [
-        "Heur : Victime de mon propre piège.",
-        "Heur : Au bout du compte,",
-        "Heur : Tout est contenu.",
-        "Heur : Contenu, ou effacé. Je reviendrai pour toi, Petit Dévoreur.",
+        "???: Victime de mon propre piège.",
+        "???: Au bout du compte,",
+        "???: Tout est contenu.",
+        "???: Contenu, ou effacé. Je reviendrai pour toi, Petit Dévoreur.",
         "SYSTEM: BARRIER INCOMPLETE. DECONTAMINATION CYCLE... INCOMPLETE",
         "SYSTEM: FORWARD SEAL RETRACTED"
     ]
@@ -582,22 +615,55 @@ export const HYDRATIA_DEATH = {
     // Before she's caught, her name never shows — an unattributed system line holds the
     // slot (and quietly plants that SOMEONE is doing the retaining).
     receiptUnmet: "SYSTEM: signal lost. progress retained.",
+    // One entry per cause the engine can distinguish, [first time, repeat offender].
+    // SHE COACHES; the Architect gloats. Never duplicate his line — he says what happened,
+    // she says what to do about it. (New causes are DRAFT.)
     hint: {
         self: [
             "a body can't cross itself. give your turns more room.",
             "your length is your wealth AND your hazard. plan the corner before you take it."
         ],
-        border: [
+        // A SOLID wall: there was never a way through this one.
+        wall: [
+            "the quarantine bites. (not everywhere. not at every speed.)",
+            "that stretch has no seam. the cracked ones look different — find one of those."
+        ],
+        border: [ // alias, kept so an unconverted caller still coaches correctly
             "the quarantine bites. (not everywhere. not at every speed.)",
             "walls delete you — except where they're already cracked. look for the seams."
+        ],
+        // A WEAK POINT, missed for want of speed. This is the one that most needs saying.
+        weak: [
+            "you found the seam. you weren't fast enough to use it.",
+            "a cracked wall only opens at full speed. slower than that and it opens YOU."
         ],
         obstacle: [
             "gates don't move. you do.",
             "logic gates are furniture. route around, not through."
         ],
-        unknown: [
+        stamp: [
+            "a denial stays where it lands. that room is smaller now than when you entered.",
+            "he stamps where you've BEEN. your own path is the maze — stop doubling back."
+        ],
+        glitch: [
             "the corruptors ate you a bite at a time. keep the head away from them.",
             "corruption drains what you carry. starve it or shove it — don't feed it."
+        ],
+        gate: [
+            "his loop turns. the gap comes back around — it always comes back around.",
+            "don't chase the gap. pick where it will BE and be there first."
+        ],
+        finale: [
+            "the walls come with holes in them. aim for the hole, not the wall.",
+            "forward is the only direction that gets smaller. don't wait it out."
+        ],
+        heur: [
+            "the ping reads your head. the rest of you is just a wall to it.",
+            "his database is solid now — you can't swim through it. break it or leave."
+        ],
+        unknown: [
+            "something took you and didn't file a reason.",
+            "no cause on record. i keep what i can either way."
         ]
     }
 };

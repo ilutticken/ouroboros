@@ -472,7 +472,7 @@ export const EncounterMethods = {
             // by it means you drove into it. die('border') routes through the Crumple
             // Buffer for free, same contract as Gate's ring (_gate3Collide).
             this.audio.playCorruptHit();
-            this.die('border');
+            this.die('heur');
             return;
         }
         if (cell.body) {
@@ -492,7 +492,7 @@ export const EncounterMethods = {
         const g = this.gridSize;
         const hd = this.snake.head;
         if (!h.bricks.some(b => b.c * g === hd.x && b.r * g === hd.y)) return false;
-        this.die('border');
+        this.die('heur');
         return true;
     },
 
@@ -853,7 +853,7 @@ export const EncounterMethods = {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -3) return false;
         const h = this.snake.head;
         if (!blocks.some(b => b.x === h.x && b.y === h.y)) return false;
-        this.die('border');
+        this.die('gate');
         return true;
     },
 
@@ -1017,7 +1017,7 @@ export const EncounterMethods = {
         if (this.worldManager.currentRoomX !== 5 || this.worldManager.currentRoomY !== -5) return false;
         const h = this.snake.head;
         if (!this._finaleWallCells().some(c => c.x === h.x && c.y === h.y)) return false;
-        this.die('border');
+        this.die('finale');
         return true;
     },
 

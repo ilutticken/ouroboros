@@ -15,6 +15,102 @@ import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 const newGame = (width = 400, height = 400) => makeGame({ width, height });
 
 // ---------------------------------------------------------------------------------
+// Every way to die used to collapse into three causes — and the four best ones (Gate's
+// ring, Port 0's walls, Heur's ping, Heur's database) all reported "Quarantine held",
+// which was untrue. The routing had NO test coverage, so splitting it broke nothing and
+// proved nothing. These pin it.
+describe('Death causes route to the right voice', () => {
+    beforeEach(mountDom);
+
+    // Every cause the engine can pass to die(), and what each channel owes it.
+    const CAUSES = ['self', 'wall', 'weak', 'obstacle', 'stamp', 'glitch', 'gate', 'finale', 'heur'];
+
+    it('the Architect has a distinct gloat for every cause (none share a line)', () => {
+        const lines = CAUSES
+            .filter(c => c !== 'weak') // spoken by onSubSmash on the same tick, not onDeath
+            .map(c => ARCHITECT.death[c]);
+        for (const [i, l] of lines.entries()) {
+            expect(l, `no Architect line for '${CAUSES[i]}'`).toBeTruthy();
+        }
+        expect(new Set(lines).size).toBe(lines.length); // all distinct
+    });
+
+    it('Hydratia coaches every cause, in two tiers, without repeating him', () => {
+        for (const c of CAUSES) {
+            const tiers = HYDRATIA_DEATH.hint[c];
+            expect(tiers, `no receipt hint for '${c}'`).toBeTruthy();
+            expect(tiers.length).toBe(2); // [first time, repeat offender]
+            for (const t of tiers) {
+                expect(t.length).toBeGreaterThan(0);
+                // she never restates his gloat verbatim
+                expect(ARCHITECT.death[c]).not.toBe(t);
+            }
+        }
+    });
+
+    it('a boss match no longer reports as a quarantine-wall impact', () => {
+        const game = newGame();
+        for (const c of ['gate', 'finale', 'heur']) {
+            game.narrative.reset();
+            game.narrative.online = true;
+            game.narrative.printMessage = vi.fn();
+            game.narrative.onDeath(c, { unlocked: { saveFunction: true, hydratiaFound: true } });
+            const said = game.narrative.printMessage.mock.calls[0][0];
+            expect(said, `'${c}' fell through to the wall line`).not.toBe(ARCHITECT.death.wall);
+            expect(said).toBe(ARCHITECT.death[c]);
+        }
+    });
+
+    it('each cause tallies on its OWN counter, so the hint tiers escalate correctly', () => {
+        const game = newGame();
+        game.narrative.reset();
+        const u = { saveFunction: true, hydratiaFound: true };
+        game.narrative.onDeath('gate', { unlocked: u });
+        game.narrative.onDeath('gate', { unlocked: u });
+        game.narrative.onDeath('heur', { unlocked: u });
+        expect(game.narrative.deathByCause.gate).toBe(2);
+        expect(game.narrative.deathByCause.heur).toBe(1);
+        expect(game.narrative.deathByCause.wall).toBe(0); // not lumped together any more
+        expect(game.narrative.deathByCause.unknown).toBe(0);
+    });
+
+    it('while Cache and Hydratia are unmet he gloats the leads — and stops once found', () => {
+        const game = newGame();
+        game.narrative.reset();
+        game.narrative.online = true;
+        game.narrative.printMessage = vi.fn();
+        const unmet = { saveFunction: false, hydratiaFound: false };
+        for (let i = 0; i < 4; i++) game.narrative.onDeath('wall', { unlocked: unmet });
+        const said = game.narrative.printMessage.mock.calls.map(c => c[0]);
+        expect(said).toContain(ARCHITECT.death.hintCache);
+
+        // ...and never once they're both found
+        game.narrative.reset();
+        game.narrative.online = true;
+        game.narrative.printMessage = vi.fn();
+        const met = { saveFunction: true, hydratiaFound: true };
+        for (let i = 0; i < 12; i++) game.narrative.onDeath('wall', { unlocked: met });
+        const after = game.narrative.printMessage.mock.calls.map(c => c[0]);
+        expect(after).not.toContain(ARCHITECT.death.hintCache);
+        expect(after).not.toContain(ARCHITECT.death.hintHydratia);
+    });
+
+    it('the sub-smash gloat branches on whether you HAD the mass to breach', () => {
+        const heavy = newGame();
+        heavy.narrative.online = true;
+        heavy.narrative.printMessage = vi.fn();
+        heavy.narrative.onSubSmash(true, {}, true);
+        expect(heavy.narrative.printMessage).toHaveBeenCalledWith(ARCHITECT.subSmash.heavy);
+
+        const light = newGame();
+        light.narrative.online = true;
+        light.narrative.printMessage = vi.fn();
+        light.narrative.onSubSmash(true, {}, false);
+        expect(light.narrative.printMessage).toHaveBeenCalledWith(ARCHITECT.subSmash.light);
+    });
+});
+
+// ---------------------------------------------------------------------------------
 describe('The terminal release latch (text stops the game until Space)', () => {
     beforeEach(mountDom);
 
