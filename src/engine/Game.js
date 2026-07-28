@@ -282,6 +282,8 @@ export class GameEngine {
         this._shakeMs = 0;         // screen-shake remaining (impacts; reduce-motion-exempt)
         this._worldTimer = 0;      // ms accumulated toward the next ambient world step
         this._worldStep = 0;       // ambient world steps taken (drives drift cadence + shove cooldowns)
+        this._textHold = false;    // post-text: the worm holds until the next steering input
+        this._wasTextFrozen = false; // edge detector for the hold (see update())
         this._finale = null;       // Port 0's advancing walls ({rows:[{r,holes}], t})
         this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
@@ -382,6 +384,13 @@ export class GameEngine {
             // agreeing (handled in the offer's onComplete) — never a separate Space press
             // in the world. Keep it that way.
         }, (delta) => {
+            // While the TEXT HOLD is on, a tap along your facing axis is a RESUME, not a
+            // shift: the player means "go", and silently upshifting on the go-press would
+            // hand them an unseen speed change at the exact moment holds exist to protect.
+            if (this._textHold && this.state.gameState === 'PLAYING') {
+                this._textHold = false;
+                return;
+            }
             // Gear taps are additionally blocked while the sim is frozen (a printing
             // log / module install) — otherwise tapping your facing direction while
             // reading a log would silently accumulate max speed (the F15 bug).
@@ -1456,6 +1465,32 @@ export class GameEngine {
         this.updateCacheFade(dt); // Cache materialises / dissolves independent of sim state
         this.updateTitleCameo(dt); // Cache's scripted title-screen walk-on / fade sequence
 
+        // THE TEXT HOLD (owner: "a systemic way to keep players from hitting walls and
+        // dying after exiting a text box"). Decision 5 says text stops the game — but it
+        // never stopped the WORM: every dialog, shop, pause, options screen and terminal
+        // latch resumed you at full momentum, pointed wherever you were pointed, and if
+        // that was one cell from a wall no reaction time could save you. So the freeze's
+        // other half: when ANY text surface closes back into play, the worm HOLDS — still
+        // facing, not moving — until your next steering input, exactly the contract every
+        // spawn and respawn already taught. Detected here as a state TRANSITION so every
+        // text source, current and future, gets it without per-dialog wiring. TRANSITION
+        // (room slides) and DEAD are deliberately not "text": crossings keep momentum,
+        // and the respawn wake-press machinery already owns the death screen.
+        const textFrozen = this.optionsOpen
+            || this.state.gameState === 'DIALOG'
+            || this.state.gameState === 'SHOP'
+            || this.state.gameState === 'PAUSED'
+            || !!this.moduleLoad
+            || !!(this.narrative && (this.narrative.isPrinting || this.narrative.awaitingRelease));
+        if (this._wasTextFrozen && !textFrozen && this.state.gameState === 'PLAYING') {
+            // NOTE: a turn already queued in input.nextDirection is deliberately NOT
+            // cleared — it releases the hold on the first tick. That preserves both the
+            // respawn contract (the wake-press direction buffers while the death log
+            // types) and deliberate pre-steering during a printing log.
+            this._textHold = true;
+        }
+        this._wasTextFrozen = textFrozen;
+
         if (this.optionsOpen) return; // the Options overlay freezes the sim while open
 
         if (this.state.gameState === 'DIALOG' || this.state.gameState === 'SHOP' || this.state.gameState === 'PAUSED' || this.state.gameState === 'TRANSITION') return;
@@ -1524,9 +1559,15 @@ export class GameEngine {
         this.updateGate3();         // the Override — one permission rewrite at a time
         this.updateGateFinal();     // Port 0 — the rigidity funnel
 
-        this.input.updateDirection();
+        // A committed fresh turn releases the text hold (the facing-axis taps release it
+        // via the gear callback). While held, the WORLD keeps its clocks — bosses turn,
+        // drift drifts, the ping flies — but the worm stands, exactly like the pre-first-
+        // input state at spawn. Facing is preserved, so reversal stays illegal and a
+        // disoriented post-text press cannot 180 into your own neck.
+        const steered = this.input.updateDirection();
+        if (this._textHold && steered) this._textHold = false;
 
-        if (this.input.direction.x !== 0 || this.input.direction.y !== 0) {
+        if (!this._textHold && (this.input.direction.x !== 0 || this.input.direction.y !== 0)) {
 
             let shifted = false;
             let dx = 0, dy = 0;
@@ -2188,6 +2229,7 @@ export class GameEngine {
         this._argListenMs = 0;      // the bounce ARG window
         this._shakeMs = 0;          // no impact rattle survives its impact
         this._auditionLayer = null; // the M-key music preview re-syncs on any reset
+        this._textHold = false;     // the post-text hold (input.reset covers the rest)
         this.audio.setDuck(1);
     }
 

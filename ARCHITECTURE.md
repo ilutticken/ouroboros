@@ -43,7 +43,11 @@ Enforced, not aspirational — cited in code comments and checked in review.
 
 **Five locked decisions:** death wipes all carried Data (durable progress persists) · Motion Carried
 fires at the act midpoint · the game boots **silent** (Cadenza's Encore is the first music) · the
-Topology Scanner must earn its price · **text stops the game** (movement is lethal, so reading must be safe).
+Topology Scanner must earn its price · **text stops the game — and the worm** (movement is lethal, so
+reading must be safe; and when any text surface closes back into play, the worm **holds, still facing,
+until your next steering input** — the same contract as every spawn. A tap along your facing axis is a
+resume, never a shift. Detected as a state transition in `update()`, so every text source gets it
+without per-dialog wiring).
 
 **Sprite grammar:** one grid cell per entity; **characters get eyes, hardware and architecture never do**;
 state is coded by shape + position, never colour alone; motion is telegraphed by a directional notch.

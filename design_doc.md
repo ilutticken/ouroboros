@@ -629,6 +629,15 @@ Reach Gate and he **panics backwards into one of Denny's own stamps.** Denny scr
 
 **Constants (playtest placeholders):** `HEUR_PING_MS 150` · `HEUR_SEALS 3` · `HEUR_HOT 16`. Known soft spot: some geometries still resolve with a parked player whose body happens to sit in the ball's path and keeps re-arming it. `HEUR_HOT` is the knob.
 
+### The Text Hold (IMPLEMENTED) — text stops the worm too
+**Owner-directed:** "we need a systemic way to keep players from hitting walls and dying after exiting a text box." Decision 5 (text stops the game) only ever froze the SIM — the worm resumed at full momentum, pointed wherever it had been pointed. If that was one cell from a wall at gear 3, no reaction time could save you; no speed-ramp fix can either, because the first resumed step is the lethal one.
+
+**The rule:** when any text surface closes back into play — dialog, shop, pause, options, module install, or the terminal's release latch — **the worm holds: still facing, not moving, until your next steering input.** It's the same contract every spawn and respawn already teaches, so it costs zero tutorial. A tap along your facing axis is consumed as a pure *resume* (never an upshift — a silent speed change at the exact moment the hold exists to protect would be the old F15 bug in a hat). Facing is preserved, so reversal stays illegal and a disoriented post-text press can't 180 into your own neck.
+
+**Systemic by construction:** implemented as a state-transition detector at the top of `update()` (frozen → unfrozen while PLAYING), not as per-dialog wiring — every current and future text source gets it automatically. Room TRANSITIONs and the death screen are deliberately not "text": crossings keep momentum, and the respawn wake-press machinery already owns DEAD. A steer buffered *during* a printing log still releases the hold on the first tick — that preserves the respawn contract (the wake-press direction buffers while the death log types) and deliberate pre-steering.
+
+**While held, the world keeps its own clocks** — bosses turn, drift drifts, Heur's ping flies. Stillness is safe from walls, not from the world, which is consistent with the world-clock rule (speed is evasion; standing still has costs).
+
 ### PENDING — Localhost upgrades with Data spent
 Still open (owner-flagged): sinking Data in Localhost should visibly **rebuild the village** (more citizens/structures/services), a Phase-4 idle hook and a diegetic reason the Safe Zone matters.
 

@@ -15,6 +15,145 @@ import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 const newGame = (width = 400, height = 400) => makeGame({ width, height });
 
 // ---------------------------------------------------------------------------------
+// THE TEXT HOLD (owner: "a systemic way to keep players from hitting walls and dying
+// after exiting a text box"). Decision 5 froze the game for text but resumed the worm at
+// full momentum, pointed wherever it was pointed — one cell from a wall, no reaction
+// time could save you. Now every text surface closing back into play HOLDS the worm,
+// still facing, until the next steering input: the same contract as every spawn.
+describe('The text hold — text stops the worm too', () => {
+    beforeEach(mountDom);
+
+    // Fresh keydown-listener hygiene (engines register modal listeners; see the
+    // Playtest describe above for the original incident).
+    let attached = [];
+    const holdGame = () => {
+        const orig = window.addEventListener;
+        window.addEventListener = function (type, handler, o) {
+            if (type === 'keydown') attached.push(handler);
+            return orig.call(this, type, handler, o);
+        };
+        let game;
+        try { game = makeGame({}); } finally { window.addEventListener = orig; }
+        return game;
+    };
+    afterEach(() => {
+        for (const h of attached) window.removeEventListener('keydown', h);
+        attached = [];
+    });
+
+    // Drive straight at the right wall and stop one cell short, at speed.
+    const armAtWall = (game) => {
+        game.state.unlocked.borders = true;
+        game.state.unlocked.tailRider = true;
+        game.state.score = 30; game.growSnake(30);
+        game.changeGear(3);
+        const y = 200;
+        game.snake.body = [];
+        for (let i = 0; i < 31; i++) game.snake.body.push({ x: game.ringRight - 20 - i * 20, y });
+        game.input.direction = { x: 20, y: 0 };
+        game.input.nextDirection = { x: 0, y: 0 };
+        game.apple = { x: 40, y: 40 }; game.glitches = []; game.npcs = []; game.obstacles = [];
+    };
+
+    it('THE HEADLINE: one cell from a wall at gear 3, a dialog closes — you live', () => {
+        const game = holdGame();
+        armAtWall(game);
+        game.update(50); // establish "not frozen"
+        const head = { ...game.snake.head };
+
+        game.state.gameState = 'DIALOG';   // text opens
+        game.update(1000);
+        game.state.gameState = 'PLAYING';  // text closes — the old code resumed at speed
+        for (let i = 0; i < 10; i++) game.update(1000);
+
+        expect(game.state.gameState).toBe('PLAYING');       // alive
+        expect(game.snake.head).toMatchObject(head);        // and unmoved
+
+        // ...and a steering tap releases the hold and moves you.
+        game.input.nextDirection = { x: 0, y: -20 };
+        game.update(1000);
+        expect(game.snake.head.y).toBe(head.y - 20);
+    });
+
+    it('every text surface engages the hold on close', () => {
+        const freezes = {
+            dialog: (g, on) => { g.state.gameState = on ? 'DIALOG' : 'PLAYING'; },
+            shop: (g, on) => { g.state.gameState = on ? 'SHOP' : 'PLAYING'; },
+            pause: (g, on) => { g.state.gameState = on ? 'PAUSED' : 'PLAYING'; },
+            options: (g, on) => { g.optionsOpen = on; },
+            terminal: (g, on) => { g.narrative.isPrinting = on; },
+            moduleInstall: (g, on) => { g.moduleLoad = on ? { phase: 0, t: 0 } : null; },
+        };
+        for (const [name, set] of Object.entries(freezes)) {
+            const game = holdGame();
+            armAtWall(game);
+            game.update(50);
+            const head = { ...game.snake.head };
+            set(game, true);
+            game.update(200);
+            set(game, false);
+            if (name === 'moduleInstall') game.moduleLoad = null; // updateModuleLoad may have run
+            for (let i = 0; i < 6; i++) game.update(1000);
+            expect(game.snake.head, `${name} did not hold`).toMatchObject(head);
+            expect(game.state.gameState).toBe('PLAYING');
+        }
+    });
+
+    it('a tap along your FACING axis resumes WITHOUT shifting gear', () => {
+        const game = holdGame();
+        armAtWall(game);
+        // face away from the wall so resuming does not immediately meet it
+        game.input.direction = { x: -20, y: 0 };
+        game.update(50);
+        game.state.gameState = 'DIALOG';
+        game.update(200);
+        game.state.gameState = 'PLAYING';
+        game.update(50); // hold engaged
+        const gearBefore = game.gear;
+        const head = { ...game.snake.head };
+
+        // ArrowLeft while facing left = the "go" tap. Old behaviour: an upshift.
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft' }));
+        game.update(1000);
+
+        expect(game.gear).toBe(gearBefore);           // consumed as resume, not a shift
+        expect(game.snake.head.x).toBe(head.x - 20);  // and the worm moves
+    });
+
+    it('a steer buffered DURING a printing log is honoured, not eaten (respawn contract)', () => {
+        const game = holdGame();
+        armAtWall(game);
+        game.update(50);
+        game.narrative.isPrinting = true;   // the death-log scenario
+        game.update(200);
+        game.input.nextDirection = { x: 0, y: -20 }; // the wake-press steer, buffered
+        game.narrative.isPrinting = false;
+        const head = { ...game.snake.head };
+        game.update(1000);
+        // The queued turn releases the hold on the first tick — motionless-at-spawn was
+        // a bug once already; the hold must never reintroduce it.
+        expect(game.snake.head.y).toBe(head.y - 20);
+    });
+
+    it('the world keeps its own clocks while the worm holds', () => {
+        const game = holdGame();
+        armAtWall(game);
+        game.state.unlocked.motionCarried = true;
+        game.glitches = [{ x: 100, y: 100 }]; // a drifter (gets its _m pattern lazily)
+        game.update(50);
+        game.state.gameState = 'DIALOG';
+        game.update(200);
+        game.state.gameState = 'PLAYING';
+        const head = { ...game.snake.head };
+        const gl = { ...game.glitches[0] };
+        for (let i = 0; i < 12; i++) game.update(200); // several WORLD_STEPs of wall time
+        expect(game.snake.head).toMatchObject(head);   // worm held
+        const moved = game.glitches[0].x !== gl.x || game.glitches[0].y !== gl.y;
+        expect(moved).toBe(true);                      // world did not
+    });
+});
+
+// ---------------------------------------------------------------------------------
 // LIFECYCLE SWEEP REGRESSIONS. Seven confirmed findings from the adversarial sweep of
 // "state at the wrong scope / reset at the wrong boundary". The unifying invariant for
 // the minting bugs is one line — score always equals embodied-plus-folded Data:
