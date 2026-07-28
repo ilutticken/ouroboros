@@ -225,6 +225,8 @@ export class RoomGenerator {
             npcs.push(npc);
         } else if (GROWTH_CACHE_ROOMS.has(`${roomX},${roomY}`)) {
             // A growth cache — one-bite mass payout, off the spine. Exploration = length.
+            // NO durable gate, deliberately (owner): caches regenerate with the run, so a
+            // fresh worm always has a known route back to mass. Do not add a consumed-flag.
             const gx = Math.floor(this.cols * 0.65) * this.gridSize;
             const gy = Math.floor(this.rows * 0.35) * this.gridSize;
             npcs.push(new NPC(gx, gy, this.gridSize, 'datacache', []));

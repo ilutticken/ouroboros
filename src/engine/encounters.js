@@ -38,7 +38,13 @@ export const EncounterMethods = {
         this._encorePrevSpeed = this.speed;
         this.speed = 110;   // a steady tempo; gear is locked out during the performance
         this.moveTimer = 0;
-        this.pendingUnfold = 0; // a mid-bounce Crumple unfold would otherwise grow you during the lap
+        // A mid-bounce Crumple unfold would grow you during the lap, so the performance
+        // is length-neutral — but that fold is Data the player OWNS (the bounce already
+        // docked the score for what it shed). Zeroing it here destroyed the mass while
+        // the score kept it: phantom, spendable Data for bumping an NPC. HOLD it and
+        // restore on either exit, exactly like _encorePrevSpeed.
+        this._encorePrevUnfold = this.pendingUnfold;
+        this.pendingUnfold = 0;
         this.encore = { nodes, nextIndex: 0, eaten: {}, phase: 1, crackFlash: 0, msg: '' };
         this.state.gameState = 'ENCORE';
     },
@@ -114,6 +120,8 @@ export const EncounterMethods = {
     _encoreFinale() {
         this.encore = null;
         this.speed = this._encorePrevSpeed || 100;
+        this.pendingUnfold = this._encorePrevUnfold || 0; // the held fold comes back (it is paid-for mass)
+        this._encorePrevUnfold = 0;
         this.state.unlocked.encoreComplete = true;
         this.state.unlocked.cadenzaFound = true;
         this.saveManager.markEncoreUnlocked(); // global: unlocks her title-screen cameo + the Void Ambient
@@ -128,6 +136,8 @@ export const EncounterMethods = {
     exitEncore(reason) {
         this.encore = null;
         this.speed = this._encorePrevSpeed || 100;
+        this.pendingUnfold = this._encorePrevUnfold || 0; // the held fold comes back (it is paid-for mass)
+        this._encorePrevUnfold = 0;
         if (reason === 'needverse') {
             this.state.gameState = 'DIALOG';
             this.dialogManager.start(CADENZA_ENCORE.needVerse, () => { this.state.gameState = 'PLAYING'; });

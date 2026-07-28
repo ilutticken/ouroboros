@@ -1644,28 +1644,40 @@ export class GameEngine {
         // Recoil OFF a hazard the head has already moved onto (obstacle/self are checked
         // AFTER the move; a border hit BEFORE, so the head is already on a safe cell).
         // Otherwise it parks on the obstacle and clips through it next tick.
+        // (Self-overlap is deliberately NOT in this list: the fold below collapses the
+        // body to [head] anyway, vacating the collided cell before the reversed step —
+        // and because die('self') fires AFTER collectData has already settled the tail,
+        // shifting here removed a fully PAID segment, leaving score one higher than the
+        // body forever: +1 phantom Data per self-bounce. Obstacle/stamp hits fire BEFORE
+        // collectData, so their shift removes the transient unpaid head and balances.)
         const h = this.snake.head;
         const onHazard = (this.obstacles && this.obstacles.some(o => o.x === h.x && o.y === h.y))
-            || (this.stamps && this.stamps.some(s => s.x === h.x && s.y === h.y))
-            || this.snake.body.slice(1).some(s => s.x === h.x && s.y === h.y);
+            || (this.stamps && this.stamps.some(s => s.x === h.x && s.y === h.y));
         if (onHazard && this.snake.body.length > 1) this.snake.body.shift();
 
-        // Shed `shedAmount`, in BOTH length and Data. Burst the shed segments' cells.
+        // Shed `shedAmount`, in BOTH length and Data — from the LOGICAL body, which
+        // includes any mass still folded from a PREVIOUS bounce. Assigning pendingUnfold
+        // from the physical body alone discarded that fold while its Data stayed on the
+        // score: two quick bounces minted permanent, spendable phantom Data. And the dock
+        // is by what was ACTUALLY shed, never the flat shedAmount — a short worm used to
+        // pay more Data than mass (a straight Data = Segments violation, both directions).
         // PASSENGER seats are never shed (they aren't Data): the fold keeps 1 + riders.
-        const total = this.snake.body.length;
+        const total = this.snake.body.length + this.pendingUnfold;
         const shed = Math.max(0, Math.min(this.shedAmount, total - 1 - this.riderCount));
-        const shedCells = shed > 0 ? this.snake.body.slice(total - shed) : [];
-        if (shed > 0) this.spawnBurst(shedCells);
-        this.state.score = Math.max(0, this.state.score - this.shedAmount);
+        // Burst/salvage only the physically available portion (folded mass has no cells).
+        const physAvail = Math.max(0, this.snake.body.length - 1 - this.riderCount);
+        const burstN = Math.min(shed, physAvail);
+        const shedCells = burstN > 0 ? this.snake.body.slice(this.snake.body.length - burstN) : [];
+        if (burstN > 0) this.spawnBurst(shedCells);
+        this.state.score = Math.max(0, this.state.score - shed);
         this.refreshScore();
 
         // FOLD: collapse the surviving body (total - shed) under the head. 2-Bit / the
         // module are positional (the tail), so they simply re-appear as the body
         // un-folds; nothing to protect.
-        const keep = total - shed;
         const head = { ...this.snake.head };
         this.snake.body = [head];
-        this.pendingUnfold = Math.max(0, keep - 1);
+        this.pendingUnfold = Math.max(0, total - shed - 1);
 
         // Salvage Claws: NOW that the body has folded to [head], the shed cells are
         // vacated — drop a little of the crumpled mass there as re-collectible Data
@@ -2157,7 +2169,34 @@ export class GameEngine {
 
 
 
+    // EVERY per-fight / per-run hazard transient, cleared in ONE place. die(), applySave()
+    // and resetToNewGame() used to each hand-maintain this list, and the three copies
+    // diverged twice — most recently _finale/_gate3Blocks were on none of them, so dying
+    // to Gate's ring painted ghost hazards over the respawn room and re-entering Port 0
+    // resumed the previous attempt's walls mid-room. New fight state gets added HERE or
+    // nowhere.
+    resetBattleTransients() {
+        this.stamps = [];
+        this._tailPrev = null;
+        this._stampStun = 0;
+        this._ovr = null;           // Gate's ring state (incl. its entry hold)
+        this._gate3Blocks = null;   // ...and the ring's live block cells
+        this._finale = null;        // Port 0's advancing walls (clean retry by contract)
+        this.heur = null;           // the decontamination fight
+        this._coilNear = null;      // the coil's held breath
+        this._wardUsedThisRoom = false; // Scale Mods' per-room absorb
+        this._argListenMs = 0;      // the bounce ARG window
+        this._shakeMs = 0;          // no impact rattle survives its impact
+        this._auditionLayer = null; // the M-key music preview re-syncs on any reset
+        this.audio.setDuck(1);
+    }
+
     die(cause = 'unknown') {
+        // Callers that mean "a wall-grade hit" historically pass 'border'; the death
+        // tally, the Architect's gloat and Hydratia's coaching all speak 'wall'.
+        // Normalize at the ONE entry point so no caller can fall through to the
+        // unknown-cause counter (which is reserved for genuinely uncaused deaths).
+        if (cause === 'border') cause = 'wall';
         // NEW DEATH MODEL. With the Crumple Buffer upgrade you survive a hit (shed + fold
         // + bounce) instead of dying — but you need mass to shed. No buffer, or nothing
         // left to shed -> back to the beginning (full reset to the Hub).
@@ -2189,24 +2228,11 @@ export class GameEngine {
         this.gear = 0;              // fresh runs start from a standstill (sub-smash
         this.speed = this.baseSpeed; // deaths would otherwise respawn you mid-gear)
         this._wallBonking = false;
-        // Battle transients die with you: stamps, the stamp trail, Gate's override (and
-        // its gear cap), the coil's held breath, Scale Mods' per-room absorb.
-        this.stamps = [];
-        this._tailPrev = null;
-        this._stampStun = 0;
-        this._ovr = null;
-        this._wardUsedThisRoom = false;
-        this.heur = null;
-        this._coilNear = null;
-        this._argListenMs = 0;
+        this.resetBattleTransients();
         // A carried refugee is LOST with the run — but never gone: their origin room was
-        // never marked delivered, so they respawn back home, shaken, carryable again.
-        // The key is CAPTURED here; the cached (refugee-less) origin room is invalidated
-        // AFTER the saveRoom below, so a death INSIDE the origin room can't re-cache the
-        // empty copy over the wipe.
-        const lostRefugee = this.carriedRefugee;
+        // never marked delivered, so they respawn back home, shaken, carryable again
+        // (the wholesale room wipe below regenerates their home WITH them in it).
         this.carriedRefugee = null;
-        this.audio.setDuck(1);
         if (toCheckpoint) {
             this._diedSinceCheckpoint = true;
             // The seam re-opens only once you've breached it before (finale retries must
@@ -2216,20 +2242,6 @@ export class GameEngine {
             }
         }
 
-        // Save current room, then warp back to hub (0,0)
-        let appleToSave = this.apple;
-        if (appleToSave instanceof NPC) {
-            // Player died before picking up Bite. Since score resets, replace Bite with a normal apple.
-            appleToSave = this.spawnApple();
-        }
-
-        const npcsWithoutBite = this.npcs.filter(n => n.id !== 'bite' && n.id !== 'cache');
-        this.worldManager.saveRoom(appleToSave, this.glitches, npcsWithoutBite, this.obstacles);
-
-        // The lost refugee walks home: wipe their origin room's cache so it regenerates
-        // WITH them (their key was never marked delivered).
-        if (lostRefugee) delete this.worldManager.rooms[lostRefugee];
-
         // CORRUPTION REGROWS WITH THE RUN (owner, from playtest). Room state was cached
         // for the whole session, so every Glitch you cleared stayed cleared through death
         // after death — the world quietly got safer the more you failed, which is exactly
@@ -2238,8 +2250,21 @@ export class GameEngine {
         // from the durable `unlocked` set: broken walls live in worldManager.brokenWalls,
         // landmarks/questlines/refugee homes regenerate from their flags, and anything you
         // permanently took is recorded as an unlock — so nothing you EARNED comes back,
-        // only what the world grows on its own.
+        // only what the world grows on its own (which includes the growth caches: owner
+        // ruling, they regenerate with the run). (The old pre-wipe saveRoom + per-refugee
+        // cache invalidation that stood here were no-ops behind this line and were removed
+        // — if this wipe is ever narrowed, that logic has to come back.)
         this.worldManager.rooms = {};
+
+        // ...with ONE exception the wipe would strand: Denny's dropped-but-unclaimed map.
+        // The mapitem NPC exists only in the room cache (never regenerated), while the
+        // one-shot `dennyMapDropped` is durable — so a death between drop and pickup left
+        // the flag pointing at a map that no longer exists, and Denny refused to re-drop
+        // forever. Same rescue the load path already performs (applySave).
+        const u2 = this.state.unlocked;
+        if (u2.dennyMapDropped && this.carriedModule !== 'map' && !u2.mapModule) {
+            u2.dennyMapDropped = false;
+        }
 
         this.worldManager.currentRoomX = toCheckpoint ? 5 : 0;
         this.worldManager.currentRoomY = toCheckpoint ? -4 : 0;

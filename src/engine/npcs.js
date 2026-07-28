@@ -320,7 +320,10 @@ export const NpcMethods = {
     },
 
     // A growth cache: one bite, +4 Data and +4 length (coupled) — the Wilds' reason
-    // to explore. Consumed permanently (the room remembers).
+    // to explore. Consumed for THIS run only — it regenerates with the run (owner ruling:
+    // caches are part of what the world grows back after a death, the incremental rhythm;
+    // an earlier comment here claimed permanence and was wrong about the code AND the
+    // intent). Contrast uimodule/lorefrag one-shots, which gate on durable flags.
     npcDataCache(npc) {
         this.npcs = this.npcs.filter(n => n !== npc);
         this.state.addScore(4);

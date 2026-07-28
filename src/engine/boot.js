@@ -258,7 +258,12 @@ export const BootMethods = {
             }
         } else if (key === 'Delete' || key === 'Backspace' || key === 'x' || key === 'X') {
             const sel = slots[this.startMenuIndex];
-            if (!sel.exists) return;
+            // An AUTO-ONLY slot (Hydratia's buffer, no manual file) must be erasable too:
+            // anySave() deliberately counts auto buffers, so a player who only ever
+            // autosaved would otherwise hold a slot the erase UI silently refuses to
+            // touch — and the fresh-start contract (which waits for anySave() === false)
+            // could never fire again on that browser. clear() removes both keys.
+            if (!sel.exists && !sel.autoSavedAt) return;
             if (this.startMenuConfirmErase === sel.slot) {
                 this.saveManager.clear(sel.slot);
                 this.startMenuConfirmErase = null;
@@ -355,10 +360,9 @@ export const BootMethods = {
         this.carriedModule = null; this.moduleLoad = null; this.bursts = []; this.dataMotes = [];
         this.onUnpauseCallback = null; this._guided = new Set(); this._tick = 0;
         this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
-        this.stamps = []; this._tailPrev = null; this._stampStun = 0; this._ovr = null;
-        this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
-        this._argListenMs = 0; this.carriedRefugee = null;
-        this.audio.setDuck(1);
+        this.resetBattleTransients(); // ONE shared list (die/applySave/here) — never inline it again
+        this._diedSinceCheckpoint = false;
+        this.carriedRefugee = null;
 
         // Back to the cold open: HUD hidden, terminal wiped (re-revealed at 5 Data).
         const top = document.getElementById('ui-layer');
@@ -452,13 +456,16 @@ export const BootMethods = {
         this.carriedModule = d.carriedModule || null; // preserve an un-installed module (the map)
         this.moduleLoad = null; this.bursts = [];
         this.state.isSuspended = false; this.onUnpauseCallback = null; // never load INTO a Gate suspension
-        this.stamps = []; this._tailPrev = null; this._stampStun = 0; this._ovr = null;
-        this.heur = null; this._coilNear = null; this._diedSinceCheckpoint = false;
-        this._auditionLayer = null; this._wardUsedThisRoom = false;
-        this._argListenMs = 0; this.carriedRefugee = null;
-        this.audio.setDuck(1);
-        // Hydratia's catch is a GLOBAL (cross-file) discovery: mirror it into this run's
-        // flags so RoomGenerator can seat her stall in Localhost.
+        this.resetBattleTransients(); // ONE shared list (die/here/resetToNewGame) — never inline it again
+        this._diedSinceCheckpoint = false;
+        this.carriedRefugee = null;
+        // Hydratia's catch is a GLOBAL (cross-file) discovery, but the no-save fresh-start
+        // re-arm clears the global flag — so a FILE that knows her is the anchor of record:
+        // loading it re-marks the global (heals the flag), and only then is the global
+        // mirrored back into this run. Catch → save → the catch is permanent; catch →
+        // never save → the next no-save boot re-arms her, consistent with "no files,
+        // nothing happened."
+        if (d.unlocked && d.unlocked.hydratiaFound) this.saveManager.markHydratiaCaught();
         this.state.unlocked.hydratiaFound = this.saveManager.hasHydratiaCaught();
         // The checkpoint door's state is derived from flags, not stored: reset the ROM
         // seals to baseline, then re-derive — committed = unsealed; once-breached =

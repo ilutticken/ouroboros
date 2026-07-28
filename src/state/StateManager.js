@@ -101,7 +101,14 @@ export class StateManager {
             quantcyMet: false,         // his intro has played once
             quantcyPrincipal: 0,       // deposited Data, held OFF-BODY in his vault (death-proof)
             quantcyYield: 0,           // accrued interest (float), claimable via withdrawal
-            quantcyPayout: 0           // withdrawn Data awaiting collection as motes at his vault
+            quantcyPayout: 0,          // withdrawn Data awaiting collection as motes at his vault
+            // --- FIRST-CONTACT PROTOCOLS (a scene plays once, then compresses) -----------
+            // EVERY unlocked key must be declared here: applySave and resetToNewGame merge
+            // over these defaults, so an UNDECLARED key written at runtime survives Load
+            // and New Game (the merge can't clear what it doesn't know about) and then gets
+            // baked into the next save. tests/Sprint2.test.js has a grep-guard for this.
+            heurMet: false,            // Heur's full intercept has played (re-entry = "Encore.")
+            nibbleIdle: 0              // how many of Nibble's rotating idle lines you've heard
         };
         this.upgrades = {
             dataCompression: false,   // apples give +2 Data

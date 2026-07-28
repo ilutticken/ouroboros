@@ -15,6 +15,163 @@ import { mountDom, makeGame, step, finishDialog } from './helpers.js';
 const newGame = (width = 400, height = 400) => makeGame({ width, height });
 
 // ---------------------------------------------------------------------------------
+// LIFECYCLE SWEEP REGRESSIONS. Seven confirmed findings from the adversarial sweep of
+// "state at the wrong scope / reset at the wrong boundary". The unifying invariant for
+// the minting bugs is one line — score always equals embodied-plus-folded Data:
+const ledgerBalanced = (game) =>
+    game.state.score === game.snake.body.length - 1 - game.riderCount + game.pendingUnfold;
+
+describe('Lifecycle sweep regressions', () => {
+    beforeEach(mountDom);
+
+    it('a second bounce mid-unfold keeps the ledger (no phantom Data mint)', () => {
+        const game = newGame();
+        game.state.upgrades.crumpleLevel = 1;
+        game.state.score = 30; game.growSnake(30);
+        expect(ledgerBalanced(game)).toBe(true);
+
+        game.bounce();                       // fold: score 20, body [head], unfold 20
+        expect(ledgerBalanced(game)).toBe(true);
+        game.bounce();                       // second hit BEFORE the fold re-extrudes
+        // The old code assigned pendingUnfold from the physical body alone, discarding
+        // the previous fold while its Data stayed on the score — 10 spendable phantom
+        // Data per double-bounce, permanent.
+        expect(ledgerBalanced(game)).toBe(true);
+        expect(game.state.score).toBe(10);   // two real 10-sheds, nothing else
+    });
+
+    it('a SELF-bounce keeps the ledger (the recoil no longer eats a paid segment)', () => {
+        const game = newGame();
+        game.state.upgrades.crumpleLevel = 1;
+        game.state.score = 20; game.growSnake(20);
+        // stage the self-overlap die('self') finds: head parked on a body cell
+        game.snake.body[0] = { ...game.snake.body[5] };
+        game.die('self');                    // routes to bounce()
+        expect(ledgerBalanced(game)).toBe(true);
+    });
+
+    it("Cadenza's Encore holds a mid-bounce fold and returns it on BOTH exits", () => {
+        for (const exit of ['finale', 'left']) {
+            const game = newGame();
+            game.state.upgrades.crumpleLevel = 1;
+            game.state.score = 30; game.growSnake(30);
+            game.bounce();                   // score 20, unfold 20
+            game.glitches = []; game.npcs = []; game.obstacles = [];
+            game.startEncore();
+            expect(game.pendingUnfold).toBe(0); // length-neutral during the lap
+            if (exit === 'finale') game._encoreFinale();
+            else game.exitEncore('left');
+            finishDialog(game);
+            // Zeroing the fold destroyed Data the score kept — phantom, spendable.
+            expect(game.pendingUnfold).toBe(20);
+            expect(ledgerBalanced(game)).toBe(true);
+        }
+    });
+
+    it("Gate's set-piece hazards die at every boundary (no ghost walls, clean retries)", () => {
+        const stage = (game) => {
+            game._finale = { t: 1, rows: [{ r: 5, holes: [3] }] };
+            game._gate3Blocks = [{ x: 100, y: 100 }];
+            game._shakeMs = 400;
+        };
+        const cleared = (game) =>
+            game._finale === null && game._gate3Blocks === null && game._shakeMs === 0;
+
+        const a = newGame(); stage(a); a.die('wall');
+        expect(cleared(a), 'die()').toBe(true);
+
+        const b = newGame(); stage(b); b.resetToNewGame();
+        expect(cleared(b), 'resetToNewGame()').toBe(true);
+
+        const c = newGame(); const d = c.serialize(); stage(c); c.applySave(d);
+        expect(cleared(c), 'applySave()').toBe(true);
+    });
+
+    it("dying before collecting Denny's dropped map re-arms the drop (no map soft-lock)", () => {
+        const game = newGame();
+        game.state.unlocked.dennyMapDropped = true;  // dropped, sitting in the room cache
+        game.carriedModule = null;                   // ...but never picked up
+        game.die('wall');                            // the wipe destroys the mapitem NPC
+        expect(game.state.unlocked.dennyMapDropped).toBe(false); // so Denny drops it again
+    });
+
+    it('an AUTO-ONLY slot is erasable, so the fresh-start contract stays reachable', () => {
+        const game = newGame();
+        game.saveManager.saveAuto(2, { unlocked: {} });      // Hydratia-only progress
+        expect(game.saveManager.anySave()).toBe(true);       // counts toward anySave...
+        game.state.gameState = 'START';
+        game.startMenuIndex = 1;                             // slot 2's row
+        game.startMenuHandleKey('Delete');                   // arm
+        game.startMenuHandleKey('Delete');                   // confirm
+        expect(game.saveManager.hasAuto(2)).toBe(false);     // ...and is now deletable
+        expect(game.saveManager.anySave()).toBe(false);      // fresh-start reachable again
+    });
+
+    it("die('border') tallies as a WALL death, so Hydratia's wall coaching can escalate", () => {
+        const game = newGame();
+        game.die('border');
+        expect(game.narrative.deathByCause.wall).toBe(1);
+        expect(game.narrative.deathByCause.unknown).toBe(0); // not the uncaused counter
+    });
+
+    it('a save file that knows Hydratia HEALS the global caught flag on load', () => {
+        const game = newGame();
+        const d = game.serialize();
+        d.unlocked.hydratiaFound = true;                     // the file is the anchor of record
+        window.localStorage.removeItem('ouroboros-hydratia-caught'); // global was re-armed
+        game.applySave(d);
+        expect(game.saveManager.hasHydratiaCaught()).toBe(true);
+        expect(game.state.unlocked.hydratiaFound).toBe(true);
+    });
+
+    it('a CORRUPT save blob is treated as nonexistent everywhere (no zombie slot)', () => {
+        const game = newGame();
+        window.localStorage.setItem('ouroboros-save-s1', '{not json');   // damaged mid-write
+        window.localStorage.setItem('ouroboros-save-s2-auto', 'garbage'); // damaged auto too
+        // One rule: unparseable = nonexistent. Before, anySave() counted raw keys while
+        // slots() counted parses — the menu said EMPTY, the engine said occupied, and the
+        // slot was unloadable, un-erasable, and blocked the fresh-start re-arm forever.
+        expect(game.saveManager.hasSave(1)).toBe(false);
+        expect(game.saveManager.hasAuto(2)).toBe(false);
+        expect(game.saveManager.anySave()).toBe(false);
+        expect(game.saveManager.slots().every(s => !s.exists)).toBe(true);
+        // ...and a fresh save simply overwrites the dead weight.
+        expect(game.saveManager.save(1, { unlocked: {} })).toBe(true);
+        expect(game.saveManager.hasSave(1)).toBe(true);
+    });
+
+    // THE GUARD (institutionalized): every `unlocked.*` key written anywhere in src/ must
+    // be declared in StateManager's baseline. applySave and resetToNewGame merge over the
+    // defaults, so an undeclared key survives Load and New Game (the merge cannot clear
+    // what it does not know about) and then gets baked into the next save — heurMet and
+    // nibbleIdle both shipped that way.
+    it('every unlocked key written in src/ is declared in the StateManager baseline', async () => {
+        const fs = await import('node:fs');
+        const path = await import('node:path');
+        const root = path.resolve(__dirname, '../src');
+        const files = [];
+        const walk = (dir) => {
+            for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+                const p = path.join(dir, f.name);
+                if (f.isDirectory()) walk(p);
+                else if (f.name.endsWith('.js')) files.push(p);
+            }
+        };
+        walk(root);
+        const written = new Set();
+        const rx = /\b(?:unlocked|u|um|u2)\.(\w+)\s*=[^=]/g;
+        for (const p of files) {
+            const src = fs.readFileSync(p, 'utf8');
+            for (const m of src.matchAll(rx)) written.add(m[1]);
+        }
+        const { StateManager } = await import('../src/state/StateManager.js');
+        const declared = new Set(Object.keys(new StateManager().unlocked));
+        const undeclaredKeys = [...written].filter(k => !declared.has(k));
+        expect(undeclaredKeys, `undeclared unlocked keys: ${undeclaredKeys.join(', ')}`).toEqual([]);
+    });
+});
+
+// ---------------------------------------------------------------------------------
 // Every way to die used to collapse into three causes — and the four best ones (Gate's
 // ring, Port 0's walls, Heur's ping, Heur's database) all reported "Quarantine held",
 // which was untrue. The routing had NO test coverage, so splitting it broke nothing and

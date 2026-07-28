@@ -44,9 +44,19 @@ export class SaveManager {
         } catch (e) { /* ignore */ }
     }
 
+    // A blob that does not PARSE does not EXIST. hasSave used to test raw key presence
+    // while slots() tested parseability, so a damaged blob (browser killed mid-write,
+    // etc.) was a zombie: the menu showed the slot as EMPTY, but anySave() said occupied —
+    // unloadable, un-erasable, and silently suppressing the fresh-start re-arm forever.
+    // Under one rule the damaged key is simply dead weight that the next save overwrites.
     hasSave(slot) {
         if (!this.available) return false;
-        try { return window.localStorage.getItem(this._slotKey(slot)) !== null; } catch (e) { return false; }
+        try {
+            const raw = window.localStorage.getItem(this._slotKey(slot));
+            if (raw === null) return false;
+            JSON.parse(raw);
+            return true;
+        } catch (e) { return false; }
     }
 
     anySave() {
@@ -121,8 +131,15 @@ export class SaveManager {
         } catch (e) { return null; }
     }
     hasAuto(slot) {
+        // Same one rule as hasSave: unparseable = nonexistent (a corrupt AUTO buffer had
+        // the identical zombie behaviour through the anySave() count).
         if (!this.available) return false;
-        try { return window.localStorage.getItem(this._autoKey(slot)) !== null; } catch (e) { return false; }
+        try {
+            const raw = window.localStorage.getItem(this._autoKey(slot));
+            if (raw === null) return false;
+            JSON.parse(raw);
+            return true;
+        } catch (e) { return false; }
     }
 
     // File-select metadata for every slot: { slot, exists, meta, savedAt, autoSavedAt }.
