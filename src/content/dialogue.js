@@ -170,7 +170,7 @@ export const ARCHITECT = {
     // no committee bit, no filing joke, just a daemon watching the containment he built
     // start to come apart. Per his bible his formatting corrupts when he is afraid — the
     // grammar here does exactly that.
-    motionCarried: "LOG: Architect > 'Jiminy Circuits, things are MOVING. Will someone or something PLEASE shut this things down before IT happens AGAIN?!'",
+    motionCarried: "LOG: Architect > 'Jiminy Circuits, things are MOVING. Will someone or something PLEASE shut this thing down before IT happens AGAIN?!'",
     // The 'can it READ?' payoff — fires at the Override clear, the last moment Gate still
     // forwards him reports (before the {5,-3} cleared-dialog severance line). (DRAFT.)
     canRead: "LOG: Architect > 'Re: my standing question of whether it can read. It braked for the citations. ...Is my log set to PUBLIC? WHERE IS THAT SETTING?'",
@@ -546,8 +546,9 @@ export const LORE_FRAGS = {
     // caretaker's own failing. Her grief stays; the causal claim is gone.
     '4,-3': ["LOG FRAGMENT [corrupted]: '...hydration pass 88,214,003: cell 0x0000 read BLANK before i reached it. re-read: BLANK. something is eating AHEAD of my rounds now. i was not late. i am never late. ...i was late.'"],
     '8,5': ["LOG FRAGMENT: 'residential subnet, final entry: they went quiet in alphabetical order. the sweep is very organized.'"],
-    // The one reasoning-grade clue for Hydratia's catch-on-reload secret. Oblique on
-    // purpose: the TRACE pips teach the count in situ once you've started the chase.
+    // The one reasoning-grade clue for Hydratia's catch-on-reload secret — and with the
+    // TRACE counter cut (owner), now the ONLY teaching the mechanic has. Her advancing
+    // position carries the feedback; this line carries the idea.
     '11,2': ["LOG FRAGMENT: 'the caretaker is SHY. saw her once at the edge of a cold boot, gone before the first frame settled. quick, and again — she starts closer.'"],
     '1,-2': ["LOG FRAGMENT [encrypted]: '...vault manifest: ONE (1) save file, corrupted, origin unknown. do not defragment. do not deliver. do not—' (the rest is scrambled)"],
     // The scanner-pocket smuggler's note ({8,-5} hoard) — sells the sweep-first verb.

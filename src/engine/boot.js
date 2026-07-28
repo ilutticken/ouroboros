@@ -20,6 +20,21 @@ export const BootMethods = {
         const slots = this.saveManager.slots();
         const firstFilled = slots.findIndex(s => s.exists);
         this.startMenuIndex = firstFilled >= 0 ? firstFilled : 0;
+        // THE FRESH-START CONTRACT. The title cameos and Hydratia's chase are ONE-TIME
+        // GLOBAL flags, so months of playtesting burn them permanently and they never come
+        // back — the reported symptom is "Hydratia isn't loading on the initial screen"
+        // when in fact she was caught once, long ago, and retired.
+        //
+        // NO SAVE FILES MEANS A NEW PLAYER, so re-arm the openings. The NARROW reset only:
+        // the full resetIntroFlags() also wipes hydratia-boot/approach, and since start()
+        // runs on every reload, that erased the chase's own progress each refresh — the
+        // quick-reload catch could never advance past stage 0 for exactly the player it
+        // was built for. (The full reset still runs on erasing the LAST file, where a
+        // wiped chase is part of the deliberate fresh start.)
+        if (!this.saveManager.anySave()) {
+            this.saveManager.rearmFirstContact();
+            this.state.unlocked.hydratiaFound = false;
+        }
         this.maybeStartTitleCameo();
         this.maybeStartHydratiaCatch();
         this.lastTime = performance.now();

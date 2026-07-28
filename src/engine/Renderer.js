@@ -1424,8 +1424,9 @@ export class Renderer {
     // HYDRATIA'S GLIMPSE (boot screen): the shy persistence daemon, a watery-cyan mote at
     // the right edge. Each quick reload she's ~8% further in (stage 0..4); at stage 4 she
     // holds still and a [SPACE] prompt appears. Static per boot — no animation, so there
-    // is nothing for reduce-motion to dampen; progress is coded by position + a TRACE
-    // counter (never colour alone, §2.6). Silent by design (decision 3: no boot audio).
+    // is nothing for reduce-motion to dampen; progress is coded by position alone —
+    // the owner cut the TRACE counter (it explained the secret). Silent by design
+    // (decision 3: no boot audio).
     drawHydratia(h, _rm) {      // static per boot (see above) — nothing for reduce-motion to damp
         const W = this.canvas.width, H = this.canvas.height;
         const y = Math.floor(H * 0.66);
@@ -1455,16 +1456,14 @@ export class Renderer {
         this.ctx.lineTo(W, y);
         this.ctx.stroke();
         this.ctx.setLineDash([]);
-        // The readout — >=16px, on a dark plate so it can't wash out against the title.
-        this.ctx.font = '16px "Press Start 2P", monospace';
-        this.ctx.textAlign = 'right';
-        const label = h.catchable ? 'TRACE 4/4 — REACHABLE' : `TRACE ${h.stage}/4`;
-        const tw = this.ctx.measureText(label).width;
-        this.ctx.fillStyle = 'rgba(3, 12, 12, 0.8)';
-        this.ctx.fillRect(W - 16 - tw - 6, 8, tw + 12, 22);
-        this.ctx.fillStyle = h.catchable ? '#7ee8e0' : '#3fa080';
-        this.ctx.fillText(label, W - 20, 24);
+        // NO progress readout (owner cut the TRACE n/4 plate): a counter in the corner
+        // explained the secret, and she is a secret. Progress is coded by POSITION alone —
+        // each quick reload she is visibly further into the room — which stays inside the
+        // sprite grammar (state by shape + position, never colour). The one label that
+        // survives is the [SPACE] prompt at stage 4, because that one is load-bearing:
+        // without it the catch input is undiscoverable.
         if (h.catchable) {
+            this.ctx.font = '16px "Press Start 2P", monospace';
             this.ctx.textAlign = 'center';
             this.ctx.fillStyle = '#7ee8e0';
             this.ctx.fillText('[SPACE] reach out', Math.max(140, h.x - 70), y + 34);

@@ -6,7 +6,7 @@
 // ARG window, the scanner pockets + BEYOND read, the emptied Localhost + refugees +
 // intake, the Data Mines, Quantcy's Trust, Hydratia (catch / autosave / warm restore),
 // and the death receipt.
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NPC } from '../src/entities/NPC.js';
 import { ARCHITECT, LORE_FRAGS, BOOTH_LORE, CACHE_CHECKPOINT, HYDRATIA_DEATH } from '../src/content/dialogue.js';
 import { classifyRoomBeyond } from '../src/systems/RoomGenerator.js';
@@ -19,6 +19,132 @@ const newGame = (width = 400, height = 400) => makeGame({ width, height });
 // ring, Port 0's walls, Heur's ping, Heur's database) all reported "Quarantine held",
 // which was untrue. The routing had NO test coverage, so splitting it broke nothing and
 // proved nothing. These pin it.
+describe('Playtest: state that should not survive', () => {
+    beforeEach(mountDom);
+
+    // These tests drive the real start() on boot-screen engines, and a START-state engine's
+    // keydown listeners are modal. happy-dom's window is shared across the file, so leaving
+    // them attached made every LATER test that dispatches a key fail. Capture and remove.
+    let attached = [];
+    const bootGame = (opts = {}) => {
+        const orig = window.addEventListener;
+        window.addEventListener = function (type, handler, o) {
+            if (type === 'keydown') attached.push(handler);
+            return orig.call(this, type, handler, o);
+        };
+        let game;
+        try { game = makeGame({ audio: 'all', playing: false, ...opts }); }
+        finally { window.addEventListener = orig; }
+        return game;
+    };
+    const boot = (game) => {
+        const raf = globalThis.requestAnimationFrame;
+        globalThis.requestAnimationFrame = () => 0;
+        try { game.start(); } finally { globalThis.requestAnimationFrame = raf; }
+    };
+    afterEach(() => {
+        for (const h of attached) window.removeEventListener('keydown', h);
+        attached = [];
+    });
+
+    it('corruption regrows on death — cleared rooms are re-seeded, not remembered', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.state.score = 20; game.growSnake(20);
+        for (const [x, y] of [[4, 2], [3, 1], [6, 2], [8, -1]]) {
+            game.worldManager.currentRoomX = x; game.worldManager.currentRoomY = y;
+            game.worldManager.getOrCreateRoom(game.state.unlocked);
+        }
+        expect(Object.keys(game.worldManager.rooms).length).toBeGreaterThan(1);
+
+        game.die('wall');
+
+        // Room CONTENT derives from the durable unlock set, so dropping the cache costs
+        // nothing you earned — it only regrows what the world grows on its own. Only the
+        // room you respawned into should be cached again.
+        expect(Object.keys(game.worldManager.rooms).length).toBeLessThanOrEqual(1);
+    });
+
+    it('death does not undo anything you EARNED', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.state.upgrades.scanner = true;
+        game.state.unlocked.refugeesFreed = 2;
+        game.state.unlocked.purgeComplete = true;
+        game.worldManager.brokenWalls.add(game.worldManager.boundaryKey(0, 0, 'right'));
+
+        game.die('wall');
+
+        expect(game.state.upgrades.scanner).toBe(true);
+        expect(game.state.unlocked.refugeesFreed).toBe(2);
+        expect(game.state.unlocked.purgeComplete).toBe(true);
+        expect(game.worldManager.isWallBroken(0, 0, 'right')).toBe(true);
+    });
+
+    // THE FRESH-START CONTRACT. The cameos and Hydratia's chase are one-time GLOBAL flags,
+    // so months of playtesting burn them permanently — the reported symptom was "Hydratia
+    // isn't loading on the initial screen" when she had in fact been caught once, long
+    // ago, and retired. No save files means a new player.
+    it('a boot with no save files re-arms Hydratia and the title cameos', () => {
+        window.localStorage.setItem('ouroboros-hydratia-caught', '1'); // caught in a past session
+        const game = bootGame();
+        expect(game.saveManager.hasHydratiaCaught()).toBe(true);
+
+        boot(game);
+
+        expect(game.saveManager.hasHydratiaCaught()).toBe(false); // re-armed
+        expect(game._hydratia).toBeTruthy();                      // and she is on screen
+    });
+
+    it('...but a boot WITH a save file leaves the one-time flags alone', () => {
+        const game = bootGame();
+        game.saveManager.save(1, { unlocked: {} });
+        game.saveManager.markHydratiaCaught();
+
+        boot(game);
+
+        expect(game.saveManager.hasHydratiaCaught()).toBe(true); // your progress is your progress
+        expect(game._hydratia).toBeNull();
+    });
+
+    it('she is on screen on the BARE cold open, before any Start Screen exists', () => {
+        const game = bootGame({ ctx: true });
+        boot(game);
+
+        expect(game.startMenuActive()).toBe(false); // no files: the bare void, no menu
+        game.draw();
+        expect(game.state.hydratia).toBeTruthy();
+        expect(game.state.hydratia.x).toBeLessThan(game.canvas.width); // actually on canvas
+    });
+
+    // REGRESSION (playtest): the fresh-start re-arm called the FULL resetIntroFlags() on
+    // every no-save boot, which wiped hydratia-boot/approach — the chase's own progress —
+    // on each refresh. Quick reloads therefore never advanced her, for exactly the
+    // pre-first-save player the chase was built for.
+    it('quick reloads with no save files ADVANCE the chase (the re-arm must not eat it)', () => {
+        // Boot 1: she appears at stage 0 and the boot timestamp is stamped.
+        const first = bootGame();
+        boot(first);
+        expect(first._hydratia).toMatchObject({ stage: 0 });
+
+        // Boot 2, "immediately" (same storage, within the 10s window): stage advances.
+        const second = bootGame();
+        boot(second);
+        expect(second._hydratia.stage).toBe(1);
+
+        // ...and on through to reachable: two more quick reloads.
+        const third = bootGame();
+        boot(third);
+        const fourth = bootGame();
+        boot(fourth);
+        const fifth = bootGame();
+        boot(fifth);
+        expect(fifth._hydratia.stage).toBe(4);
+        expect(fifth._hydratia.catchable).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------------
 describe('Death causes route to the right voice', () => {
     beforeEach(mountDom);
 

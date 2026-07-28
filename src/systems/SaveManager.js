@@ -162,6 +162,23 @@ export class SaveManager {
         } catch (e) { /* ignore */ }
     }
 
+    // The narrow half of the fresh-start contract, for the boot path. Clears only the
+    // one-time SEEN/CAUGHT flags — never `hydratia-boot`/`hydratia-approach`, because
+    // those are the chase's LIVE progress and the chase is played entirely on no-save
+    // boots (refresh quickly four times before you have ever saved). start() calling the
+    // full resetIntroFlags() wiped that progress on every reload, so the exact player the
+    // chase was built for could never advance past stage 0. Two lifecycles, two resets:
+    // erasing your last file = a deliberate fresh start (full reset); merely booting with
+    // no files = re-arm the openings, but never touch a chase in progress.
+    rearmFirstContact() {
+        if (!this.available) return;
+        try {
+            window.localStorage.removeItem(this.cameoKey);
+            window.localStorage.removeItem('ouroboros-cadenza-cameo-seen');
+            window.localStorage.removeItem('ouroboros-hydratia-caught');
+        } catch (e) { /* ignore */ }
+    }
+
     // --- Hydratia's catch-on-reload (global, cross-file — same pattern as the cameos) --
     // Boot timestamps + a 0..4 approach counter driven by QUICK reloads (<= ~10s apart);
     // 'caught' is the one-time flag that retires the chase and seats her in Localhost.

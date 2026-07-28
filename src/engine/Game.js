@@ -2230,6 +2230,17 @@ export class GameEngine {
         // WITH them (their key was never marked delivered).
         if (lostRefugee) delete this.worldManager.rooms[lostRefugee];
 
+        // CORRUPTION REGROWS WITH THE RUN (owner, from playtest). Room state was cached
+        // for the whole session, so every Glitch you cleared stayed cleared through death
+        // after death — the world quietly got safer the more you failed, which is exactly
+        // backwards for an incremental. Dropping the room cache re-seeds corruption from
+        // the generator. It is safe to drop wholesale because a room's CONTENT is derived
+        // from the durable `unlocked` set: broken walls live in worldManager.brokenWalls,
+        // landmarks/questlines/refugee homes regenerate from their flags, and anything you
+        // permanently took is recorded as an unlock — so nothing you EARNED comes back,
+        // only what the world grows on its own.
+        this.worldManager.rooms = {};
+
         this.worldManager.currentRoomX = toCheckpoint ? 5 : 0;
         this.worldManager.currentRoomY = toCheckpoint ? -4 : 0;
 
