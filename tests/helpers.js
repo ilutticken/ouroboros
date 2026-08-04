@@ -13,20 +13,22 @@ import { GameEngine } from '../src/engine/Game.js';
 //   manages save-slot state across its own tests and clears explicitly.
 export function mountDom({ clearStorage = true } = {}) {
     document.body.innerHTML = `
-        <div id="ui-layer" class="hidden">
-            <div id="score-display">Data: <span id="score-value">0</span></div>
-            <div id="gear-display" class="hidden"></div>
-        </div>
-        <div id="game-wrapper">
-            <div id="shop-overlay" class="hidden">
-                <h2 id="shop-title"></h2>
-                <div class="shop-items" id="shop-items"></div>
-                <button id="btn-close-shop">Leave</button>
+        <div id="cabinet">
+            <div id="ui-layer" class="hidden">
+                <div id="score-display">Data: <span id="score-value">0</span></div>
+                <div id="gear-display" class="hidden"></div>
             </div>
-        </div>
-        <div id="ui-layer-bottom" class="hidden">
-            <div id="narrative-terminal"></div>
-            <div id="boss-status" class="hidden"></div>
+            <div id="game-wrapper">
+                <div id="shop-overlay" class="hidden">
+                    <h2 id="shop-title"></h2>
+                    <div class="shop-items" id="shop-items"></div>
+                    <button id="btn-close-shop">Leave</button>
+                </div>
+            </div>
+            <div id="ui-layer-bottom" class="hidden">
+                <div id="narrative-terminal"></div>
+                <div id="boss-status" class="hidden"></div>
+            </div>
         </div>
     `;
     if (clearStorage) window.localStorage.clear();

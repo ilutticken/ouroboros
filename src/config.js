@@ -40,3 +40,48 @@ export const COLS = 50;
 export const ROWS = 28;
 export const LOGICAL_W = COLS * GRID;  // 1000
 export const LOGICAL_H = ROWS * GRID;  // 560
+
+// --- THE CABINET ---------------------------------------------------------------------
+// Fixing the canvas alone was half a job. The board became a fixed 1000x560 centred in
+// the window while every ribbon and overlay still measured the WINDOW, so on a 1920-wide
+// display the Data readout sat ~430px LEFT of the play field, the gear gauge ~430px right
+// of it, and the dialog box (absolutely positioned against the viewport, because <body>
+// is not a containing block) overhung the field by ~150px on each side and started above
+// its top edge. The chrome was furnished for a room the game no longer lived in.
+//
+// So the unit that scales is not the canvas — it is the whole machine: top ribbon, board,
+// bottom ribbon, one 1000 x 720 object. main.js sizes #cabinet to the scaled board width
+// and publishes --ui-scale, so the HUD sits in the BOARD's corners and every overlay is a
+// percentage of the BOARD. There is one thing on screen, and it has one size.
+export const CHROME_TOP = 60;     // Data + the gear gauge
+export const CHROME_BOTTOM = 100; // the Architect's terminal + boss status
+export const CABINET_W = LOGICAL_W;                                // 1000
+export const CABINET_H = LOGICAL_H + CHROME_TOP + CHROME_BOTTOM;   // 720
+
+// The one fit formula, exported so main.js and the tests cannot drift apart (the first
+// version of this test re-implemented the maths, which pins a copy rather than the code).
+//
+// Whole multiples only, because a fractional scale makes some pixels 2 screen-px wide and
+// their neighbours 3 — the exact shimmer that makes upscaled pixel art look cheap.
+//
+// TWO PASSES, AND THE ORDER MATTERS. The board is maximised FIRST, against chrome held at
+// 1x; only then does the chrome grow into whatever height is left over. Scaling them in
+// lockstep is the obvious version and it is wrong — measured, it cost a windowed 1440p
+// display its 2x board (2000x1120 -> 1000x560 in a 2560px window, a stamp in a letterbox)
+// purely to avoid a 16px ribbon. The play field is the thing; the furniture yields to it.
+//
+// Below 1x the chrome stops scaling entirely: shrinking type under the §2.6 16px floor is
+// never the trade, and an unreadable gear gauge is a worse failure than a soft board.
+// Cropping is never on the table — a wall you cannot see is a wall that kills you.
+export function computeFit(availW, availH) {
+    const chrome = CHROME_TOP + CHROME_BOTTOM;
+    const raw = Math.min(availW / LOGICAL_W, (availH - chrome) / LOGICAL_H);
+    if (raw < 1) {
+        const board = Math.max(0.1, raw);
+        return { scale: board, uiScale: 1, width: LOGICAL_W * board, height: LOGICAL_H * board };
+    }
+    const scale = Math.floor(raw);
+    let uiScale = 1;
+    while (uiScale < scale && LOGICAL_H * scale + chrome * (uiScale + 1) <= availH) uiScale++;
+    return { scale, uiScale, width: LOGICAL_W * scale, height: LOGICAL_H * scale };
+}

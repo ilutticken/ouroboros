@@ -13,7 +13,13 @@ export class DialogManager {
         
         this.container.appendChild(this.textBox);
         this.container.appendChild(this.continuePrompt);
-        document.body.appendChild(this.container);
+        // MOUNT ON THE BOARD, NOT THE BODY. #dialog-overlay is absolutely positioned in
+        // percentages; parented to <body> (not a containing block) those resolved against
+        // the VIEWPORT, so once the canvas became a fixed 1000x560 the box overhung the
+        // play field on both sides and started above it. #game-wrapper IS the canvas box,
+        // so the same percentages now describe the game. Falls back to body for any host
+        // page without the cabinet.
+        (document.getElementById('game-wrapper') || document.body).appendChild(this.container);
         
         this.currentDialog = null;
         this.lineIndex = 0;

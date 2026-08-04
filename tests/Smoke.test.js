@@ -8,7 +8,11 @@
 // TypeErrors in draw code surface here.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { NPC } from '../src/entities/NPC.js';
-import { LOGICAL_W, LOGICAL_H, COLS, ROWS } from '../src/config.js';
+import {
+    LOGICAL_W, LOGICAL_H, COLS, ROWS,
+    CABINET_W, CABINET_H, CHROME_TOP, CHROME_BOTTOM, computeFit,
+} from '../src/config.js';
+import { DialogManager } from '../src/systems/DialogManager.js';
 import { mountDom, makeGame, frames, recordingCtx, badGeometry, fontSizes } from './helpers.js';
 
 // Smoke needs EVERY audio method stubbed and the swallow-everything canvas ctx
@@ -35,24 +39,78 @@ describe('The shipping resolution', () => {
 
     // Integer multiples only, nearest-neighbour — the emulator rule. A fractional scale
     // makes some pixels 2 screen-px wide and their neighbours 3, which is the shimmer that
-    // makes upscaled pixel art look cheap. Mirrors fitCanvas() in main.js.
+    // makes upscaled pixel art look cheap. Calls the REAL computeFit (main.js calls the
+    // same one); the first version of this test re-implemented the formula, which pins a
+    // copy of the maths rather than the maths.
     it('scales by whole numbers on real displays, and never crops on small ones', () => {
-        const fit = (availW, availH) => {
-            const raw = Math.min(availW / LOGICAL_W, availH / LOGICAL_H);
-            return raw >= 1 ? Math.floor(raw) : raw;
-        };
-        for (const [w, h] of [[1366, 648], [1920, 960], [2560, 1320], [3840, 2040]]) {
-            const s = fit(w, h);
-            expect(Number.isInteger(s), `${w}x${h} -> ${s}`).toBe(true);
-            expect(s).toBeGreaterThanOrEqual(1);
-            expect(LOGICAL_W * s).toBeLessThanOrEqual(w);   // fits, never cropped
-            expect(LOGICAL_H * s).toBeLessThanOrEqual(h);
+        for (const [w, h] of [[1366, 720], [1920, 1000], [2560, 1400], [3840, 2100]]) {
+            const { scale, uiScale, width, height } = computeFit(w, h);
+            expect(Number.isInteger(scale), `${w}x${h} -> ${scale}`).toBe(true);
+            expect(Number.isInteger(uiScale)).toBe(true);
+            expect(scale).toBeGreaterThanOrEqual(1);
+            expect(uiScale).toBeGreaterThanOrEqual(1);    // never under the §2.6 floor
+            expect(uiScale).toBeLessThanOrEqual(scale);   // chrome never outgrows its machine
+            expect(width).toBeLessThanOrEqual(w);         // fits, never cropped
+            // The WHOLE cabinet has to fit, not just the board — sizing the canvas alone
+            // is exactly the bug that pushed the HUD off the play field.
+            expect(height + (CHROME_TOP + CHROME_BOTTOM) * uiScale).toBeLessThanOrEqual(h);
         }
-        // Below 1x we deliberately allow a fractional CONTAIN: a soft picture beats a
-        // cropped one, because a wall you cannot see is a wall that kills you.
-        const tiny = fit(800, 480);
-        expect(tiny).toBeLessThan(1);
-        expect(LOGICAL_H * tiny).toBeLessThanOrEqual(480);
+    });
+
+    // The board is maximised against 1x chrome BEFORE the chrome is allowed to grow.
+    // Locking them together looks tidier and measurably costs a windowed 1440p display
+    // its 2x board — a regression with no symptom in any other test.
+    it('the board never loses a whole step to make room for bigger chrome', () => {
+        const chrome = CHROME_TOP + CHROME_BOTTOM;
+        for (const [w, h] of [[2560, 1310], [3840, 2030], [1920, 950], [2560, 1440]]) {
+            const { scale, uiScale, height } = computeFit(w, h);
+            const best = Math.floor(Math.min(w / LOGICAL_W, (h - chrome) / LOGICAL_H));
+            expect(scale, `${w}x${h}`).toBe(best);
+            // ...and the chrome took every step that still fit, but no more.
+            expect(height + chrome * (uiScale + 1) > h || uiScale === scale, `${w}x${h}`).toBe(true);
+        }
+        expect(computeFit(2560, 1310).scale).toBe(2);   // the case that regressed
+        expect(computeFit(2560, 1310).uiScale).toBe(1);
+    });
+
+    it('below 1x the board softens but the chrome holds its §2.6 floor', () => {
+        // A soft picture beats a cropped one — a wall you cannot see is a wall that kills
+        // you — but shrinking the HUD text below 16px is never the trade we make.
+        const { scale, uiScale, width, height } = computeFit(800, 480);
+        expect(scale).toBeLessThan(1);
+        expect(uiScale).toBe(1);
+        expect(width).toBeLessThanOrEqual(800);
+        expect(height).toBeLessThanOrEqual(480 - CHROME_TOP - CHROME_BOTTOM);
+        expect(scale).toBeGreaterThan(0);                 // never zero/negative
+        expect(computeFit(320, 100).scale).toBeGreaterThan(0); // absurdly short window
+    });
+
+    // THE CABINET. The regression this exists for: the canvas was bound to the logical
+    // board while every ribbon and overlay still measured the WINDOW, so on a 1920-wide
+    // display Data sat ~430px left of the play field and the dialog box overhung it.
+    // Layout isn't computed in happy-dom, so what's pinned here is the CONTAINMENT that
+    // makes the CSS percentages mean the board — which is where the bug actually lived.
+    it('every visible element hangs off the cabinet, and dialog hangs off the board', () => {
+        const cabinet = document.getElementById('cabinet');
+        const wrapper = document.getElementById('game-wrapper');
+        expect(cabinet, 'no #cabinet — the chrome would measure the window again').toBeTruthy();
+        for (const id of ['ui-layer', 'game-wrapper', 'ui-layer-bottom', 'shop-overlay']) {
+            expect(cabinet.contains(document.getElementById(id)), id).toBe(true);
+        }
+        // Parented to <body> these percentages resolve against the viewport, not the game.
+        const dm = new DialogManager();
+        expect(wrapper.contains(dm.container)).toBe(true);
+        expect(dm.container.parentElement).not.toBe(document.body);
+    });
+
+    it('the cabinet reserves exactly the chrome the stylesheet spends', () => {
+        // config.js budgets CHROME_TOP/BOTTOM vertically; style.css sizes the ribbons to
+        // the same numbers. If they drift, the board is fitted against a height nobody
+        // actually has and the bottom ribbon clips — which is how the terminal spent its
+        // whole life overflowing a 100px ribbon with a 114px box.
+        expect(CABINET_W).toBe(LOGICAL_W);
+        expect(CABINET_H).toBe(LOGICAL_H + CHROME_TOP + CHROME_BOTTOM);
+        expect(CABINET_H).toBe(720);
     });
 
     it('every state draws clean at the shipping size', () => {

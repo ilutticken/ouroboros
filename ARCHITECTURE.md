@@ -215,6 +215,39 @@ forever and `GRID` is the dial: **8-bit 20 → 16-bit 30 → 32-bit 40** (1000×
 2000×1120). No gameplay constant, hazard span, or fight tuning changes across an era jump,
 and each era spends its upscale factor on fidelity instead of magnification.
 
+**The cabinet — and the trap of fixing only the canvas.** Pinning the board was half the
+job. The canvas became a fixed 1000 × 560 centred in the window while *every ribbon and
+overlay still measured the window*, so on a 1920-wide display the Data readout sat ~430px
+left of the play field, the gear gauge ~430px right of it, the Architect's terminal lurched
+~127px left whenever boss status appeared beside it, and the dialog box — absolutely
+positioned while parented to `<body>`, which is not a containing block — resolved its
+percentages against the **viewport** and overhung the field by ~150px a side. Centred on
+the window is not centred on the game, once the game stops being the window.
+
+So the unit that scales is the whole machine. `#cabinet` wraps top ribbon + board + bottom
+ribbon as one **1000 × 720** object (`CABINET_H = LOGICAL_H + CHROME_TOP + CHROME_BOTTOM`),
+main.js sizes it to the drawn board width and publishes `--ui-scale`, and every overlay
+lives inside `#game-wrapper` — which is exactly the canvas box, so `top: 20%` means 20% of
+the *play field*. **Anything parented outside the cabinet goes straight back to measuring
+the window**; `DialogManager` mounts into `#game-wrapper` for precisely this reason.
+
+`computeFit(availW, availH)` in [config.js](src/config.js) is the single formula (main.js
+and the tests both call it — the first version of the test re-implemented the maths, which
+pins a copy rather than the code). It runs **two passes, and the order is load-bearing**:
+the board is maximised first against chrome held at 1×, and only then does the chrome grow
+into the leftover height. Locking them together is the tidier-looking version and it
+measurably cost a windowed 1440p display its 2× board. The play field is the thing; the
+furniture yields to it. `--ui-scale` never drops below 1, so the §2.6 16px floor survives
+even on a window too small for a 1× board.
+
+| Viewport | Board | Chrome |
+|---|---|---|
+| 1366 × 638 (laptop) | 0.85× fractional contain | 1× |
+| 1920 × 950 (1080p windowed) | 1× | 1× |
+| 2560 × 1310 (1440p windowed) | 2× | 1× |
+| 3840 × 2030 (4K windowed) | 3× | 2× |
+| 3840 × 2160 (4K fullscreen) | 3× | 3× |
+
 **Room content** ([RoomGenerator.js](src/systems/RoomGenerator.js)) is one long ordered if/else ladder —
 **first match wins, so order is load-bearing** — fed by fixed registries: growth caches, Wilds modules,
 refugee rooms, lore fragments, and six landmarks (Cadenza {8,3} · Cache {5,-4} · Lost Verse {10,1} ·

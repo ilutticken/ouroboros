@@ -1,12 +1,12 @@
 import { GameEngine } from './engine/Game.js';
-import { LOGICAL_W, LOGICAL_H } from './config.js';
+import { LOGICAL_W, LOGICAL_H, computeFit } from './config.js';
 
 // Entry point
 document.addEventListener('DOMContentLoaded', () => {
     // No console banner here: the system speaks through the Architect's terminal or not
     // at all, and the game boots SILENT by design.
     const canvas = document.getElementById('game-canvas');
-    const wrapper = document.getElementById('game-wrapper');
+    const cabinet = document.getElementById('cabinet');
 
     // THE BACKBUFFER IS FIXED. Every player gets the same board (see config.js); the
     // window only decides how big that board is DRAWN. Set once, never on resize — so the
@@ -15,21 +15,28 @@ document.addEventListener('DOMContentLoaded', () => {
     canvas.width = LOGICAL_W;
     canvas.height = LOGICAL_H;
 
-    // ...AND IT SCALES LIKE A CONSOLE, NOT LIKE A TEXTURE: whole-number multiples only,
-    // nearest-neighbour, aspect preserved, centred, letterboxed. A fractional scale would
-    // make some pixels 2 screen-px wide and their neighbours 3, which is the exact shimmer
-    // that makes upscaled pixel art look cheap. Integer steps keep every cell identical.
+    // ...AND THE WHOLE CABINET SCALES LIKE A CONSOLE, NOT LIKE A TEXTURE: whole-number
+    // multiples, nearest-neighbour, aspect preserved, centred, letterboxed.
     //
-    // The one concession: if even 1x will not fit (a very small window), fall back to a
-    // fractional CONTAIN. Cropping the play field is never acceptable — a wall you cannot
-    // see is a wall that kills you — so a slightly soft picture is the right trade.
+    // What gets sized here is the CABINET, not just the canvas — see config.js. Sizing the
+    // board alone left the HUD pinned to the window's corners and the dialog box overhanging
+    // the play field, because those elements were still measuring the viewport. Now #cabinet
+    // is exactly the board's width, so `space-between` in the top ribbon means the BOARD's
+    // corners, and every overlay percentage is a percentage of the BOARD.
+    //
+    // --ui-scale rides along so ribbon type and pips grow with the picture: at 2x a 16px
+    // readout beside a 2000px-wide field would be a speck. It never drops below 1 (§2.6).
     const fitCanvas = () => {
-        const availW = wrapper.clientWidth, availH = wrapper.clientHeight;
+        const availW = document.documentElement.clientWidth;
+        const availH = document.documentElement.clientHeight;
         if (!availW || !availH) return;
-        const raw = Math.min(availW / LOGICAL_W, availH / LOGICAL_H);
-        const scale = raw >= 1 ? Math.floor(raw) : raw;
-        canvas.style.width = `${Math.round(LOGICAL_W * scale)}px`;
-        canvas.style.height = `${Math.round(LOGICAL_H * scale)}px`;
+        const { uiScale, width, height } = computeFit(availW, availH);
+        canvas.style.width = `${Math.round(width)}px`;
+        canvas.style.height = `${Math.round(height)}px`;
+        if (cabinet) {
+            cabinet.style.width = `${Math.round(width)}px`;
+            cabinet.style.setProperty('--ui-scale', String(uiScale));
+        }
     };
 
     fitCanvas();

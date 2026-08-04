@@ -1,3 +1,9 @@
+/* Fallback so every calc(... * var(--ui-scale)) below stays valid even if an element
+   ends up outside #cabinet (main.js overrides this on the cabinet each fit). */
+:root {
+    --ui-scale: 1;
+}
+
 body {
     margin: 0;
     padding: 0;
@@ -6,10 +12,24 @@ body {
     font-family: 'Press Start 2P', monospace;
     overflow: hidden;
     display: flex;
-    flex-direction: column;
+    align-items: center;      /* the cabinet is one object, centred in the window */
+    justify-content: center;
     height: 100vh;
 }
 
+/* THE CABINET — ribbons + board as a single scaled unit (see config.js / main.js).
+   main.js sets its width to exactly the drawn board width and publishes --ui-scale.
+   EVERYTHING the player sees must live inside here: an element parented to <body>
+   positions against the VIEWPORT, which is precisely how the dialog box ended up
+   overhanging the play field by 150px a side while the HUD sat in the window's corners. */
+#cabinet {
+    --ui-scale: 1;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Exactly the canvas box, so `top: 20%` in an overlay below means 20% of the PLAY FIELD. */
 #game-wrapper {
     flex: 1;
     display: flex;
@@ -31,25 +51,34 @@ body {
     image-rendering: crisp-edges; /* Firefox / older WebKit spelling */
 }
 
+/* Both ribbons are sized in CHROME_TOP / CHROME_BOTTOM (config.js). If you change a
+   height here, change it there too — the fit maths reserves the vertical budget. */
 #ui-layer {
-    flex: 0 0 60px;
+    flex: 0 0 calc(60px * var(--ui-scale));
     display: flex;
     align-items: center;
-    justify-content: space-between; /* Data left, the gear gauge right */
-    padding-left: 2rem;
-    padding-right: 2rem;
+    justify-content: space-between; /* Data left, the gear gauge right — of the BOARD */
+    padding: 0 calc(16px * var(--ui-scale));
+    box-sizing: border-box;
     z-index: 10;
     transition: opacity 2s ease-in;
 }
 
+/* A 3-COLUMN GRID, not a centred flex row. Flex centred the [terminal, boss-status] PAIR,
+   so the Architect's terminal lurched ~127px left the instant Gate cited you or Heur's
+   seal count appeared — the reading surface moved because a status box turned up next to
+   it. Equal minmax(0,1fr) gutters pin the terminal dead-centre over the board whether or
+   not boss status is present. */
 #ui-layer-bottom {
-    flex: 0 0 100px;
-    display: flex;
-    justify-content: center;
+    flex: 0 0 calc(100px * var(--ui-scale));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    column-gap: calc(10px * var(--ui-scale));
     align-items: center;
+    box-sizing: border-box;
+    padding: calc(6px * var(--ui-scale)) calc(8px * var(--ui-scale));
     transition: opacity 2s ease-in;
     z-index: 10;
-    padding-bottom: 1rem;
 }
 
 .hidden {
@@ -68,7 +97,7 @@ body {
 }
 
 #score-display {
-    font-size: 1.2rem;
+    font-size: calc(18px * var(--ui-scale));
     text-shadow: 0 0 10px #00ffcc;
 }
 
@@ -76,8 +105,9 @@ button {
     background: rgba(0, 255, 204, 0.1);
     border: 1px solid #00ffcc;
     color: #00ffcc;
-    padding: 0.5rem 1rem;
+    padding: calc(8px * var(--ui-scale)) calc(16px * var(--ui-scale));
     font-family: inherit;
+    font-size: calc(14px * var(--ui-scale));
     cursor: pointer;
     box-shadow: 0 0 5px rgba(0, 255, 204, 0.5);
     transition: all 0.2s;
@@ -88,16 +118,25 @@ button:hover {
     box-shadow: 0 0 15px rgba(0, 255, 204, 0.8);
 }
 
+/* The Architect's monitor. `height: 100%` (of the ribbon's content box) instead of a
+   hardcoded 80px: at 80px + 1rem padding + border it measured 114px inside a 100px
+   ribbon and had been overflowing its own chrome since it was written. Sized off the
+   board now, not the window, so it can never drift out from under the play field. */
 #narrative-terminal {
-    width: 80%;
-    max-width: 800px;
-    height: 80px;
+    grid-column: 2;
+    width: calc(640px * var(--ui-scale));
+    max-width: 100%;
+    height: 100%;
+    box-sizing: border-box;
     background: rgba(5, 5, 5, 0.8);
     border: 1px solid #00ffcc;
     color: #00ffcc;
-    padding: 1rem;
-    overflow-y: hidden;
-    font-size: 0.9rem;
+    padding: calc(10px * var(--ui-scale)) calc(14px * var(--ui-scale));
+    overflow-y: hidden; /* still programmatically scrollable — NarrativeManager pins the bottom */
+    /* Was 0.9rem = 14.4px: the game's primary prose surface sat under the §2.6 16px
+       floor, which Render.test.js never caught because it only samples CANVAS text. */
+    font-size: calc(16px * var(--ui-scale));
+    line-height: 1.35;
     display: flex;
     flex-direction: column;
     pointer-events: auto;
@@ -105,16 +144,18 @@ button:hover {
 }
 
 .narrative-line {
-    margin-bottom: 0.5rem;
+    margin-bottom: calc(6px * var(--ui-scale));
+    flex: 0 0 auto;
 }
 
 /* The terminal's release cue (§2.6): a finished log freezes the sim until Space —
    this is the visible, >=16px, motion-free signal that a key is expected. */
 .narrative-advance {
-    font-size: 16px;
+    font-size: calc(16px * var(--ui-scale)); /* --ui-scale never drops below 1, so >=16px holds */
     color: #00ffcc;
     letter-spacing: 0.2em;
-    margin-bottom: 0.5rem;
+    margin-bottom: calc(6px * var(--ui-scale));
+    flex: 0 0 auto;
 }
 
 /* The gear gauge (top ribbon, by your Data): label + three pips + optional Redline
@@ -122,17 +163,17 @@ button:hover {
 #gear-display {
     display: flex;
     align-items: center;
-    gap: 6px;
-    font-size: 16px;
+    gap: calc(6px * var(--ui-scale));
+    font-size: calc(16px * var(--ui-scale));
     color: #00ffcc;
 }
 #gear-display.hidden { display: none; }
-#gear-display .gear-label { letter-spacing: 0.1em; margin-right: 2px; }
+#gear-display .gear-label { letter-spacing: 0.1em; margin-right: calc(2px * var(--ui-scale)); }
 #gear-display .gear-label.brake { color: #ff8a3d; }
 #gear-display .gear-pip {
-    width: 12px;
-    height: 12px;
-    border: 2px solid #00ffcc;
+    width: calc(12px * var(--ui-scale));
+    height: calc(12px * var(--ui-scale));
+    border: calc(2px * var(--ui-scale)) solid #00ffcc;
     display: inline-block;
 }
 #gear-display .gear-pip.on { background: #00ffcc; }
@@ -142,40 +183,51 @@ button:hover {
 
 /* Boss/encounter status in the BOTTOM RIBBON (owner: no boss overlays on the play
    space). Firewall-blue for Gate's citations; Heur gets his own class. >=16px, static. */
+/* Column 3 of the ribbon grid — it sits BESIDE the terminal without ever displacing it. */
 #boss-status {
-    margin-left: 16px;
-    padding-left: 16px;
-    border-left: 2px solid rgba(0, 255, 204, 0.25);
-    font-size: 16px;
-    line-height: 1.5;
+    grid-column: 3;
+    justify-self: start;
+    /* border-box, or min-width would be 150 PLUS padding+border = 166px against a 162px
+       gutter, and the citation would hang off the cabinet's right edge. */
+    box-sizing: border-box;
+    padding-left: calc(14px * var(--ui-scale));
+    border-left: calc(2px * var(--ui-scale)) solid rgba(0, 255, 204, 0.25);
+    font-size: calc(16px * var(--ui-scale));
+    line-height: 1.4;
     white-space: pre-line;
     text-align: left;
     align-self: center;
-    min-width: 220px;
+    min-width: calc(150px * var(--ui-scale));
     color: #4aa3ff;
 }
 #boss-status.hidden { display: none; }
 #boss-status.heur { color: #bfe9ff; }
 
+/* Mounted inside #game-wrapper (DialogManager), so these percentages are percentages of
+   the BOARD. It used to be parented to <body> and absolutely positioned — which resolves
+   against the viewport — so on a 1920-wide window the box spanned 150px past the play
+   field on each side and started ABOVE its top edge. Centred on the window is not centred
+   on the game once the game stopped being the window. */
 #dialog-overlay {
     position: absolute;
     top: 20%;
     left: 20%;
     width: 60%;
+    box-sizing: border-box;
     background: rgba(0, 0, 0, 0.9);
-    border: 4px solid #00ffcc;
+    border: calc(4px * var(--ui-scale)) solid #00ffcc;
     color: #fff;
-    padding: 2rem;
+    padding: calc(24px * var(--ui-scale));
     z-index: 100;
     box-shadow: 0 0 20px #00ffcc;
     pointer-events: auto;
-    font-size: 1rem; /* >= 16px accessibility floor for the primary reading surface */
+    font-size: calc(16px * var(--ui-scale)); /* >= 16px floor for the primary reading surface */
     line-height: 1.5;
 }
 
 #dialog-prompt {
-    margin-top: 1rem;
-    font-size: 0.7rem;
+    margin-top: calc(14px * var(--ui-scale));
+    font-size: calc(12px * var(--ui-scale));
     color: #00ffcc;
     text-align: right;
     animation: blink 1s infinite;
@@ -185,15 +237,20 @@ button:hover {
     50% { opacity: 0; }
 }
 
+/* Also a percentage of the BOARD (it already lived inside #game-wrapper, which is only
+   now actually canvas-sized). max-height keeps a long vendor list inside the play field. */
 #shop-overlay {
     position: absolute;
-    top: 10%;
-    left: 20%;
-    width: 60%;
+    top: 8%;
+    left: 18%;
+    width: 64%;
+    max-height: 84%;
+    box-sizing: border-box;
+    overflow-y: auto;
     background: rgba(10, 20, 10, 0.95);
-    border: 4px solid #00ff00; /* Green for Bite */
+    border: calc(4px * var(--ui-scale)) solid #00ff00; /* Green for Bite */
     color: #00ff00;
-    padding: 2rem;
+    padding: calc(22px * var(--ui-scale));
     z-index: 110;
     box-shadow: 0 0 20px #00ff00;
     pointer-events: auto;
@@ -204,7 +261,8 @@ button:hover {
 #shop-overlay h2 {
     text-align: center;
     margin-top: 0;
-    margin-bottom: 2rem;
+    margin-bottom: calc(22px * var(--ui-scale));
+    font-size: calc(18px * var(--ui-scale));
     text-shadow: 0 0 10px #00ff00;
 }
 
@@ -234,20 +292,21 @@ button:hover {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 1rem;
-    font-size: 0.8rem;
+    gap: calc(12px * var(--ui-scale));
+    margin-bottom: calc(14px * var(--ui-scale));
+    font-size: calc(16px * var(--ui-scale));
     border-bottom: 1px dashed #00ff00;
-    padding-bottom: 0.5rem;
+    padding-bottom: calc(8px * var(--ui-scale));
 }
 
 .shop-item-text {
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    gap: calc(8px * var(--ui-scale));
 }
 
 .shop-item-text small {
     color: #66ff66;
-    font-size: 0.6rem;
+    font-size: calc(12px * var(--ui-scale));
     line-height: 1.4;
 }

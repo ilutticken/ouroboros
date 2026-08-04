@@ -8,31 +8,38 @@
     <link rel="stylesheet" href="src/style.css">
 </head>
 <body>
-    <!-- Top Ribbon for Score -->
-    <div id="ui-layer" class="hidden">
-        <div id="score-display">Data: <span id="score-value">0</span></div>
-        <!-- The gear gauge 2-Bit installs (tailRider) — same ribbon as your Data. -->
-        <div id="gear-display" class="hidden"></div>
-    </div>
-    
-    <div id="game-wrapper">
-        <!-- Vendor shop overlay (2-Bit or Nibble — populated by ShopManager) -->
-        <div id="shop-overlay" class="hidden">
-            <h2 id="shop-title">Node Shop</h2>
-            <div class="shop-items" id="shop-items"></div>
-            <button id="btn-close-shop" style="margin-top: 1rem;">[ESC] Leave Shop</button>
+    <!-- THE CABINET. Ribbons and board are ONE object, sized together by main.js (see
+         config.js). Nothing the player sees may live outside this div, or it goes back to
+         measuring the window instead of the game. -->
+    <div id="cabinet">
+        <!-- Top Ribbon for Score -->
+        <div id="ui-layer" class="hidden">
+            <div id="score-display">Data: <span id="score-value">0</span></div>
+            <!-- The gear gauge 2-Bit installs (tailRider) — same ribbon as your Data. -->
+            <div id="gear-display" class="hidden"></div>
         </div>
-        
-        <!-- The main canvas -->
-        <canvas id="game-canvas"></canvas>
-    </div>
 
-    <!-- Bottom Ribbon for Terminal -->
-    <div id="ui-layer-bottom" class="hidden">
-        <div id="narrative-terminal"></div>
-        <!-- Boss/encounter status (citations, decontamination count) — ribbon, not a
-             canvas overlay: the play space stays clean. -->
-        <div id="boss-status" class="hidden"></div>
+        <!-- The board. Exactly the canvas box, so every overlay inside it is a percentage
+             of the PLAY FIELD (DialogManager mounts its box here for that reason). -->
+        <div id="game-wrapper">
+            <!-- Vendor shop overlay (2-Bit or Nibble — populated by ShopManager) -->
+            <div id="shop-overlay" class="hidden">
+                <h2 id="shop-title">Node Shop</h2>
+                <div class="shop-items" id="shop-items"></div>
+                <button id="btn-close-shop" style="margin-top: 1rem;">[ESC] Leave Shop</button>
+            </div>
+
+            <!-- The main canvas -->
+            <canvas id="game-canvas"></canvas>
+        </div>
+
+        <!-- Bottom Ribbon for Terminal -->
+        <div id="ui-layer-bottom" class="hidden">
+            <div id="narrative-terminal"></div>
+            <!-- Boss/encounter status (citations, decontamination count) — ribbon, not a
+                 canvas overlay: the play space stays clean. -->
+            <div id="boss-status" class="hidden"></div>
+        </div>
     </div>
 
     <script type="module" src="src/main.js"></script>
