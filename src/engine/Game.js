@@ -284,6 +284,7 @@ export class GameEngine {
         this._worldStep = 0;       // ambient world steps taken (drives drift cadence + shove cooldowns)
         this._textHold = false;    // post-text: the worm holds until the next steering input
         this._wasTextFrozen = false; // edge detector for the hold (see update())
+        this.gearInstall = null;   // 2-Bit fitting the gearbox ({phase,t,x,y,pips}) — see startGearInstall
         this._finale = null;       // Port 0's advancing walls ({rows:[{r,holes}], t})
         this.heur = null;          // Heur's in-room Breakout state — non-null only during the fight
         this._diedSinceCheckpoint = false; // first post-death Cache bump plays her reopen line
@@ -1481,6 +1482,7 @@ export class GameEngine {
             || this.state.gameState === 'SHOP'
             || this.state.gameState === 'PAUSED'
             || !!this.moduleLoad
+            || !!this.gearInstall
             || !!(this.narrative && (this.narrative.isPrinting || this.narrative.awaitingRelease));
         if (this._wasTextFrozen && !textFrozen && this.state.gameState === 'PLAYING') {
             // NOTE: a turn already queued in input.nextDirection is deliberately NOT
@@ -1508,6 +1510,9 @@ export class GameEngine {
         // Architect's logs are read one at a time instead of stepping on each other
         // or scrolling out of view mid-play.
         if (this.narrative && this.narrative.isPrinting) return;
+
+        // 2-Bit fitting the gearbox — a scripted beat, same freeze contract as an install.
+        if (this.gearInstall) { this.updateGearInstall(dt); return; }
 
         // Module install: dragging the carried module into the 3x3 slot triggers a
         // two-beat animation that freezes the sim while it plays.
@@ -2230,6 +2235,7 @@ export class GameEngine {
         this._shakeMs = 0;          // no impact rattle survives its impact
         this._auditionLayer = null; // the M-key music preview re-syncs on any reset
         this._textHold = false;     // the post-text hold (input.reset covers the rest)
+        this.gearInstall = null;    // 2-Bit's gearbox beat must never outlive its scene
         this.audio.setDuck(1);
     }
 
@@ -2439,6 +2445,7 @@ export class GameEngine {
         this.state.moduleSlotX = this.moduleSlotX;
         this.state.moduleSlotY = this.moduleSlotY;
         this.state.moduleLoad = this.moduleLoad;
+        this.state.gearInstall = this.gearInstall; // 2-Bit fitting the gearbox
         this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
         this.state.refugeeIndex = this.refugeeIndex; // which segment wears the refugee's

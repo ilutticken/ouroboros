@@ -8,13 +8,88 @@
 // TypeErrors in draw code surface here.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { NPC } from '../src/entities/NPC.js';
-import { mountDom, makeGame, frames } from './helpers.js';
+import { LOGICAL_W, LOGICAL_H, COLS, ROWS } from '../src/config.js';
+import { mountDom, makeGame, frames, recordingCtx, badGeometry, fontSizes } from './helpers.js';
 
 // Smoke needs EVERY audio method stubbed and the swallow-everything canvas ctx
 // (happy-dom's getContext returns null, so this is the only way to run draw()).
 const bootGame = (width = 400, height = 400) =>
     makeGame({ width, height, audio: 'all', ctx: true, playing: false });
 
+
+// THE SIZE PLAYERS ACTUALLY SEE. Every other suite builds its own small canvas, so until
+// this existed the one resolution the game ships at was the one resolution nothing
+// exercised. The board is fixed now (src/config.js) precisely so this is testable at all.
+describe('The shipping resolution', () => {
+    beforeEach(mountDom);
+
+    const real = (opts = {}) => makeGame({ width: LOGICAL_W, height: LOGICAL_H, audio: 'all', ...opts });
+
+    it('the logical board is exactly the configured grid', () => {
+        const game = real();
+        expect(game._cols).toBe(COLS);
+        expect(game._rows).toBe(ROWS);
+        expect(LOGICAL_W % game.gridSize).toBe(0); // whole cells, no half-cell at the edge
+        expect(LOGICAL_H % game.gridSize).toBe(0);
+    });
+
+    // Integer multiples only, nearest-neighbour — the emulator rule. A fractional scale
+    // makes some pixels 2 screen-px wide and their neighbours 3, which is the shimmer that
+    // makes upscaled pixel art look cheap. Mirrors fitCanvas() in main.js.
+    it('scales by whole numbers on real displays, and never crops on small ones', () => {
+        const fit = (availW, availH) => {
+            const raw = Math.min(availW / LOGICAL_W, availH / LOGICAL_H);
+            return raw >= 1 ? Math.floor(raw) : raw;
+        };
+        for (const [w, h] of [[1366, 648], [1920, 960], [2560, 1320], [3840, 2040]]) {
+            const s = fit(w, h);
+            expect(Number.isInteger(s), `${w}x${h} -> ${s}`).toBe(true);
+            expect(s).toBeGreaterThanOrEqual(1);
+            expect(LOGICAL_W * s).toBeLessThanOrEqual(w);   // fits, never cropped
+            expect(LOGICAL_H * s).toBeLessThanOrEqual(h);
+        }
+        // Below 1x we deliberately allow a fractional CONTAIN: a soft picture beats a
+        // cropped one, because a wall you cannot see is a wall that kills you.
+        const tiny = fit(800, 480);
+        expect(tiny).toBeLessThan(1);
+        expect(LOGICAL_H * tiny).toBeLessThanOrEqual(480);
+    });
+
+    it('every state draws clean at the shipping size', () => {
+        for (const s of ['START', 'PLAYING', 'DIALOG', 'PAUSED', 'TRANSITION', 'DEAD']) {
+            const game = real({ ctx: true });
+            Object.assign(game.state.unlocked, {
+                ui: true, borders: true, tailRider: true, gearMeter: true, redline: true,
+                coordReadout: true, pauseMenu: true, saveFunction: true, mapPinsTool: true,
+                mapModule: true,
+            });
+            game.state.score = 40; game.growSnake(40);
+            if (s === 'START') game.saveManager.save(1, { unlocked: {} });
+            game.state.gameState = s;
+            const ctx = recordingCtx();
+            game.renderer.ctx = ctx;
+            for (let i = 0; i < 3; i++) { game.update(40); game.draw(); }
+            expect(badGeometry(ctx.__ops), s).toEqual([]);
+            expect(ctx.__ops.filter(o => o.op === 'save').length, s)
+                .toBe(ctx.__ops.filter(o => o.op === 'restore').length);
+        }
+    });
+
+    it('holds the §2.6 text floor on the prose surfaces at the shipping size', () => {
+        for (const s of ['START', 'DEAD']) {
+            const game = real({ ctx: true });
+            game.state.unlocked.ui = true;
+            if (s === 'START') game.saveManager.save(1, { unlocked: {} });
+            game.state.gameState = s;
+            const ctx = recordingCtx();
+            game.renderer.ctx = ctx;
+            for (let i = 0; i < 2; i++) { game.update(40); game.draw(); }
+            const sizes = fontSizes(ctx.__ops);
+            expect(sizes.length, `${s} drew no text`).toBeGreaterThan(0);
+            expect(Math.min(...sizes), s).toBeGreaterThanOrEqual(16);
+        }
+    });
+});
 
 describe('Boot + draw smoke (every state renders without throwing)', () => {
     beforeEach(mountDom);

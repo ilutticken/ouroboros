@@ -129,7 +129,7 @@ export const ARCHITECT = {
         unknownThird: "LOG: Architect > 'It keeps coming back. I do not like that.'",
         // Fires (once) when it dies AFTER meeting 2-Bit but BEFORE hooking him aboard —
         // the Architect is relieved the two haven't figured out cooperation.
-        nearBite: "LOG: Architect > 'It died within sight of the merchant remnant. Again. Good. Imagine those two ever working together.'",
+        nearBite: "LOG: Architect > 'It died within sight of the merchant remnant. Good. Imagine those two ever working together.'",
         // VAGUE LEADS (owner). He gloats about the two programs that could actually help
         // you, and in doing so tells you they exist. Only while unmet — once you have found
         // them the joke is spent. He never names a direction; that is the signpost's job.

@@ -172,17 +172,68 @@ export const NpcMethods = {
                     // is complying. No separate confirm.
                     this.state.unlocked.biteProgress = 3;
                     this.state.unlocked.tailRider = true;
-                    // §2.6: driving is LETHAL and gear was invisible until you happened to
-                    // find the {2,2} module out in the Wilds. 2-Bit hooks into your system
-                    // here, so he fits the tach at the same moment he hands you the gearbox
-                    // — the gauge now always exists wherever the danger does.
-                    this.state.unlocked.gearMeter = true;
                     this.npcs = this.npcs.filter(n => n.id !== 'bite');
                     this.snake.body.push({ x: npc.x, y: npc.y });
-                    this.state.gameState = 'DIALOG';
-                    this.dialogManager.start(TWO_BIT.tutorial, () => { this.state.gameState = 'PLAYING'; });
+                    // ...and the gearbox gets INSTALLED rather than granted. gearMeter is
+                    // deliberately withheld until the animation's last pip lands (see
+                    // startGearInstall) — the ribbon gauge appearing IS the payoff.
+                    this.startGearInstall(npc.x, npc.y);
                 });
             }
+        }
+    },
+
+    // --- 2-BIT FITS THE GEARBOX ---------------------------------------------------------
+    // The one moment the game hands you its central verb, so it gets a beat instead of a
+    // flag flip. Two phases, ~1s total, sim frozen (the same contract as the Module Slot
+    // install, and it reuses that animation's grammar deliberately: "a thing flew up into
+    // your instruments" already means something here).
+    //
+    //   1. CLAMP  — brackets close on 2-Bit's cell as he locks onto your tail.
+    //   2. FIT    — three gear pips launch one at a time and arc up to the ribbon gauge,
+    //               beeping in. gearMeter is granted as the LAST pip lands, so the gauge
+    //               materialises on the beat instead of before it.
+    //
+    // Diegesis: he is a remnant packet hooking into your system — he fits the tachometer
+    // at the same moment he hands you the gearbox, which is exactly why the gauge exists
+    // wherever the danger does (§2.6: driving is lethal; the gauge must never be optional).
+    get GEAR_CLAMP_MS() { return 400; },
+    get GEAR_PIP_MS() { return 220; },
+    get GEAR_PIPS() { return 3; },       // one per licensed gear
+    // The third pip lands on the same frame the sequence would otherwise end, so the
+    // completed rack would never draw. Hold it — this is the beat where the ribbon gauge
+    // and the full rack are on screen together, which is the whole point of the scene.
+    get GEAR_SETTLE_MS() { return 220; },
+
+    startGearInstall(x, y) {
+        this.gearInstall = { phase: 1, t: 0, x, y, pips: 0 };
+        this.state.gameState = 'PLAYING'; // the animation needs a live update() to run in
+        this.audio.playBeep();
+    },
+
+    updateGearInstall(dt) {
+        const gi = this.gearInstall;
+        gi.t += dt;
+        if (gi.phase === 1) {
+            if (gi.t >= this.GEAR_CLAMP_MS) { gi.phase = 2; gi.t = 0; this.audio.playMaterialize(); }
+            return;
+        }
+        // Phase 2: pips land one at a time; count them in as they arrive.
+        const landed = Math.min(this.GEAR_PIPS, Math.floor(gi.t / this.GEAR_PIP_MS));
+        while (gi.pips < landed) {
+            gi.pips++;
+            this.audio.playBeep();
+            // THE PAYOFF, on the LAST pip rather than at the end of the scene: the ribbon
+            // gauge materialises while the pip that filled it is still on screen.
+            if (gi.pips === this.GEAR_PIPS) {
+                this.state.unlocked.gearMeter = true;
+                this.refreshGearDisplay();
+            }
+        }
+        if (gi.t >= this.GEAR_PIP_MS * this.GEAR_PIPS + this.GEAR_SETTLE_MS) {
+            this.gearInstall = null;
+            this.state.gameState = 'DIALOG';
+            this.dialogManager.start(TWO_BIT.tutorial, () => { this.state.gameState = 'PLAYING'; });
         }
     },
 

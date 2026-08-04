@@ -10,9 +10,181 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { NPC } from '../src/entities/NPC.js';
 import { ARCHITECT, LORE_FRAGS, BOOTH_LORE, CACHE_CHECKPOINT, HYDRATIA_DEATH } from '../src/content/dialogue.js';
 import { classifyRoomBeyond } from '../src/systems/RoomGenerator.js';
-import { mountDom, makeGame, step, finishDialog } from './helpers.js';
+import { mountDom, makeGame, step, finishDialog, recordingCtx, badGeometry } from './helpers.js';
 
 const newGame = (width = 400, height = 400) => makeGame({ width, height });
+
+// ---------------------------------------------------------------------------------
+// APPLES KEEP THEIR DISTANCE FROM THE WALL (owner: "a little easier, not a lot").
+// Measured before the change: 20.9% of spawns landed wall-adjacent and 1.2% in true
+// corners, so more than one apple in five demanded a turn executed within one cell of a
+// lethal boundary — 30ms at gear 3. Buffer the REWARDS, not the hazards: nobody plays
+// differently because apples MIGHT spawn by a wall, so removing it costs no decisions.
+describe('Apple spawn buffer', () => {
+    beforeEach(mountDom);
+
+    const ringDist = (game, a) => {
+        const g = game.gridSize;
+        const cols = Math.floor(game.canvas.width / g), rows = Math.floor(game.canvas.height / g);
+        return Math.min(a.x / g, a.y / g, cols - 1 - a.x / g, rows - 1 - a.y / g);
+    };
+
+    it('no apple spawns wall-adjacent, over a large sample', () => {
+        const game = newGame();
+        const rg = game.worldManager.roomGenerator;
+        let closest = 99;
+        for (let i = 0; i < 4000; i++) closest = Math.min(closest, ringDist(game, rg.spawnValidApple([], [], [])));
+        expect(closest).toBeGreaterThanOrEqual(game.worldManager.roomGenerator.APPLE_WALL_BUFFER);
+    });
+
+    it('the in-game spawner honours it too (not just the generator)', () => {
+        const game = newGame();
+        let closest = 99;
+        for (let i = 0; i < 400; i++) closest = Math.min(closest, ringDist(game, game.spawnApple()));
+        expect(closest).toBeGreaterThanOrEqual(2);
+    });
+
+    // The buffer must never be able to STARVE the spawn: better a wall-adjacent apple
+    // than no apple. A crowded set-piece room or a small canvas relaxes it by one ring.
+    it('relaxes to the interior when the buffered band is full', () => {
+        const game = newGame();
+        const rg = game.worldManager.roomGenerator;
+        const g = game.gridSize;
+        const blockers = [];
+        for (let c = 2; c <= rg.cols - 3; c++) {
+            for (let r = 2; r <= rg.rows - 3; r++) blockers.push({ x: c * g, y: r * g });
+        }
+        const a = rg.spawnValidApple([], [], [], blockers);
+        expect(blockers.some(b => b.x === a.x && b.y === a.y)).toBe(false); // a real free cell
+        expect(ringDist(game, a)).toBe(1);                                  // ...one ring out
+    });
+
+    it('still places an apple on canvases too small for the buffer', () => {
+        for (const dim of [200, 140, 100, 80]) {
+            const game = makeGame({ width: dim, height: dim });
+            const a = game.worldManager.roomGenerator.spawnValidApple([], [], []);
+            expect(a, `${dim}x${dim}`).toBeTruthy();
+            expect(Number.isFinite(a.x) && Number.isFinite(a.y)).toBe(true);
+        }
+    });
+
+    it('a fully occupied room returns a fallback instead of hanging', () => {
+        const game = newGame();
+        const rg = game.worldManager.roomGenerator;
+        const g = game.gridSize;
+        const all = [];
+        for (let c = 0; c < rg.cols; c++) for (let r = 0; r < rg.rows; r++) all.push({ x: c * g, y: r * g });
+        expect(rg.spawnValidApple([], [], [], all)).toBeTruthy();
+    });
+
+    it('HAZARDS keep their wall-adjacent spawns — the buffer is for rewards only', () => {
+        // A Glitch by a wall is avoidable and avoiding it is a real choice; an apple by a
+        // wall is compulsory. If this ever fails, the principle has been over-applied.
+        const game = newGame();
+        game.state.unlocked.biteProgress = 1;
+        const rg = game.worldManager.roomGenerator;
+        let sawEdgeHazard = false;
+        for (let x = 1; x <= 11 && !sawEdgeHazard; x++) {
+            for (let y = -5; y <= 5 && !sawEdgeHazard; y++) {
+                const room = rg.generateRoom(x, y, game.state.unlocked, game.worldManager);
+                for (const o of [...(room.glitches || []), ...(room.obstacles || [])]) {
+                    if (ringDist(game, o) <= 1) { sawEdgeHazard = true; break; }
+                }
+            }
+        }
+        expect(sawEdgeHazard).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------------
+// 2-BIT FITS THE GEARBOX — the one moment the game hands you its central verb, so it is
+// a scene rather than a flag flip. Reuses the Module Slot install's freeze contract and
+// its "flies up into your instruments" grammar.
+describe('2-Bit fits the gearbox', () => {
+    beforeEach(mountDom);
+
+    const atOffer = () => {
+        const game = makeGame({ ctx: true });
+        game.state.unlocked.biteProgress = 1;
+        game.state.score = 30; game.growSnake(30);
+        const bite = new NPC(200, 200, 20, 'bite', []);
+        game.npcs = [bite];
+        return { game, bite };
+    };
+    const throughOffer = (game, bite) => {
+        game.npcBite(bite);
+        finishDialog(game);
+    };
+    const runInstall = (game) => {
+        let t = 0;
+        while (game.gearInstall && t < 5000) { game.update(16); t += 16; }
+        return t;
+    };
+
+    it('the gauge is WITHHELD until the last pip lands — the payoff is the animation', () => {
+        const { game, bite } = atOffer();
+        throughOffer(game, bite);
+        // He is aboard immediately (the gag: finishing the offer IS agreeing)...
+        expect(game.state.unlocked.tailRider).toBe(true);
+        // ...but the tachometer is not yet fitted.
+        expect(game.state.unlocked.gearMeter).toBe(false);
+        expect(game.gearInstall).toBeTruthy();
+
+        runInstall(game);
+        expect(game.state.unlocked.gearMeter).toBe(true);
+        expect(game.gearInstall).toBeNull();
+        expect(game.state.gameState).toBe('DIALOG'); // ...into the driving tutorial
+        finishDialog(game);
+        expect(game.state.gameState).toBe('PLAYING');
+    });
+
+    it('all three pips are on screen before the scene ends (the settle beat)', () => {
+        const { game, bite } = atOffer();
+        throughOffer(game, bite);
+        const seen = new Set();
+        let t = 0;
+        while (game.gearInstall && t < 5000) {
+            game.update(16); t += 16;
+            seen.add(game.gearInstall ? game.gearInstall.pips : null);
+        }
+        // Without the settle, the third pip landed on the same frame the scene ended and
+        // the completed rack never rendered.
+        expect([...seen]).toContain(3);
+    });
+
+    it('freezes the sim while it plays', () => {
+        const { game, bite } = atOffer();
+        throughOffer(game, bite);
+        game.input.direction = { x: 20, y: 0 };
+        game.input.nextDirection = { x: 20, y: 0 };
+        const head = { ...game.snake.head };
+        for (let i = 0; i < 20; i++) game.update(16);
+        expect(game.snake.head).toMatchObject(head);
+    });
+
+    it('draws cleanly in both motion modes, and balances save/restore', () => {
+        for (const rm of [false, true]) {
+            const { game, bite } = atOffer();
+            game.settings.reduceMotion = rm;
+            throughOffer(game, bite);
+            const ctx = recordingCtx();
+            game.renderer.ctx = ctx;
+            let t = 0;
+            while (game.gearInstall && t < 5000) { game.update(16); t += 16; game.draw(); }
+            expect(badGeometry(ctx.__ops), `reduceMotion=${rm}`).toEqual([]);
+            expect(ctx.__ops.filter(o => o.op === 'save').length)
+                .toBe(ctx.__ops.filter(o => o.op === 'restore').length);
+        }
+    });
+
+    it('never outlives its scene (death mid-install)', () => {
+        const { game, bite } = atOffer();
+        throughOffer(game, bite);
+        expect(game.gearInstall).toBeTruthy();
+        game.die('wall');
+        expect(game.gearInstall).toBeNull();
+    });
+});
 
 // ---------------------------------------------------------------------------------
 // THE TEXT HOLD (owner: "a systemic way to keep players from hitting walls and dying

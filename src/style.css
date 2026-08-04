@@ -22,6 +22,13 @@ body {
 #game-canvas {
     background: transparent;
     z-index: 10;
+    /* NEAREST-NEIGHBOUR UPSCALE. The backbuffer is a fixed logical board (config.js) and
+       main.js sizes this element to a whole-number multiple of it. Without these the
+       browser would bilinear-blur every cell, turning 8-bit sprites to mush — with them,
+       one logical pixel becomes an exact block of screen pixels, which is what makes the
+       art read as pixel art instead of as a stretched photograph. */
+    image-rendering: pixelated;
+    image-rendering: crisp-edges; /* Firefox / older WebKit spelling */
 }
 
 #ui-layer {

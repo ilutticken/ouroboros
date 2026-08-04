@@ -638,6 +638,19 @@ Reach Gate and he **panics backwards into one of Denny's own stamps.** Denny scr
 
 **While held, the world keeps its own clocks** — bosses turn, drift drifts, Heur's ping flies. Stillness is safe from walls, not from the world, which is consistent with the world-clock rule (speed is evasion; standing still has costs).
 
+### Difficulty policy: buffer the rewards, not the hazards (IMPLEMENTED)
+**Owner-directed:** make the game *a little* easier without making it a lot easier. The lever chosen — apples must spawn at least two cells from the wall — is worth generalising, because it is the cleanest statement of where this game's difficulty should and shouldn't come from.
+
+**The principle: the best difficulty to remove is difficulty the player did not CHOOSE.** Every genuinely good hard moment here is opted into — committing to a gear-3 ram, threading Gate's rotating aperture, carrying a refugee across the Wilds instead of banking the run, spending down to 29 Data and losing the gearbox. The player decides, and can decide otherwise.
+
+A wall-adjacent apple is none of those. Measured before the change: **20.9% of spawns landed in the ring-adjacent band and 1.2% in true corners** (two lethal walls, half the escape vectors). More than one apple in five silently converted the single most routine action in the game — feeding — into a turn that had to be executed within one cell of something that kills, which at gear 3 is 30ms. No warning, no decision, no way to play around it, because nobody changes their route on the chance that an apple *might* land badly.
+
+So removing it costs **zero decision space**, which is exactly what "a little easier" should mean. Compare the levers deliberately NOT taken: softening Glitch damage, making sub-max wall hits survivable, or adding grace ticks on wall contact would each erase a *chosen* risk and hollow out the gear system, which is the game's central verb.
+
+**The asymmetry that makes it a rule rather than a patch: buffer the things the player is DRAWN toward, never the things they avoid.** Glitches and listing furniture keep their wall-adjacent spawns on purpose — a hazard by a wall is avoidable, and avoiding it is a choice worth having. An apple by a wall is compulsory. That is the whole difference, and it is why the buffer applies to `spawnValidApple` and nothing else.
+
+**As built:** `APPLE_WALL_BUFFER = 2` in RoomGenerator, tried as a preferred band that **relaxes one ring at a time** rather than failing — a crowded set-piece room or a small canvas must still be able to place an apple (better a wall-adjacent apple than none). Cost: 21% fewer spawn cells at 400×400, 9–12% at realistic canvas sizes; rooms carry 0–19 occupied cells of 324, so the pool is never close to starved.
+
 ### PENDING — Localhost upgrades with Data spent
 Still open (owner-flagged): sinking Data in Localhost should visibly **rebuild the village** (more citizens/structures/services), a Phase-4 idle hook and a diegetic reason the Safe Zone matters.
 

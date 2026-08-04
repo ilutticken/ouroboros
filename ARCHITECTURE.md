@@ -193,7 +193,27 @@ to the Hub, or to Cache's checkpoint once committed.
 
 ## 6. The world
 
-A finite **12 × 11 grid** (x 0…11, y −5…5) wrapped by the Kernel's coil.
+A finite **12 × 11 grid** of rooms (x 0…11, y −5…5) wrapped by the Kernel's coil, and every
+room is the **same fixed board: 50 × 28 cells at gridSize 20 = a 1000 × 560 logical canvas**
+([src/config.js](src/config.js)).
+
+That is new, and it fixed a real problem: the canvas used to be sized to the viewport, so
+the room was literally the size of your window. A 4K player got **19,000 interior cells
+against a laptop's 1,980** — ten times the area, ten times the apple spawns, a worm
+occupying a tenth as much of the room. Worse, it ran two opposite difficulty slopes at
+once: anything counted in **cells** stayed fixed while anything **spanning the room** grew,
+so the same big screen that trivialised the open world made the bosses brutal (Gate's
+aperture 3.7% of his ring on a laptop → 1.2% at 4K; Heur's database 64 bricks → 188).
+
+The picture is now **integer-scaled** to fit — whole multiples, nearest-neighbour, aspect
+preserved, centred, letterboxed, like an emulator rather than a stretched texture. Below 1×
+it falls back to a fractional contain, because cropping the field is never acceptable.
+
+**The era ladder is the reason the grid is frozen rather than the resolution.** A console
+generation gives you more pixels for the same field, not more field — so 50 × 28 holds
+forever and `GRID` is the dial: **8-bit 20 → 16-bit 30 → 32-bit 40** (1000×560 → 1500×840 →
+2000×1120). No gameplay constant, hazard span, or fight tuning changes across an era jump,
+and each era spends its upscale factor on fidelity instead of magnification.
 
 **Room content** ([RoomGenerator.js](src/systems/RoomGenerator.js)) is one long ordered if/else ladder —
 **first match wins, so order is load-bearing** — fed by fixed registries: growth caches, Wilds modules,

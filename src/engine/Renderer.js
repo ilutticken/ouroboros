@@ -490,6 +490,9 @@ export class Renderer {
         // Module install animation (in flight, on top)
         this.drawModuleLoad(state);
 
+        // 2-Bit fitting the gearbox (over the room, under the overlays).
+        this.drawGearInstall(state, rm);
+
         // Pause Overlay
         if (state.isSuspended || state.gameState === 'PAUSED') {
             this.ctx.fillStyle = '#000000';
@@ -1312,6 +1315,85 @@ export class Renderer {
         this.ctx.strokeStyle = '#004a5a';
         this.ctx.lineWidth = 1;
         this.ctx.strokeRect(cx - size / 2, cy - size / 2, size, size);
+    }
+
+    // 2-BIT FITS THE GEARBOX. Two beats over ~1s (see npcs.startGearInstall):
+    //   CLAMP — four brackets close on his cell as he locks onto your tail.
+    //   FIT   — three gear pips launch one at a time and arc up to the ribbon gauge,
+    //           deliberately reusing drawModuleLoad's "flies up into your instruments"
+    //           grammar, because that is already what installing a HUD tool looks like.
+    //
+    // §2.6 / reduce-motion: the beats, their audio, and the pip COUNT are identical either
+    // way — under reduce-motion the brackets sit closed and each pip holds at its launch
+    // cell instead of sliding, so the information (three gears, arriving one at a time) is
+    // carried by discrete state rather than travel. Nothing here is colour-only.
+    drawGearInstall(state, rm) {
+        const gi = state.gearInstall;
+        if (!gi) return;
+        const g = this.gridSize;
+        const cx = gi.x + g / 2, cy = gi.y + g / 2;
+        const PIPS = 3, PIP_MS = 220;
+        this.ctx.save();
+
+        if (gi.phase === 1) {
+            // CLAMP: brackets closing in on him.
+            const p = Math.min(1, gi.t / 400);
+            const reach = rm ? g * 0.55 : g * (1.5 - 0.95 * p);
+            const arm = Math.max(3, Math.floor(g * 0.3));
+            this.ctx.strokeStyle = '#00ffff';
+            this.ctx.lineWidth = 2;
+            this.ctx.shadowColor = '#00ffff';
+            this.ctx.shadowBlur = 8;
+            for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+                const bx = cx + sx * reach, by = cy + sy * reach;
+                this.ctx.beginPath();
+                this.ctx.moveTo(bx, by - sy * arm);
+                this.ctx.lineTo(bx, by);
+                this.ctx.lineTo(bx - sx * arm, by);
+                this.ctx.stroke();
+            }
+            this.ctx.shadowBlur = 0;
+        } else {
+            // FIT: pips arcing up to the gauge in the top ribbon.
+            const targetX = this.canvas.width - 42, targetY = 30;
+            for (let i = 0; i < PIPS; i++) {
+                const local = gi.t - i * PIP_MS;
+                if (local < 0) continue;              // not launched yet
+                const p = Math.min(1, local / PIP_MS);
+                if (p >= 1) continue;                 // landed — the ribbon owns it now
+                let px, py;
+                if (rm) { px = cx; py = cy; }         // no travel: it holds, then arrives
+                else {
+                    px = cx + (targetX - cx) * p;
+                    py = cy + (targetY - cy) * p - Math.sin(p * Math.PI) * 26; // the arc
+                }
+                const size = Math.max(4, g * 0.34);
+                this.ctx.shadowColor = '#00ffff';
+                this.ctx.shadowBlur = 12;
+                this.ctx.fillStyle = '#00ffff';
+                this.ctx.fillRect(px - size / 2, py - size / 2, size, size);
+                this.ctx.shadowBlur = 0;
+                this.ctx.fillStyle = '#004a5a';
+                this.ctx.fillRect(px - size / 2 + 1, py - size / 2 + 1, size - 2, Math.max(1, size / 4));
+            }
+            // The socket he is drawing them from stays lit, so the source reads.
+            this.ctx.strokeStyle = 'rgba(0, 255, 255, 0.5)';
+            this.ctx.lineWidth = 2;
+            this.ctx.strokeRect(gi.x + 2, gi.y + 2, g - 4, g - 4);
+        }
+
+        // A pip rack under his cell counts the gears in — the deaf/colour-blind twin of
+        // the beeps, and it persists across both phases so the count is always readable.
+        const rackY = gi.y + g + 6;
+        const pw = Math.max(3, Math.floor(g * 0.22)), gap = Math.max(2, Math.floor(g * 0.1));
+        const span = PIPS * pw + (PIPS - 1) * gap;
+        let rx = cx - span / 2;
+        for (let i = 0; i < PIPS; i++) {
+            this.ctx.fillStyle = i < gi.pips ? '#00ffff' : 'rgba(0, 255, 255, 0.22)';
+            this.ctx.fillRect(rx, rackY, pw, Math.max(2, Math.floor(g * 0.16)));
+            rx += pw + gap;
+        }
+        this.ctx.restore();
     }
 
     // 2-Bit's route map (diegetic: a Data Broker's habit) — a small network
