@@ -95,6 +95,12 @@ export class NarrativeManager {
         const line = document.createElement('div');
         line.className = 'narrative-line';
         this.terminal.appendChild(line);
+        // The monitor shows ~2 lines and pins the bottom; everything above the fold is
+        // scrollback nobody can reach. Trim it so a long session can't accumulate an
+        // unbounded DOM (the box itself is size-locked by the ribbon — this is hygiene,
+        // not the layout fix).
+        const old = this.terminal.querySelectorAll('.narrative-line');
+        for (let i = 0; i < old.length - 30; i++) old[i].remove();
 
         // Typewriter effect
         for (let i = 0; i < msg.length; i++) {

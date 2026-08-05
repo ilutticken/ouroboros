@@ -234,15 +234,9 @@ export const TWO_BIT = {
     dennyMapChime: [
         "2-Bit: Ohh — a Topology Map! Grab it — drive right over it."
     ],
-    // Picking up the map module.
-    mapPickup: [
-        "2-Bit: Nice grab. That's a Module now — riding one back from me on your tail.",
-        "2-Bit: See that 3x3 socket opening, bottom-left? That's the Module Slot.",
-        "2-Bit: Loop around and drag your TAIL into it — the module loads itself."
-    ],
-    // After a module installs into the socket.
+    // After a module installs (pickup IS install — the corner-socket ritual was cut).
     moduleInstalled: [
-        "2-Bit: Socketed, and mirrored to your HUD. Now we've got eyes on the whole grid. Broker's advantage."
+        "2-Bit: Installed, and mirrored to your HUD. Now we've got eyes on the whole grid. Broker's advantage."
     ],
     // He rescues you from Gate's Thread Suspension (grants the Pause Menu).
     gateRescue: [
@@ -781,7 +775,8 @@ export const CACHE = {
     ],
     // Stage 1: grants the Save Function (and she "builds" the title screen). Kept verbatim.
     grant: [
-        "Cache: You've got a Module Slot and a Pause Menu — somewhere to PUT things. Good. I can work with that. Good, good.",
+        // ("Module Slot" cut 2026-08-04 with the slot itself — the Pause Menu is the filing cabinet.)
+        "Cache: You've got a Pause Menu — somewhere to PUT things. Good. I can work with that. Good, good.",
         "Cache: I'm filing a Save Function into your Pause Menu. DON'T thank me, don't argue. I'm doing it.",
         "Cache: Ok, it's loading...",
         "Cache: And it's loading... Ok, I think it's... No, it's still loading.",

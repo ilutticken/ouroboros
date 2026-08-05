@@ -52,9 +52,18 @@ body {
 }
 
 /* Both ribbons are sized in CHROME_TOP / CHROME_BOTTOM (config.js). If you change a
-   height here, change it there too — the fit maths reserves the vertical budget. */
+   height here, change it there too — the fit maths reserves the vertical budget.
+
+   Each ribbon carries THREE height defences, and all three are load-bearing:
+   `height` (definite, so a child's percentage height can resolve against it),
+   `min-height: 0` (a flex item's default min-height:auto lets CONTENT beat the basis —
+   this is exactly how the terminal grew line by line and shoved the board off-screen),
+   and `overflow: hidden` (whatever still overflows stays inside the chrome). */
 #ui-layer {
     flex: 0 0 calc(60px * var(--ui-scale));
+    height: calc(60px * var(--ui-scale));
+    min-height: 0;
+    overflow: hidden;
     display: flex;
     align-items: center;
     justify-content: space-between; /* Data left, the gear gauge right — of the BOARD */
@@ -71,8 +80,15 @@ body {
    not boss status is present. */
 #ui-layer-bottom {
     flex: 0 0 calc(100px * var(--ui-scale));
+    height: calc(100px * var(--ui-scale));
+    min-height: 0;
+    overflow: hidden;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    /* One DEFINITE row. Left auto, the row sizes itself from content — and the
+       terminal's `height: 100%` resolves against the row, which is the circular
+       reference that let the box grow a line at a time until the board left the screen. */
+    grid-template-rows: 100%;
     column-gap: calc(10px * var(--ui-scale));
     align-items: center;
     box-sizing: border-box;

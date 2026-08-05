@@ -64,6 +64,25 @@ export class Renderer {
             this.ctx.strokeStyle = P.wall;
             this.ctx.lineWidth = wallThickness;
             this.ctx.shadowColor = P.wall;
+
+            // THE EXTRUSION — the 10-Data unlock, seen (wallsDeployT runs 0→1 exactly
+            // once; loads and respawns skip straight to 1 — see Game.checkUnlocks). The
+            // band slides IN from beyond the edges, which is what "the system extrudes
+            // quarantine barriers" should look like. It only plays while the containment
+            // log holds the sim frozen — skipping the log snaps deployT to 1 (the Game
+            // draw sync), so nothing can ever be driving at a half-built wall. Weak
+            // points, hatches, and beacon cues wait until the band settles — a door in a
+            // wall that isn't there yet is nonsense. Under reduce-motion the band FADES
+            // in place instead: no travel, nothing strobes.
+            const deployT = state.wallsDeployT == null ? 1 : state.wallsDeployT;
+            if (deployT < 1) {
+                this.ctx.save();
+                let c = inset;
+                if (rm) this.ctx.globalAlpha = Math.max(0.08, deployT);
+                else c = wallThickness * deployT - wallThickness / 2; // stroke centre: -w/2 → +w/2
+                this.ctx.strokeRect(c, c, this.canvas.width - 2 * c, this.canvas.height - 2 * c);
+                this.ctx.restore();
+            } else {
             this.ctx.strokeRect(inset, inset, this.canvas.width - wallThickness, this.canvas.height - wallThickness);
 
             // Weak points & smashed doorways. For each breakable side of THIS room,
@@ -200,6 +219,7 @@ export class Renderer {
             // rooms near her sealed sector the wall(s) facing her breathe with her tone,
             // stronger the closer you are — so which way to go is also VISIBLE.
             if (state.cadenzaBeacon) this.drawCadenzaPulse(state.cadenzaBeacon, W, H, rm);
+            } // end deployT >= 1 (the settled wall and everything that hangs on it)
         }
         
         const bordersOn = !!state.unlocked.borders;
@@ -304,9 +324,6 @@ export class Renderer {
             // Restore the frame glow the X-stroke zeroed, so the apple (drawn next) still glows.
             this.ctx.shadowBlur = this._frameGlow(state);
         }
-
-        // Module Slot (socket you install carried modules into)
-        this.drawModuleSlot(state);
 
         // Draw Apple (Red Data). NULL is legal — a wandered-off apple (the 20% skitter)
         // leaves the room foodless until re-entry. An unguarded deref here killed the
@@ -435,16 +452,6 @@ export class Renderer {
                 this.ctx.fillStyle = '#0a1a0a';
                 this.ctx.fillRect(segment.x + this.gridSize - 7, segment.y + 3, 4, 4);
             }
-        }
-
-        // A carried Module rides ONE segment behind 2-Bit (state.mapCell), so 2-Bit
-        // draws in front of it. Hidden during the install animation (drawn in flight).
-        if (state.carriedModule && state.mapCell && !state.moduleLoad) {
-            const c = state.mapCell;
-            this.ctx.fillStyle = '#00ffff';
-            this.ctx.shadowColor = '#00ffff';
-            this.ctx.shadowBlur = 8;
-            this.ctx.fillRect(c.x + 5, c.y + 5, this.gridSize - 10, this.gridSize - 10);
         }
 
         // Shed-segment burst: the mass that "burst out of you" on a survivable hit,
@@ -1261,51 +1268,30 @@ export class Renderer {
         this.ctx.restore();
     }
 
-    // The Module Slot — a pulsing dashed 3x3 socket (bottom-left). Drag your tail
-    // into it to auto-load a carried module. Glows green while you're carrying one.
-    drawModuleSlot(state) {
-        if (!state.unlocked || !state.unlocked.moduleSlot) return;
-        const g = this.gridSize;
-        const x = state.moduleSlotX, y = state.moduleSlotY, size = g * 3;
-        const carrying = !!state.carriedModule;
-        const pulse = state.reduceMotion ? 0.8 : 0.5 + 0.5 * Math.abs(Math.sin(Date.now() / 250));
-        this.ctx.shadowColor = carrying ? '#00ff88' : '#00ffcc';
-        this.ctx.shadowBlur = carrying ? 12 : 4;
-        this.ctx.strokeStyle = carrying ? `rgba(0,255,136,${0.6 + pulse * 0.4})` : `rgba(0,255,204,${0.3 + pulse * 0.3})`;
-        this.ctx.lineWidth = 2;
-        this.ctx.setLineDash([4, 4]);
-        this.ctx.strokeRect(x + 2, y + 2, size - 4, size - 4);
-        this.ctx.setLineDash([]);
-        this.ctx.shadowBlur = 0;
-        this.ctx.fillStyle = carrying ? '#00ff88' : '#008866';
-        this.ctx.font = '6px "Press Start 2P", monospace';
-        this.ctx.textAlign = 'center';
-        this.ctx.fillText(carrying ? 'DROP TAIL HERE' : 'SLOT', x + size / 2, y - 4);
-        // Restore the frame-wide neon glow so later draws (apple, NPCs) still glow.
-        this.ctx.shadowBlur = this._frameGlow(state);
-    }
-
-    // The two-beat install animation: the module is sucked into the socket (phase 1),
-    // then flies up to the HUD corner in a little arc (phase 2).
+    // The two-beat install animation, straight from the pickup cell (the 3x3 corner
+    // socket is GONE — see Game.startModuleLoad): the chip LIFTS off its floor cell and
+    // condenses (phase 1), then FLIES up to the HUD corner in a little arc (phase 2) —
+    // the same "up into your instruments" grammar the gearbox pips reuse. Under
+    // reduce-motion each phase holds its endpoint instead of travelling: the chip sits
+    // lifted, then sits at the HUD — two discrete states, no slide.
     drawModuleLoad(state) {
         const ml = state.moduleLoad;
         if (!ml) return;
         const g = this.gridSize;
-        const slotCx = state.moduleSlotX + g * 1.5;
-        const slotCy = state.moduleSlotY + g * 1.5;
+        const rm = !!state.reduceMotion;
+        const sx = ml.fromX + g / 2, sy = ml.fromY + g / 2;
+        const topX = this.canvas.width - 42, topY = 30;
         let cx, cy, size;
         if (ml.phase === 1) {
-            const p = Math.min(1, ml.t / 500);
-            const sx = ml.fromX + g / 2, sy = ml.fromY + g / 2;
-            cx = sx + (slotCx - sx) * p;
-            cy = sy + (slotCy - sy) * p;
-            size = g * (1 - 0.55 * p); // shrink into the socket
+            const p = rm ? 1 : Math.min(1, ml.t / 500);
+            cx = sx;
+            cy = sy - 12 * p;               // lift off the floor cell
+            size = g * (1 - 0.35 * p);      // condense for transit
         } else {
-            const p = Math.min(1, ml.t / 600);
-            const topX = this.canvas.width - 42, topY = 30;
-            cx = slotCx + (topX - slotCx) * p;
-            cy = slotCy + (topY - slotCy) * p - Math.sin(p * Math.PI) * 30; // arc
-            size = g * (0.45 + 0.2 * Math.sin(p * Math.PI));
+            const p = rm ? 1 : Math.min(1, ml.t / 600);
+            cx = sx + (topX - sx) * p;
+            cy = (sy - 12) + (topY - (sy - 12)) * p - Math.sin(p * Math.PI) * 30; // arc
+            size = g * (0.65 - 0.25 * p);
         }
         this.ctx.shadowColor = '#00ffff';
         this.ctx.shadowBlur = 14;
@@ -1509,42 +1495,51 @@ export class Renderer {
     // is nothing for reduce-motion to dampen; progress is coded by position alone —
     // the owner cut the TRACE counter (it explained the secret). Silent by design
     // (decision 3: no boot audio).
-    drawHydratia(h, _rm) {      // static per boot (see above) — nothing for reduce-motion to damp
+    // She PEEKS (~1s below stage 4), then DASHES back off the edge (h.dashing carries the
+    // interpolated x from the Game sync; under reduce-motion the dash is a hard cut there,
+    // so this stays branch-free). Once h.gone, only the trace lane survives her.
+    drawHydratia(h, _rm) {
         const W = this.canvas.width, H = this.canvas.height;
         const y = Math.floor(H * 0.66);
         const R = 13; // playtest: she was a 6px speck 20px off the right edge — unfindable
         this.ctx.save();
-        this.ctx.shadowBlur = 14;
-        this.ctx.shadowColor = '#7ee8e0';
-        this.ctx.fillStyle = '#7ee8e0';
-        // A droplet PEEKING from behind the right edge — the clipping IS the character
-        // (she's hiding, not decorating). Each stage pulls her further into the room.
-        this.ctx.beginPath();
-        this.ctx.arc(h.x, y, R, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.fillRect(h.x - 3, y - R - 8, 6, 10); // the nub
-        this.ctx.shadowBlur = 0;
-        // her shy wide eyes (matching her Localhost sprite)
-        this.ctx.fillStyle = '#0a3a36';
-        this.ctx.fillRect(h.x - 7, y - 4, 5, 5);
-        this.ctx.fillRect(h.x + 2, y - 4, 5, 5);
-        // A DASHED TRACE LANE from her to the edge she bolted through: motionless (so
-        // reduce-motion needs no branch) but unmistakably "something went that way".
-        this.ctx.strokeStyle = 'rgba(126, 232, 224, 0.35)';
-        this.ctx.lineWidth = 2;
-        this.ctx.setLineDash([5, 6]);
-        this.ctx.beginPath();
-        this.ctx.moveTo(h.x + R + 4, y);
-        this.ctx.lineTo(W, y);
-        this.ctx.stroke();
-        this.ctx.setLineDash([]);
+        if (!h.gone) {
+            this.ctx.shadowBlur = 14;
+            this.ctx.shadowColor = '#7ee8e0';
+            this.ctx.fillStyle = '#7ee8e0';
+            // A droplet PEEKING from behind the right edge — the clipping IS the character
+            // (she's hiding, not decorating). Each stage pulls her further into the room.
+            this.ctx.beginPath();
+            this.ctx.arc(h.x, y, R, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.fillRect(h.x - 3, y - R - 8, 6, 10); // the nub
+            this.ctx.shadowBlur = 0;
+            // her shy wide eyes (matching her Localhost sprite)
+            this.ctx.fillStyle = '#0a3a36';
+            this.ctx.fillRect(h.x - 7, y - 4, 5, 5);
+            this.ctx.fillRect(h.x + 2, y - 4, 5, 5);
+        }
+        // A DASHED TRACE LANE from where she peeked to the edge she bolts through —
+        // drawn only once she's actually bolting (or gone), because the lane is the wake
+        // she leaves, and after the dash it's the only clue that survives her: the
+        // motionless "something went that way" that makes a player try reloading.
+        if (h.dashing || h.gone) {
+            this.ctx.strokeStyle = 'rgba(126, 232, 224, 0.35)';
+            this.ctx.lineWidth = 2;
+            this.ctx.setLineDash([5, 6]);
+            this.ctx.beginPath();
+            this.ctx.moveTo((h.baseX == null ? h.x : h.baseX) + R + 4, y);
+            this.ctx.lineTo(W, y);
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+        }
         // NO progress readout (owner cut the TRACE n/4 plate): a counter in the corner
         // explained the secret, and she is a secret. Progress is coded by POSITION alone —
         // each quick reload she is visibly further into the room — which stays inside the
         // sprite grammar (state by shape + position, never colour). The one label that
         // survives is the [SPACE] prompt at stage 4, because that one is load-bearing:
         // without it the catch input is undiscoverable.
-        if (h.catchable) {
+        if (h.catchable && !h.dashing && !h.gone) { // a bolting Hydratia is past reaching
             this.ctx.font = '16px "Press Start 2P", monospace';
             this.ctx.textAlign = 'center';
             this.ctx.fillStyle = '#7ee8e0';

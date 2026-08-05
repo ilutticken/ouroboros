@@ -243,7 +243,7 @@ export const NpcMethods = {
     npcGate(npc) {
         this.state.gameState = 'DIALOG';
         let gateLines = npc.dialog;
-        const gotMap = this.carriedModule === 'map' || this.state.unlocked.mapModule;
+        const gotMap = !!this.state.unlocked.mapModule; // pickup IS install now
         if (gotMap) {
             gateLines = [GATE.contextGotMap, ...npc.dialog];
         } else if (this.state.unlocked.dennyMet) {
@@ -303,14 +303,12 @@ export const NpcMethods = {
         });
     },
 
-    // Pick up Denny's map: it rides your tail as a Module (unlocks the Module Slot).
-    npcMapItem(_npc) {
+    // Pick up Denny's map: it installs ON THE SPOT — the lift-and-fly animation plays
+    // from the pickup cell straight into the HUD, then 2-Bit names the tool. (The old
+    // ride-the-tail + drag-into-the-corner-socket ritual is CUT — see startModuleLoad.)
+    npcMapItem(npc) {
         this.npcs = this.npcs.filter(n => n.id !== 'mapitem');
-        this.carriedModule = 'map';
-        this.state.unlocked.moduleSlot = true;
-        this.audio.playBeep();
-        this.state.gameState = 'DIALOG';
-        this.dialogManager.start(TWO_BIT.mapPickup, () => { this.state.gameState = 'PLAYING'; });
+        this.startModuleLoad('map', npc.x, npc.y);
     },
 
     // Localhost welcome sign / townsfolk / Cadenza: read their lines and move on, no cost.

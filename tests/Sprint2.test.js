@@ -401,7 +401,6 @@ describe('Lifecycle sweep regressions', () => {
     it("dying before collecting Denny's dropped map re-arms the drop (no map soft-lock)", () => {
         const game = newGame();
         game.state.unlocked.dennyMapDropped = true;  // dropped, sitting in the room cache
-        game.carriedModule = null;                   // ...but never picked up
         game.die('wall');                            // the wipe destroys the mapitem NPC
         expect(game.state.unlocked.dennyMapDropped).toBe(false); // so Denny drops it again
     });
@@ -1379,5 +1378,182 @@ describe('Playtest feedback (round 2)', () => {
         game.gear = -1;
         game.refreshGearDisplay();
         expect(el.innerHTML).toContain('BRK');
+    });
+});
+
+// ---------------------------------------------------------------------------------
+// PLAYTEST ROUND 3 — the owner's post-cabinet feedback, locked in.
+describe('Playtest feedback (round 3)', () => {
+    beforeEach(mountDom);
+
+    // 1. THE GROWING TERMINAL. The CSS side (definite ribbon height / min-height: 0 /
+    // grid-template-rows: 100%) can't be asserted in happy-dom, so what's pinned here is
+    // the DOM side: the monitor trims its own scrollback, so a long session can never
+    // accumulate an unbounded line stack for layout to lose a fight with.
+    it('the terminal trims scrollback nobody can reach (>=31 lines never accumulate)', () => {
+        const game = newGame();
+        game.narrative.online = true;
+        const term = document.getElementById('narrative-terminal');
+        for (let i = 0; i < 45; i++) {
+            const div = document.createElement('div');
+            div.className = 'narrative-line';
+            term.appendChild(div);
+        }
+        game.narrative.printMessage('LOG: one more line.');
+        // The trim runs synchronously at the top of processQueue (before any await).
+        expect(term.querySelectorAll('.narrative-line').length).toBeLessThanOrEqual(31);
+    });
+
+    // 2. NO SCRAPE IN A DOORWAY (owner). The glide is friction against WALL; a doorway
+    // is a hole. The old band test (<= ringLeft) also counted ring cells and the
+    // off-canvas trail mid-crossing, so every room transit scraped the whole way through.
+    it('threading an open door is silent; dragging along solid wall still scrapes', () => {
+        const game = newGame();
+        game.state.unlocked.borders = true;
+        game.glitches = [];
+        const wm = game.worldManager;
+        wm.currentRoomX = 1; wm.currentRoomY = 0;
+        const wp = wm.getWeakPoint(1, 0, 'up');
+        expect(wp, 'test premise: {1,0} has a north door').toBeTruthy();
+        wm.breakWall(1, 0, 'up');
+
+        // Body threading the open doorway: one segment in the ring cell, one on the
+        // interior band INSIDE the door span, one off-canvas (the mid-crossing trail).
+        game.snake.body = [
+            { x: wp.start, y: 0 },                 // in the ring (inside the hole)
+            { x: wp.start, y: game.ringTop },      // interior band, within the open span
+            { x: wp.start, y: -20 },               // off-canvas trail
+        ];
+        game.playAmbientAudio();
+        expect(game.audio.playGlide).not.toHaveBeenCalled();
+
+        // The same band cell OUTSIDE the open span is real wall: it scrapes. (Scan for
+        // an interior column clear of the span — the span's position is hash-varied.)
+        let outX = null;
+        for (let x = game.ringLeft; x <= game.ringRight - game.gridSize; x += game.gridSize) {
+            if (x < wp.start || x > wp.end) { outX = x; break; }
+        }
+        game.snake.body = [{ x: outX, y: game.ringTop }];
+        game.playAmbientAudio();
+        expect(game.audio.playGlide).toHaveBeenCalledTimes(1);
+
+        // An off-canvas trail segment must not phantom-match a PERPENDICULAR wall:
+        // {x: ringLeft, y: -40} has the left band's x but sits far above the room
+        // (review-confirmed: ~1 in 14 doors hugs a corner closely enough to hit this).
+        game.audio.playGlide.mockClear();
+        game.snake.body = [{ x: game.ringLeft, y: -40 }, { x: game.ringRight - 20, y: game.canvas.height + 40 }];
+        game.playAmbientAudio();
+        expect(game.audio.playGlide).not.toHaveBeenCalled();
+
+        // An INTACT (unbroken) weak point is still wall — perforated, not open.
+        const game2 = newGame();
+        game2.state.unlocked.borders = true;
+        game2.glitches = [];
+        game2.worldManager.currentRoomX = 1; game2.worldManager.currentRoomY = 0;
+        const wp2 = game2.worldManager.getWeakPoint(1, 0, 'up');
+        game2.snake.body = [{ x: wp2.start, y: game2.ringTop }];
+        game2.playAmbientAudio();
+        expect(game2.audio.playGlide).toHaveBeenCalledTimes(1);
+    });
+
+    // 3. THE WALL EXTRUSION. One-time, at the 10-Data flip; loads/respawns skip it.
+    it('the 10-Data unlock runs the extrusion once; loads skip straight to settled', () => {
+        const game = makeGame({ ctx: true });
+        game.state.score = 10;
+        game.checkUnlocks();
+        expect(game.state.unlocked.borders).toBe(true);
+        expect(game._wallsDeploy).not.toBeNull();
+        game.draw();
+        expect(game.state.wallsDeployT).toBeGreaterThanOrEqual(0);
+        expect(game.state.wallsDeployT).toBeLessThan(1);
+        // ...and the animated frame draws clean (the extrusion path, mid-flight).
+        const ctx = recordingCtx();
+        game.renderer.ctx = ctx;
+        game.draw();
+        expect(badGeometry(ctx.__ops)).toEqual([]);
+        expect(ctx.__ops.filter(o => o.op === 'save').length)
+            .toBe(ctx.__ops.filter(o => o.op === 'restore').length);
+        // THE SNAP (review-confirmed): the containment log is skippable by design, so
+        // the instant the freeze ends the band must be FULLY drawn — skip the cinematic,
+        // forfeit the cinematic, never the information. Lethal physics may never run
+        // ahead of a half-drawn wall.
+        game._wallsDeploy = performance.now(); // mid-animation...
+        game.narrative.isPrinting = false;     // ...but the log was skipped + released
+        game.narrative.awaitingRelease = false;
+        game.draw();
+        expect(game.state.wallsDeployT).toBe(1);
+        expect(game._wallsDeploy).toBeNull();
+
+        // A LOAD arrives with borders already true and never re-runs it.
+        const loaded = makeGame({ ctx: true });
+        loaded.applySave({ unlocked: { borders: true } });
+        loaded.draw();
+        expect(loaded.state.wallsDeployT).toBe(1);
+    });
+
+    // 4. HYDRATIA IS SHY (owner): she peeks for ~a second, dashes off the edge she came
+    // from, and only the trace lane survives her. Stage 4 holds still until spooked.
+    it('below stage 4 she peeks, dashes, and leaves only the trace', () => {
+        const game = makeGame({ ctx: true, playing: false });
+        game._hydratia = { stage: 2, catchable: false, born: performance.now(), bolt: null };
+        game.draw();
+        expect(game.state.hydratia.gone).toBe(false);       // peeking
+        expect(game.state.hydratia.dashing).toBe(false);
+        const peekX = game.state.hydratia.x;
+
+        game._hydratia.born = performance.now() - (game.HYDRATIA_PEEK_MS + 100); // mid-dash
+        game.draw();
+        expect(game.state.hydratia.dashing).toBe(true);
+        expect(game.state.hydratia.x).toBeGreaterThan(peekX); // moving toward the edge
+
+        game._hydratia.born = performance.now() - (game.HYDRATIA_PEEK_MS + game.HYDRATIA_DASH_MS + 50);
+        game.draw();
+        expect(game.state.hydratia.gone).toBe(true);          // just the trace lane now
+        expect(game.state.hydratia.baseX).toBe(peekX);        // the lane starts where she was
+    });
+
+    it('stage 4 holds still until a non-catch key spooks her into a visible dash', () => {
+        const game = makeGame({ ctx: true, playing: false });
+        game._hydratia = { stage: 4, catchable: true, born: performance.now() - 60000, bolt: null };
+        game.draw();
+        expect(game.state.hydratia.gone).toBe(false);         // a minute later: still there
+        expect(game.state.hydratia.dashing).toBe(false);
+        game._hydratia.bolt = performance.now() - 50;         // spooked
+        game.draw();
+        expect(game.state.hydratia.dashing).toBe(true);
+    });
+
+    it('under reduce-motion the dash is a hard cut — no travel frames', () => {
+        const game = makeGame({ ctx: true, playing: false });
+        game.settings.reduceMotion = true;
+        game._hydratia = { stage: 1, catchable: false, born: performance.now() - (game.HYDRATIA_PEEK_MS + 10), bolt: null };
+        game.draw();
+        expect(game.state.hydratia.dashing).toBe(false);
+        expect(game.state.hydratia.gone).toBe(true);
+    });
+
+    // 5. THE MODULE SLOT IS GONE. Its install-on-pickup replacement is pinned in
+    // DiegeticAudio; here, pin the removal itself so it can't creep back half-wired.
+    it('no slot state survives anywhere (engine, state flags, or sync payload)', () => {
+        const game = makeGame({ ctx: true });
+        expect(game.moduleSlotX).toBeUndefined();
+        expect(game.state.unlocked.moduleSlot).toBeUndefined();
+        game.draw();
+        expect(game.state.carriedModule).toBeUndefined();
+        expect(game.state.mapCell).toBeUndefined();
+    });
+
+    // Review-confirmed: install-on-pickup means the retire can fire while you STAND in
+    // Denny's room — and leaving a room writes the live npcs back into the cache, which
+    // resurrected the cache the retire had just deleted, Denny included, forever.
+    it("retiring Denny while standing in {1,0} strips him from the LIVE room too", () => {
+        const game = newGame();
+        game.worldManager.currentRoomX = 1; game.worldManager.currentRoomY = 0;
+        game.npcs = [new NPC(120, 100, 20, 'denny', [])];
+        game.state.unlocked.mapModule = true;
+        game.state.unlocked.biteDroppedOff = true;
+        game._maybeRetireDenny();
+        expect(game.npcs.some(n => n.id === 'denny')).toBe(false); // save-on-exit stays clean
+        expect(game.worldManager.rooms['1,0']).toBeUndefined();
     });
 });

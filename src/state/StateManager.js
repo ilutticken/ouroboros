@@ -18,7 +18,6 @@ export class StateManager {
             // a load that merges a save lacking a key can't turn a live-true flag back off.
             biteDroppedOff: false,   // 2-Bit has hopped off the tail in Localhost
             mapModule: false,        // Denny's Topology Map is installed (minimap online)
-            moduleSlot: false,       // the 3x3 module socket is unlocked
             dennyMet: false,         // bumped Denny
             dennySlipped: false,     // walked past Denny without meeting him
             dennyMapDropped: false,  // Denny has dropped his map item

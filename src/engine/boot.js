@@ -65,7 +65,10 @@ export const BootMethods = {
         // (owner: she must load even before the Start Screen exists). Only a title
         // cameo owning the screen suppresses her for that boot.
         if (this.titleCameo) { this._hydratia = null; return; }
-        this._hydratia = { stage: approach, catchable: approach >= 4 };
+        // born feeds the peek→dash timeline (draw sync): below stage 4 she peeks for
+        // HYDRATIA_PEEK_MS then dashes off the edge; at stage 4 she holds until a
+        // non-catch key spooks her (bolt, set by the key handlers).
+        this._hydratia = { stage: approach, catchable: approach >= 4, born: performance.now(), bolt: null };
     },
 
     // Her catch dialog (shared by the file menu AND the bare cold open): the modal
@@ -357,7 +360,7 @@ export const BootMethods = {
         this.snake.reset(cx, cy, false);
         this.input.reset();
         this.gear = 0; this.speed = this.baseSpeed; this.moveTimer = 0; this.pendingUnfold = 0;
-        this.carriedModule = null; this.moduleLoad = null; this.bursts = []; this.dataMotes = [];
+        this.moduleLoad = null; this.bursts = []; this.dataMotes = [];
         this.onUnpauseCallback = null; this._guided = new Set(); this._tick = 0;
         this._wallBonking = false; this._beaconTimer = 0; this._saveFlash = 0;
         this.resetBattleTransients(); // ONE shared list (die/applySave/here) — never inline it again
@@ -408,7 +411,6 @@ export const BootMethods = {
             biteTopicsHeard: this.state.biteTopicsHeard,
             deathCode: this.deathCode,
             mapPins: { ...this.mapPins }, // Map-Pins annotations (durable)
-            carriedModule: this.carriedModule, // a picked-up-but-uninstalled module must survive a load
             world: {
                 brokenWalls: [...this.worldManager.brokenWalls],
                 wallDamage: { ...this.worldManager.wallDamage },
@@ -453,7 +455,6 @@ export const BootMethods = {
         );
         this.input.reset();
         this.gear = 0; this.speed = this.baseSpeed; this.pendingUnfold = 0;
-        this.carriedModule = d.carriedModule || null; // preserve an un-installed module (the map)
         this.moduleLoad = null; this.bursts = [];
         this.state.isSuspended = false; this.onUnpauseCallback = null; // never load INTO a Gate suspension
         this.resetBattleTransients(); // ONE shared list (die/here/resetToNewGame) — never inline it again
@@ -494,9 +495,10 @@ export const BootMethods = {
         // load starts a fresh run in the Hub, seed her spare-data pile (seedMotes=true).
         this.refreshDynamicRoomContent(true);
         // If Denny's map was dropped but never obtained, wiping rooms would strand the
-        // mapitem (dennyMapDropped one-shots the re-drop). When you don't actually have
-        // the map, clear that flag so Denny can drop it again — no map soft-lock.
-        if (this.state.unlocked.dennyMapDropped && this.carriedModule !== 'map' && !this.state.unlocked.mapModule) {
+        // mapitem (dennyMapDropped one-shots the re-drop). When it never installed
+        // (pickup IS install now), clear the flag so Denny can drop it again — no
+        // map soft-lock. (Old saves that carried an uninstalled module land here too.)
+        if (this.state.unlocked.dennyMapDropped && !this.state.unlocked.mapModule) {
             this.state.unlocked.dennyMapDropped = false;
         }
         // A load is a fresh run: wipe the previous run's terminal logs / death counters.

@@ -216,14 +216,14 @@ export class GameEngine {
                     e.stopImmediatePropagation();
                     return;
                 }
-                if (this._hydratia && this._hydratia.catchable) {
+                if (this._hydratia && this._hydratia.catchable && !this._hydratia.bolt) {
                     if (e.key === ' ' || e.key === 'Enter') {
                         this.audio.init();
                         this._startHydratiaCatchDialog();
                         e.stopImmediatePropagation();
                         return;
                     }
-                    this._hydratia = null; // she bolts; the wake-press still starts the run
+                    this._hydratia.bolt = performance.now(); // she bolts; the wake-press still starts the run
                 }
                 return; // input.init's wake-press handles the bare cold open
             }
@@ -240,13 +240,16 @@ export class GameEngine {
             // HYDRATIA, REACHABLE: Space reaches out (her catch dialog takes the screen,
             // riding the cameo modal path); any other menu key and she bolts — but the
             // approach counter holds at 4, so she's reachable again next boot.
-            if (this._hydratia && this._hydratia.catchable) {
+            if (this._hydratia && this._hydratia.catchable && !this._hydratia.bolt) {
                 if (e.key === ' ' || e.key === 'Enter') {
                     this._startHydratiaCatchDialog();
                     e.stopImmediatePropagation();
                     return;
                 }
-                this._hydratia = null; // she bolts (stage stays 4 in storage)
+                // She bolts — VISIBLY, dashing off the edge she peeked from (stage stays
+                // 4 in storage, so no chance is ever lost). A spooked exit the player
+                // watches happen teaches more than a sprite that just blinks out.
+                this._hydratia.bolt = performance.now();
             }
             this.startMenuHandleKey(e.key);
             e.stopImmediatePropagation();
@@ -262,8 +265,7 @@ export class GameEngine {
         this._tick = 0;            // move-tick counter (Denny slow-tracks on evens)
         this._gearTick = -1;       // last move-tick a gear step landed (one step per tick)
         this._guided = new Set();  // sectors the Architect has already "guided" you to
-        this.carriedModule = null; // a picked-up module riding your tail (e.g. 'map')
-        this.moduleLoad = null;    // active install animation ({phase, t, fromX, fromY})
+        this.moduleLoad = null;    // active install animation ({kind, phase, t, fromX, fromY})
         this.bursts = [];          // short-lived particles from segments shed on a survivable hit
         this.dataMotes = [];       // Cache's spare-data gift: collectible Data seeded in the Hub (stage 2+)
         this.pendingUnfold = 0;    // blocks still folded under you after a bounce (extrude 1/move)
@@ -292,6 +294,7 @@ export class GameEngine {
         this.carriedRefugee = null; // origin room key of the refugee riding your tail (null = none)
         this._deathReceipt = null;  // Hydratia's DEAD-overlay receipt (computed per death)
         this._hydratia = null;      // her boot-screen glimpse state ({stage, catchable})
+        this._wallsDeploy = null;   // timestamp of the 10-Data wall extrusion (null = settled)
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
         // carries as a sonar beacon (updateCadenzaBeacon) so the sector is findable.
@@ -414,18 +417,22 @@ export class GameEngine {
         // PAUSED/etc.) are already non-PLAYING, so buffered turns there stay blocked.
     }
 
-    // The 3x3 Module Slot's top-left cell — inset one cell from the bottom-left
-    // corner (so the socket, its glow, and its label all stay on-screen). Derived
-    // from LIVE canvas dims (not snapshotted) so a window resize can't strand it.
-    get moduleSlotX() { return this.gridSize; }
-    get moduleSlotY() { return Math.max(0, Math.floor(this.canvas.height / this.gridSize) - 4) * this.gridSize; }
-
     // THE WALL RING. Once borders exist, the outer 1-cell ring is solid wall — the
     // playable interior is cells [1, cols-2] x [1, rows-2]. These are the pixel bounds of
     // the ring (a head top-left at/under them is entering the wall). `right`/`bottom` are
     // the ring cell's top-left, so `>=` means the head is in the ring.
     get _cols() { return Math.floor(this.canvas.width / this.gridSize); }
     get _rows() { return Math.floor(this.canvas.height / this.gridSize); }
+    // The quarantine-wall extrusion length. The containment log's freeze covers it for
+    // a player who reads — and a player who SKIPS the log snaps the band to settled
+    // instantly (see the draw sync), so the animation can never lag the lethal physics.
+    get WALLS_DEPLOY_MS() { return 900; }
+
+    // Hydratia's boot-screen shyness: how long she peeks before breaking for the edge,
+    // and how long the dash itself takes (a blink — she is FAST; that's the character).
+    get HYDRATIA_PEEK_MS() { return 1000; }
+    get HYDRATIA_DASH_MS() { return 350; }
+
     get ringLeft() { return this.gridSize; }
     get ringRight() { return (this._cols - 1) * this.gridSize; }
     get ringTop() { return this.gridSize; }
@@ -495,10 +502,38 @@ export class GameEngine {
         // the head runs parallel). Only exists once the walls do.
         if (this.state.unlocked.borders) {
             // The whole body scrapes while ANY segment is in the interior cell adjacent
-            // to the WALL RING (col 1 / row 1 and their far-side twins).
-            const scraping = this.snake.body.some(s =>
-                s.x <= this.ringLeft || s.x >= this.ringRight - g || s.y <= this.ringTop || s.y >= this.ringBottom - g
-            );
+            // to the WALL RING (col 1 / row 1 and their far-side twins) — but only where
+            // there is actually WALL to scrape (owner: no scan sound in a doorway).
+            //
+            // Two exclusions, both the same idea — a hole has no friction:
+            //  * STRICT band equality: the old `<= ringLeft` also counted segments IN the
+            //    ring cells and OFF-CANVAS (the trail mid-room-crossing), so every doorway
+            //    transit scraped the whole way through. A segment in the doorway is inside
+            //    the gap, not pressed against the barrier.
+            //  * An OPEN door's span: the interior cell beside a broken-open door faces a
+            //    black gap, not a wall — a body threading the door doesn't rasp past it.
+            const rx = this.worldManager.currentRoomX, ry = this.worldManager.currentRoomY;
+            // Both axes are bounded: the band cell must ALSO sit inside the interior on
+            // its cross-axis, or the off-canvas trail mid-crossing (x may be right while
+            // y is far off-screen) false-triggers the PERPENDICULAR walls — the review
+            // measured ~1 in 14 doors hugging a corner closely enough to hit it.
+            const inRows = s => s.y >= this.ringTop && s.y <= this.ringBottom - g;
+            const inCols = s => s.x >= this.ringLeft && s.x <= this.ringRight - g;
+            const wallBands = [
+                { dir: 'left',  at: s => s.x === this.ringLeft && inRows(s),       cross: s => s.y },
+                { dir: 'right', at: s => s.x === this.ringRight - g && inRows(s),  cross: s => s.y },
+                { dir: 'up',    at: s => s.y === this.ringTop && inCols(s),        cross: s => s.x },
+                { dir: 'down',  at: s => s.y === this.ringBottom - g && inCols(s), cross: s => s.x },
+            ];
+            for (const w of wallBands) { // hoist per-wall door state out of the per-segment loop
+                w.open = this.worldManager.isWallBroken(rx, ry, w.dir)
+                    ? this.worldManager.getWeakPoint(rx, ry, w.dir) : null;
+            }
+            const scraping = this.snake.body.some(s => wallBands.some(w => {
+                if (!w.at(s)) return false;
+                if (w.open) { const c = w.cross(s); if (c >= w.open.start && c <= w.open.end) return false; }
+                return true;
+            }));
 
             if (scraping) {
                 // Faster you scrape, higher the friction pitch.
@@ -862,9 +897,18 @@ export class GameEngine {
     // his job at {1,0} is done (he's next seen manning the Fall-Through up the spine).
     // Wipes the cached room so the next visit regenerates without him; RoomGenerator
     // gates his spawn on the same pair of flags for fresh sessions/loads.
+    //
+    // ALSO strip him from the LIVE room. Install-on-pickup means the install (and so
+    // this retire) can fire while you are STANDING in {1,0} — and leaving a room writes
+    // the live npcs back into the cache (crossBorder -> saveRoom), which would resurrect
+    // the very cache this just deleted, Denny included, forever (review-confirmed: the
+    // reverse ordering — drop 2-Bit off first, come back for the map — hit it every time).
     _maybeRetireDenny() {
         if (this.state.unlocked.mapModule && this.state.unlocked.biteDroppedOff) {
             delete this.worldManager.rooms['1,0'];
+            if (this.worldManager.currentRoomX === 1 && this.worldManager.currentRoomY === 0) {
+                this.npcs = this.npcs.filter(n => n.id !== 'denny');
+            }
         }
     }
 
@@ -1047,73 +1091,47 @@ export class GameEngine {
         }
     }
 
-    // Which body index shows 2-Bit's face. Normally he IS the tail tip — but while
-    // you're ALSO carrying a Module (which now rides the literal tail tip, so the
-    // "DROP TAIL HERE" socket accepts it whether or not 2-Bit is aboard), 2-Bit
-    // slides one segment forward so the two never share a cell. Returns -1 when he
+    // Which body index shows 2-Bit's face: the tail tip. Returns -1 when he
     // shouldn't be drawn on the tail at all: he's off it (dropped off / not yet
-    // hooked on), or the snake is momentarily too short to seat both him AND the
-    // module (a transient after a death — his face reappears once you re-grow).
+    // hooked on), or the snake is momentarily too short (a transient after a
+    // death — his face reappears once you re-grow).
     get biteIndex() {
         if (!this.hasBiteSegment) return -1;
         const n = this.snake.body.length;
-        if (this.carriedModule) return n >= 3 ? n - 2 : -1;
         return n >= 2 ? n - 1 : -1; // never index 0 — the worm's head is never 2-Bit
     }
 
     // Which body index wears the carried REFUGEE's face (they ride like 2-Bit: a real
-    // passenger on a real segment — no HUD label). Stacking from the tail tip: the
-    // module holds the tip, 2-Bit one forward, the refugee next. -1 = don't draw
-    // (nobody aboard, or the worm is momentarily too short; reappears on regrowth).
+    // passenger on a real segment — no HUD label). Stacking from the tail tip: 2-Bit
+    // holds the tip, the refugee one forward. -1 = don't draw (nobody aboard, or the
+    // worm is momentarily too short; reappears on regrowth).
     get refugeeIndex() {
         if (!this.carriedRefugee) return -1;
         const n = this.snake.body.length;
-        const back = (this.carriedModule ? 1 : 0) + (this.hasBiteSegment ? 1 : 0);
-        const idx = n - 1 - back;
+        const idx = n - 1 - (this.hasBiteSegment ? 1 : 0);
         return idx >= 1 ? idx : -1;
     }
 
-    // The carried Module always rides the true tail tip. Keeping it OFF 2-Bit's cell
-    // (2-Bit sits one segment ahead of it, see biteIndex) is what lets you drag it
-    // into the Module Slot while he's still hitching a ride — you no longer have to
-    // wait until Localhost drops him off. Null if there's no tail cell yet.
-    mapCell() {
-        const b = this.snake.body;
-        // Never the head (index 0). After a death while carrying the map with 2-Bit
-        // already gone, the snake is length 1 — without this guard the module would ride
-        // the HEAD, rendering as the crate over your face and auto-triggering the socket
-        // install. Hidden until you re-grow a tail cell.
-        return b.length >= 2 ? b[b.length - 1] : null;
-    }
-
-    // True once the carried module has been dragged into the 3x3 slot region.
-    mapInSlot() {
-        if (!this.carriedModule || !this.state.unlocked.moduleSlot || this.moduleLoad) return false;
-        const c = this.mapCell();
-        if (!c) return false;
-        const g = this.gridSize;
-        return c.x >= this.moduleSlotX && c.x < this.moduleSlotX + 3 * g
-            && c.y >= this.moduleSlotY && c.y < this.moduleSlotY + 3 * g;
-    }
-
-    startModuleLoad() {
-        const c = this.mapCell();
-        if (!c) return;
-        this.moduleLoad = { phase: 1, t: 0, fromX: c.x, fromY: c.y };
+    // The module install: picked up off the floor, lifted, and flown straight into the
+    // HUD (a two-beat animation; the sim hangs while it plays). THE MODULE SLOT IS GONE
+    // (owner): the 3x3 corner socket + drag-your-tail-into-it ritual only ever served
+    // this one module, and parking the socket in a corner bribed players into a
+    // needlessly dangerous corner turn for zero mechanical content. Install-on-pickup
+    // keeps the ceremony (lift, flight, 2-Bit naming the tool) and deletes the errand.
+    startModuleLoad(kind, fromX, fromY) {
+        this.moduleLoad = { kind, phase: 1, t: 0, fromX, fromY };
         this.audio.playBeep();
     }
 
-    // Two-beat install animation (the sim hangs while it plays): the module is
-    // sucked into the socket, then flies up to the HUD — only THEN does it come
-    // online (map => the route minimap).
+    // Two-beat install animation: the module lifts off its floor cell, then flies up
+    // to the HUD — only THEN does it come online (map => the route minimap).
     updateModuleLoad(dt) {
         const ml = this.moduleLoad;
         ml.t += dt;
         if (ml.phase === 1) {
             if (ml.t >= 500) { ml.phase = 2; ml.t = 0; this.audio.playMaterialize(); }
         } else if (ml.t >= 600) {
-            const installed = this.carriedModule;
-            this.carriedModule = null;
+            const installed = ml.kind;
             this.moduleLoad = null;
             if (installed === 'map') this.state.unlocked.mapModule = true;
             this._maybeRetireDenny();
@@ -1514,10 +1532,9 @@ export class GameEngine {
         // 2-Bit fitting the gearbox — a scripted beat, same freeze contract as an install.
         if (this.gearInstall) { this.updateGearInstall(dt); return; }
 
-        // Module install: dragging the carried module into the 3x3 slot triggers a
-        // two-beat animation that freezes the sim while it plays.
+        // Module install: the two-beat animation freezes the sim while it plays
+        // (fired straight from the pickup — see npcMapItem; the slot ritual is gone).
         if (this.moduleLoad) { this.updateModuleLoad(dt); return; }
-        if (this.mapInSlot()) { this.startModuleLoad(); return; }
 
         // Cadenza's homing beacon — time-based (dt), so its pulse is independent of
         // how fast you're actually slithering.
@@ -2310,7 +2327,7 @@ export class GameEngine {
         // the flag pointing at a map that no longer exists, and Denny refused to re-drop
         // forever. Same rescue the load path already performs (applySave).
         const u2 = this.state.unlocked;
-        if (u2.dennyMapDropped && this.carriedModule !== 'map' && !u2.mapModule) {
+        if (u2.dennyMapDropped && !u2.mapModule) { // never installed (pickup IS install now)
             u2.dennyMapDropped = false;
         }
 
@@ -2396,6 +2413,13 @@ export class GameEngine {
         if (this.state.score >= 10 && !this.state.unlocked.borders) {
             this.state.unlocked.borders = true;
             this.audio.playMaterialize(); // The system extrudes quarantine walls into being
+            // ...and now you SEE the extrusion (Renderer, wallsDeployT): the band slides
+            // in from beyond the edges over ~a second. Set ONLY here — loads and respawns
+            // arrive with borders already true and skip straight to settled walls. The
+            // Architect's containment log freezes the sim while it plays; skipping the
+            // log SNAPS the band to settled (see the draw sync), so lethal physics can
+            // never run ahead of a half-drawn wall.
+            this._wallsDeploy = performance.now();
         }
 
         // We removed the old upgrade panel, so no upgrades flag to check here
@@ -2441,12 +2465,8 @@ export class GameEngine {
         this.refreshGearDisplay(); // the ribbon gauge (cheap: writes only on change)
         this.refreshBossStatus();  // encounter status lives in the bottom ribbon, not on the canvas
         this.state.gear = this.gear;
-        this.state.carriedModule = this.carriedModule;
-        this.state.moduleSlotX = this.moduleSlotX;
-        this.state.moduleSlotY = this.moduleSlotY;
         this.state.moduleLoad = this.moduleLoad;
         this.state.gearInstall = this.gearInstall; // 2-Bit fitting the gearbox
-        this.state.mapCell = this.carriedModule ? this.mapCell() : null;
         this.state.biteIndex = this.biteIndex; // which segment wears 2-Bit's face
         this.state.refugeeIndex = this.refugeeIndex; // which segment wears the refugee's
         this.state.bursts = this.bursts;       // shed-segment particles for the Renderer
@@ -2468,14 +2488,44 @@ export class GameEngine {
             this.state.titleCameoSprite = null;
         }
         // Hydratia's boot-screen glimpse (START only): stage 0 = a sliver at the right
-        // edge, each quick reload ~8% further in; stage 4 = reachable.
-        // Stage 0 sits just INSIDE the right edge (she peeks; the sprite clips) and each
-        // stage pulls her ~9% further in. She used to start a hair off-canvas at a 6px
-        // radius, which read as nothing at all.
-        this.state.hydratia = (this.state.gameState === 'START' && this._hydratia)
-            ? { stage: this._hydratia.stage, catchable: this._hydratia.catchable,
-                x: Math.round(this.canvas.width - this.canvas.width * (0.03 + 0.09 * this._hydratia.stage)) }
-            : null;
+        // edge (she peeks; the sprite clips), each quick reload ~9% further in; stage 4 =
+        // reachable, and she HOLDS still.
+        // SHE IS SHY (owner): below stage 4 she peeks for ~a second, then dashes back off
+        // the edge she came from. Catching her is about reloading fast enough that she's
+        // still mid-round — never about waiting her out. After she's gone only the dashed
+        // trace lane stays: "something went that way" is the clue that makes you refresh.
+        // Under reduce-motion the dash is a hard cut — no travel, nothing animates.
+        this.state.hydratia = null;
+        if (this.state.gameState === 'START' && this._hydratia) {
+            const h = this._hydratia;
+            const W = this.canvas.width;
+            const baseX = Math.round(W - W * (0.03 + 0.09 * h.stage));
+            // When does she break for the edge? Stage < 4: a fixed beat after boot.
+            // Stage 4: only if a non-catch key spooked her (h.bolt, set in the key handlers).
+            const boltAt = h.catchable ? h.bolt : h.born + this.HYDRATIA_PEEK_MS;
+            const t = boltAt == null ? -1 : performance.now() - boltAt; // <0 = peeking/holding
+            const dashing = t >= 0 && t < this.HYDRATIA_DASH_MS && !this.settings.reduceMotion;
+            const gone = t >= 0 && !dashing;
+            const x = dashing
+                ? Math.round(baseX + (W + 26 - baseX) * (t / this.HYDRATIA_DASH_MS))
+                : baseX;
+            this.state.hydratia = { stage: h.stage, catchable: h.catchable, x, baseX, dashing, gone };
+        }
+        // The quarantine-wall extrusion: 0→1 exactly once, at the 10-Data unlock;
+        // 1 forever after (loads and respawns never re-run it).
+        //
+        // THE SNAP (review-confirmed lethal window): the freeze is the containment log,
+        // and the log is SKIPPABLE by design — any key fast-completes the typewriter and
+        // Space releases the latch, so a text-masher could be driving ~300ms in, against
+        // physics that went lethal at the flip but a band only ~20-45% drawn. So the
+        // animation exists ONLY while the sim is provably frozen: the instant the log is
+        // neither printing nor holding its latch, the band snaps to fully settled. Skip
+        // the cinematic, forfeit the cinematic — never the information.
+        const logFrozen = !!(this.narrative && (this.narrative.isPrinting || this.narrative.awaitingRelease));
+        this.state.wallsDeployT = (this._wallsDeploy && logFrozen)
+            ? Math.min(1, (performance.now() - this._wallsDeploy) / this.WALLS_DEPLOY_MS)
+            : 1;
+        if (this.state.wallsDeployT >= 1) this._wallsDeploy = null;
         this.state.argListenMs = this._argListenMs;      // the bounce ARG's listening cue
         // The listening cue only draws once the ARG is PRIMED (2-Bit's Cache gossip is
         // topic one) — before that, a wall-bounce flashing 'listening' is just confusing

@@ -56,23 +56,24 @@ state is coded by shape + position, never colour alone; motion is telegraphed by
 
 ## 3. Codebase map
 
-**9,440 lines of JS across 20 files.** No build step, no runtime dependencies, ES modules straight to
+**~9,650 lines of JS across 21 files.** No build step, no runtime dependencies, ES modules straight to
 the browser. The only "server" is `npx serve`, and its only job is satisfying the browser's requirement
 that ES modules arrive over HTTP. The two devDependencies (vitest, happy-dom) plus eslint exist for the
 test suite and the linter; nothing the player loads depends on npm at all.
 
 ```
-index.html (40)  →  src/main.js (22)  →  GameEngine
+index.html (43)  →  src/main.js (42)  →  GameEngine
       │
-      ├── engine/    Game.js 2344  ← core: state machine, move-tick, physics, HUD
-      │              ├─ encounters.js 912   mixin: the set-pieces
-      │              ├─ npcs.js       717   mixin: the cast & the economy
-      │              └─ boot.js       533   mixin: boot, menus, persistence
-      │              Renderer.js 1576 · Audio.js 707 · InputHandler.js 83
-      ├── systems/   WorldManager 436 · RoomGenerator 401 · ShopManager 226
-      │              SaveManager 234 · NarrativeManager 196 · DialogManager 51
-      ├── state/     StateManager.js 132
-      ├── content/   dialogue.js 722 · music.js 54
+      ├── config.js  85   ← the logical board + the cabinet + computeFit (see §6)
+      ├── engine/    Game.js 2311  ← core: state machine, move-tick, physics, HUD
+      │              ├─ encounters.js 1022  mixin: the set-pieces
+      │              ├─ npcs.js       750   mixin: the cast & the economy
+      │              └─ boot.js       527   mixin: boot, menus, persistence
+      │              Renderer.js 1572 · Audio.js 641 · InputHandler.js 76
+      ├── systems/   WorldManager 400 · RoomGenerator 414 · ShopManager 211
+      │              SaveManager 252 · NarrativeManager 212 · DialogManager 57
+      ├── state/     StateManager.js 138
+      ├── content/   dialogue.js 801 · music.js 49
       └── entities/  Snake.js 74 · NPC.js 13 · Glitch.js 7
 ```
 
@@ -240,6 +241,15 @@ measurably cost a windowed 1440p display its 2× board. The play field is the th
 furniture yields to it. `--ui-scale` never drops below 1, so the §2.6 16px floor survives
 even on a window too small for a 1× board.
 
+**The ribbons carry three height defences, and all three are load-bearing:** a definite
+`height` (so a child's percentage height can resolve against something), `min-height: 0`
+(a flex item's default `min-height: auto` lets *content* beat the flex basis), and
+`overflow: hidden`. The day the terminal had none of them, it grew one log line at a time
+until the board left the screen — a percentage height against an auto-sized grid row
+resolves to content height, which is a ratchet. The bottom ribbon is also a **definite-row
+3-column grid** (`grid-template-rows: 100%`), and the monitor trims its own scrollback
+(~30 lines) so a long session can't stack unbounded DOM behind a two-line fold.
+
 | Viewport | Board | Chrome |
 |---|---|---|
 | 1366 × 638 (laptop) | 0.85× fractional contain | 1× |
@@ -314,7 +324,7 @@ mandatory. **The no-UNAVOIDABLE-death law still holds everywhere; "non-lethal" n
 
 ## 8. Project health
 
-**Tests:** 429 across 10 files, ~1.7s. **All three I/O boundaries are now covered**, each by the
+**Tests:** ~477 across 10 files, ~1.6s. **All three I/O boundaries are now covered**, each by the
 technique that boundary needs:
 
 | File | Covers |
@@ -362,7 +372,7 @@ routinely cite the playtest that motivated a fix.
 ```bash
 npm start      # npx serve -p 8080 .   → http://localhost:8080
 npm test       # vitest, watch mode
-npm run check  # lint + tests — what CI runs (398 tests, ~1.6s)
+npm run check  # lint + tests — what CI runs (~477 tests, ~1.6s)
 npm run lint   # eslint . (add :fix to auto-fix)
 ```
 

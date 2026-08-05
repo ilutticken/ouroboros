@@ -903,7 +903,7 @@ describe('Denny\'s map & the Module Slot', () => {
         expect(game.npcs.some(n => n.id === 'mapitem')).toBe(true);
     });
 
-    it('picking up the map makes it a carried module and opens the slot', () => {
+    it('driving over the map installs it on the spot — the slot ritual is gone', () => {
         const game = newGame();
         game.state.gameState = 'PLAYING';
         game.state.unlocked.borders = false;
@@ -915,110 +915,42 @@ describe('Denny\'s map & the Module Slot', () => {
 
         step(game, { x: 20, y: 0 }); // head onto the map item
 
-        expect(game.carriedModule).toBe('map');
-        expect(game.state.unlocked.moduleSlot).toBe(true);
+        // Pickup fires the install animation FROM THE PICKUP CELL; the map is NOT
+        // online until both beats finish (the sim hangs across them).
         expect(game.npcs.some(n => n.id === 'mapitem')).toBe(false); // consumed, not left behind
-    });
-
-    it('dragging the module tail into the 3x3 slot installs it via the load animation', () => {
-        const game = newGame();
-        game.state.gameState = 'PLAYING';
-        game.carriedModule = 'map';
-        game.state.unlocked.moduleSlot = true;
-        game.state.unlocked.tailRider = false; // mapCell = tail tip
-
-        // Tail away from the slot: no load. (Length 2 so mapCell has a real tail cell;
-        // a length-1 snake now hides the module rather than riding it on the head.)
-        game.snake.body = [{ x: 200, y: 200 }, { x: 200, y: 220 }];
-        expect(game.mapInSlot()).toBe(false);
-
-        // Tail tip inside the 3x3 slot region: a load can start, but the map is NOT
-        // online until both animation beats finish.
-        game.snake.body = [{ x: 200, y: 200 }, { x: game.moduleSlotX, y: game.moduleSlotY }];
-        expect(game.mapInSlot()).toBe(true);
-        game.startModuleLoad();
         expect(game.moduleLoad).not.toBeNull();
+        expect(game.moduleLoad.kind).toBe('map');
+        expect(game.moduleLoad.fromX).toBe(120);
         expect(game.state.unlocked.mapModule).toBeFalsy();
 
-        game.dialogManager.start = (lines, cb) => cb();
-        game.updateModuleLoad(600); // beat 1 -> beat 2 (suck into socket)
+        game.updateModuleLoad(600); // beat 1 -> beat 2 (lift off the floor cell)
         game.updateModuleLoad(700); // beat 2 -> done (fly to HUD, map online)
 
         expect(game.state.unlocked.mapModule).toBe(true);
-        expect(game.carriedModule).toBeNull();
         expect(game.moduleLoad).toBeNull();
+        // The module never rides the tail and there is no socket: no carried state,
+        // no slot flag, no corner errand.
+        expect(game.carriedModule).toBeUndefined();
+        expect(game.state.unlocked.moduleSlot).toBeUndefined();
     });
 });
 
-describe('Carried module rides the tail tip (installs with 2-Bit still aboard)', () => {
+describe('2-Bit on the tail (the module never rides it any more)', () => {
     beforeEach(mountDom);
 
-    it('mapCell is the true tail tip; 2-Bit rides one segment ahead', () => {
+    it('2-Bit is the tail tip', () => {
         const game = newGame();
-        game.carriedModule = 'map';
-        game.state.unlocked.tailRider = true;       // 2-Bit aboard
-        game.state.unlocked.biteDroppedOff = false;
-        game.snake.body = [
-            { x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 },
-        ];
-
-        expect(game.mapCell()).toEqual({ x: 60, y: 100 }); // module on the tail tip
-        expect(game.biteIndex).toBe(1);                    // 2-Bit at length-2, never sharing the cell
-    });
-
-    it('installs while 2-Bit is aboard — no waiting for the Localhost drop-off', () => {
-        // The reported bug: the map merged with 2-Bit and could not be dropped into
-        // the slot until he left. Now the module is the literal tail tip, so parking
-        // the tail in the slot loads it with him still riding.
-        const game = newGame();
-        game.state.gameState = 'PLAYING';
-        game.carriedModule = 'map';
-        game.state.unlocked.moduleSlot = true;
-        game.state.unlocked.tailRider = true;       // <- the bug's trigger
-        game.state.unlocked.biteDroppedOff = false;
-
-        game.snake.body = [
-            { x: 200, y: 200 },
-            { x: 200, y: 220 },
-            { x: game.moduleSlotX, y: game.moduleSlotY }, // tail tip parked in the slot
-        ];
-        expect(game.mapInSlot()).toBe(true); // was false when the map rode length-2
-
-        game.dialogManager.start = (lines, cb) => cb();
-        game.startModuleLoad();
-        game.updateModuleLoad(600);
-        game.updateModuleLoad(700);
-
-        expect(game.state.unlocked.mapModule).toBe(true);
-        expect(game.carriedModule).toBeNull();
-    });
-
-    it('hides 2-Bit (biteIndex -1) only while too short to seat him AND the module', () => {
-        const game = newGame();
-        game.carriedModule = 'map';
-        game.state.unlocked.tailRider = true;
-        game.state.unlocked.biteDroppedOff = false;
-        game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }]; // length 2 — transient
-
-        expect(game.biteIndex).toBe(-1);                    // his face hidden until re-grown
-        expect(game.mapCell()).toEqual({ x: 80, y: 100 });  // module still shown on the tip
-    });
-
-    it('with no module carried, 2-Bit is the tail tip as before', () => {
-        const game = newGame();
-        game.carriedModule = null;
         game.state.unlocked.tailRider = true;
         game.state.unlocked.biteDroppedOff = false;
         game.snake.body = [{ x: 100, y: 100 }, { x: 80, y: 100 }, { x: 60, y: 100 }];
 
-        expect(game.biteIndex).toBe(2); // unchanged: he IS the tail tip when nothing rides it
+        expect(game.biteIndex).toBe(2); // he IS the tail tip
     });
 
     it('never paints 2-Bit on the head — a length-1 snake hides his face (biteIndex -1)', () => {
         // Reachable via arg-less shrink() in the glitch-damage loop: a length-2 snake
         // taking a survivable hit drops to length 1 while tailRider is still set.
         const game = newGame();
-        game.carriedModule = null;
         game.state.unlocked.tailRider = true;
         game.state.unlocked.biteDroppedOff = false;
         game.snake.body = [{ x: 100, y: 100 }]; // just the head
@@ -1659,18 +1591,6 @@ describe("Save / Load — Cache's Save Function", () => {
         expect(b.state.isSuspended).toBe(false);
         expect(b.onUnpauseCallback).toBe(null);
         a.saveManager.clearAll();
-    });
-
-    it('a save/load preserves an un-installed carried module — the map (verify-pass fix)', () => {
-        const a = newGame();
-        a.carriedModule = 'map';
-        a.state.unlocked.moduleSlot = true;
-
-        const b = newGame();
-        b.applySave(a.serialize());
-
-        expect(b.carriedModule).toBe('map'); // not nulled -> the map survives, still installable
-        expect(b.state.unlocked.moduleSlot).toBe(true);
     });
 
     it('a load re-enables Denny\'s map drop if it was dropped but never obtained (no soft-lock)', () => {
