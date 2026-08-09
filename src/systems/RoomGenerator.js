@@ -118,6 +118,15 @@ export class RoomGenerator {
             };
             building('commons', INTAKE.commonsEmpty, 6, this.rows - 9);
             building('minegate', INTAKE.mineEmpty, this.cols - 9, this.rows - 9);
+            // 2-Bit's stall is CANONICAL room furniture once he's dropped off — it used
+            // to exist only as the NPC live-pushed at the drop-off moment, so the first
+            // death (which wipes the room cache) regenerated a Localhost with no shop in
+            // it (playtest round 4: "2-Bit was gone"). Fixed cell just west of the sign,
+            // clear of the buildings, the homes, and Hydratia's north-wall stall.
+            if (stateUnlocked && stateUnlocked.biteDroppedOff) {
+                npcs.push(new NPC((Math.floor(this.cols / 2) - 4) * this.gridSize,
+                    Math.floor(this.rows / 2) * this.gridSize, this.gridSize, 'shop', []));
+            }
             // Hydratia's stall, once she's been caught on the START screen (global flag,
             // mirrored into unlocked.hydratiaFound on run start). North side — she likes
             // her back to a wall nobody comes through.
@@ -140,8 +149,14 @@ export class RoomGenerator {
                 npcs.push(new NPC(t.c * this.gridSize, t.r * this.gridSize, this.gridSize, 'citizen', t.lines));
             }
         } else if (roomX === 3 && roomY === 0) {
-            // Gate Encounter Room
-            npcs.push(new NPC(cx, cy, this.gridSize, 'gate', GATE_INTRO));
+            // Gate Encounter Room. He spawns ONLY until his scene has resolved: the
+            // Thread Suspension grants the Pause Menu, and that grant is the scene's
+            // durable receipt — death wipes the room cache (and npc.met with it), so
+            // gating on the LIVE npc's memory replayed the whole cutscene after every
+            // death (playtest round 4). The arena pillars stay: furniture, not story.
+            if (!(stateUnlocked && stateUnlocked.pauseMenu)) {
+                npcs.push(new NPC(cx, cy, this.gridSize, 'gate', GATE_INTRO));
+            }
             
             // Add some pillar obstacles in corners to make a small arena. Skip the
             // column Gate spawns/tracks in (center) so he can never park ON a pillar

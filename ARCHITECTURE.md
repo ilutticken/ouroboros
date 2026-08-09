@@ -56,7 +56,7 @@ state is coded by shape + position, never colour alone; motion is telegraphed by
 
 ## 3. Codebase map
 
-**~9,650 lines of JS across 21 files.** No build step, no runtime dependencies, ES modules straight to
+**~9,750 lines of JS across 21 files.** No build step, no runtime dependencies, ES modules straight to
 the browser. The only "server" is `npx serve`, and its only job is satisfying the browser's requirement
 that ES modules arrive over HTTP. The two devDependencies (vitest, happy-dom) plus eslint exist for the
 test suite and the linter; nothing the player loads depends on npm at all.
@@ -226,7 +226,9 @@ percentages against the **viewport** and overhung the field by ~150px a side. Ce
 the window is not centred on the game, once the game stops being the window.
 
 So the unit that scales is the whole machine. `#cabinet` wraps top ribbon + board + bottom
-ribbon as one **1000 × 720** object (`CABINET_H = LOGICAL_H + CHROME_TOP + CHROME_BOTTOM`),
+ribbon as one **1000 × 760** object (`CABINET_H = LOGICAL_H + CHROME_TOP + CHROME_BOTTOM`;
+the bottom ribbon grew 100 → 140 in round 4 — the 16px floor forbids smaller terminal
+type, so the box grew to four lines instead),
 main.js sizes it to the drawn board width and publishes `--ui-scale`, and every overlay
 lives inside `#game-wrapper` — which is exactly the canvas box, so `top: 20%` means 20% of
 the *play field*. **Anything parented outside the cabinet goes straight back to measuring
@@ -324,7 +326,7 @@ mandatory. **The no-UNAVOIDABLE-death law still holds everywhere; "non-lethal" n
 
 ## 8. Project health
 
-**Tests:** ~477 across 10 files, ~1.6s. **All three I/O boundaries are now covered**, each by the
+**Tests:** ~485 across 10 files, ~2s. **All three I/O boundaries are now covered**, each by the
 technique that boundary needs:
 
 | File | Covers |
@@ -372,7 +374,7 @@ routinely cite the playtest that motivated a fix.
 ```bash
 npm start      # npx serve -p 8080 .   → http://localhost:8080
 npm test       # vitest, watch mode
-npm run check  # lint + tests — what CI runs (~477 tests, ~1.6s)
+npm run check  # lint + tests — what CI runs (~485 tests, ~2s)
 npm run lint   # eslint . (add :fix to auto-fix)
 ```
 

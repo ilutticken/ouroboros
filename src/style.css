@@ -79,8 +79,10 @@ body {
    it. Equal minmax(0,1fr) gutters pin the terminal dead-centre over the board whether or
    not boss status is present. */
 #ui-layer-bottom {
-    flex: 0 0 calc(100px * var(--ui-scale));
-    height: calc(100px * var(--ui-scale));
+    /* 100 → 140 with config.js CHROME_BOTTOM (the terminal was hard to read; the 16px
+       floor forbids smaller type, so the box grew instead — four lines, not two). */
+    flex: 0 0 calc(140px * var(--ui-scale));
+    height: calc(140px * var(--ui-scale));
     min-height: 0;
     overflow: hidden;
     display: grid;
@@ -140,7 +142,7 @@ button:hover {
    board now, not the window, so it can never drift out from under the play field. */
 #narrative-terminal {
     grid-column: 2;
-    width: calc(640px * var(--ui-scale));
+    width: calc(760px * var(--ui-scale));
     max-width: 100%;
     height: 100%;
     box-sizing: border-box;
@@ -152,7 +154,7 @@ button:hover {
     /* Was 0.9rem = 14.4px: the game's primary prose surface sat under the §2.6 16px
        floor, which Render.test.js never caught because it only samples CANVAS text. */
     font-size: calc(16px * var(--ui-scale));
-    line-height: 1.35;
+    line-height: 1.5;
     display: flex;
     flex-direction: column;
     pointer-events: auto;

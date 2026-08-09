@@ -144,8 +144,10 @@ export const NpcMethods = {
                 const handler = this.npcHandlers[npc.id];
                 if (handler) {
                     // Two processes touching exchange a little handshake chirp — unless
-                    // this contact already has its own sound (clamps, scuffles, pickups).
-                    if (!this._silentBumps.has(npc.id)) this.audio.playBump();
+                    // this contact already has its own sound (clamps, scuffles, pickups),
+                    // or it's more of the SAME building you're already touching (the
+                    // intake latch — one object, one handshake).
+                    if (!this._silentBumps.has(npc.id) && !this._intakeRead.has(npc.id)) this.audio.playBump();
                     handler(npc);
                 }
                 return true;
@@ -441,35 +443,41 @@ export const NpcMethods = {
         });
     },
 
+    // BOTH intake stations are 3x3 buildings whose every cell carries the handler —
+    // so without a latch, each cell the head touched replayed the same read (playtest
+    // round 4: "each square makes you reread the same text"). The latch (_intakeRead)
+    // makes a building ONE object: one read per contact episode, re-armed only once the
+    // head has actually left the structure (cleared in the move-tick). A delivery
+    // always goes through regardless of the latch — the latch guards words, not verbs.
     npcCommons(npc) {
+        if (this.carriedRefugee) return this._deliverRefugee(false);
+        if (this._intakeRead.has(npc.id)) return; // still touching — one object, one read
+        this._intakeRead.add(npc.id);
         this.state.gameState = 'DIALOG';
-        if (!this.carriedRefugee) {
-            this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
-            return;
-        }
-        this._deliverRefugee(false);
+        this.dialogManager.start(npc.dialog, () => { this.state.gameState = 'PLAYING'; });
     },
 
     npcMinegate(npc) {
+        if (this.carriedRefugee) return this._deliverRefugee(true);
+        if (this._intakeRead.has(npc.id)) return;
+        this._intakeRead.add(npc.id);
         this.state.gameState = 'DIALOG';
-        if (!this.carriedRefugee) {
-            // The gate reads out the operation: miners, stockpile, next unlock. Strings
-            // assembled here (per the file's assembly rule) from live numbers.
-            const u = this.state.unlocked;
-            const cap = 20 * (u.refugeesMined >= 2 ? 2 : 1);
-            const status = u.refugeesMined > 0
-                ? [`MINE LEDGER: ${u.refugeesMined} miner(s). Ore buffer: ${Math.floor(u.mineStockpile)}/${cap}. Output collects here — walk the motes.`]
-                : npc.dialog;
-            this.dialogManager.start(status, () => { this.state.gameState = 'PLAYING'; });
-            return;
-        }
-        this._deliverRefugee(true);
+        // The gate reads out the operation: miners, stockpile, next unlock. Strings
+        // assembled here (per the file's assembly rule) from live numbers.
+        const u = this.state.unlocked;
+        const cap = 20 * (u.refugeesMined >= 2 ? 2 : 1);
+        const status = u.refugeesMined > 0
+            ? [`MINE LEDGER: ${u.refugeesMined} miner(s). Ore buffer: ${Math.floor(u.mineStockpile)}/${cap}. Output collects here — walk the motes.`]
+            : npc.dialog;
+        this.dialogManager.start(status, () => { this.state.gameState = 'PLAYING'; });
     },
 
     // Resolve a delivery (the head-end of the moral engine). The refugee's origin room is
     // marked delivered (they never respawn there); their passenger segment leaves with
     // them (mass-neutral round trip: +1 aboard, -1 here).
     _deliverRefugee(mined) {
+        this.state.gameState = 'DIALOG';
+        this._intakeRead.add(mined ? 'minegate' : 'commons'); // no instant flavor re-read after
         const u = this.state.unlocked;
         if (!u.refugeesDelivered) u.refugeesDelivered = [];
         u.refugeesDelivered.push(this.carriedRefugee);
@@ -594,8 +602,13 @@ export const NpcMethods = {
     // Hydratia's silent shadow copy: serialize() to the per-file AUTO buffer (never the
     // manual file — Cache's named commit stays sacred). serialize() structurally cannot
     // contain score, so an autosave can never bank carried Data past a death (decision 1).
+    //
+    // NO saveFunction gate here (playtest round 4: "bought two upgrades, refreshed, lost
+    // everything"). Her tiers are purchasable without ever meeting Cache, and the old
+    // guard made every one of those purchases a silent no-op — the player paid for a
+    // backup that never wrote. Her shadow buffer is HER machinery, not Cache's: the tier
+    // flags gating the call sites are the only prerequisite her product actually has.
     autoCommit() {
-        if (!this.state.unlocked.saveFunction) return;
         this.saveManager.saveAuto(this.activeSlot, this.serialize());
     },
 

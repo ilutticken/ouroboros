@@ -69,6 +69,7 @@ export class GameEngine {
         this.shopManager = new ShopManager(this.state, this.audio);
         this.shopManager.onSpend = (price) => this.spendData(price); // Data = segments: buying shrinks you
         this.shopManager.onQuantcyWithdraw = () => this.quantcyWithdraw(); // the vault empties into his room as motes
+        this.shopManager.onHydratiaTier = () => this.autoCommit(); // a bought tier writes its first copy NOW
         this.worldManager = new WorldManager(canvas, this.gridSize);
         this.saveManager = new SaveManager();
         this._saveFlash = 0; // ms remaining on a "SAVED"/"LOADED" pause-menu toast
@@ -295,6 +296,7 @@ export class GameEngine {
         this._deathReceipt = null;  // Hydratia's DEAD-overlay receipt (computed per death)
         this._hydratia = null;      // her boot-screen glimpse state ({stage, catchable})
         this._wallsDeploy = null;   // timestamp of the 10-Data wall extrusion (null = settled)
+        this._intakeRead = new Set(); // intake-building latch (also reset in resetBattleTransients)
 
         // Cadenza is sealed in a sector to the SOUTHEAST of Localhost. Her singing
         // carries as a sonar beacon (updateCadenzaBeacon) so the sector is findable.
@@ -1682,6 +1684,15 @@ export class GameEngine {
 
             if (this.hitGlitch()) return true; // corruption drain (may kill)
 
+            // The intake buildings' latch re-arms only when the head has actually LEFT
+            // the structure — checked before this tick's bump dispatch, so entering a
+            // second cell of the same building keeps the latch (one object, one read).
+            for (const id of [...this._intakeRead]) {
+                const onIt = this.npcs.some(n => n.id === id
+                    && this.snake.head.x === n.x && this.snake.head.y === n.y);
+                if (!onIt) this._intakeRead.delete(id);
+            }
+
             // Persistent NPC collisions — dispatched via the per-character registry
             // (this.npcHandlers / handleNpcCollisions). A bump resolves and stops the
             // tick; talking is length-neutral, so nothing shrinks again here.
@@ -2253,6 +2264,7 @@ export class GameEngine {
         this._auditionLayer = null; // the M-key music preview re-syncs on any reset
         this._textHold = false;     // the post-text hold (input.reset covers the rest)
         this.gearInstall = null;    // 2-Bit's gearbox beat must never outlive its scene
+        this._intakeRead = new Set(); // the intake buildings' one-read-per-contact latch
         this.audio.setDuck(1);
     }
 

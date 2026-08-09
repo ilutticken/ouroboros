@@ -43,7 +43,11 @@ describe('The shipping resolution', () => {
     // same one); the first version of this test re-implemented the formula, which pins a
     // copy of the maths rather than the maths.
     it('scales by whole numbers on real displays, and never crops on small ones', () => {
-        for (const [w, h] of [[1366, 720], [1920, 1000], [2560, 1400], [3840, 2100]]) {
+        // (1366x768 is the FULLSCREEN laptop case: with the round-4 terminal growth the
+        // cabinet spends 200px on chrome, so a ~720px windowed browser on that panel now
+        // takes the fractional contain below — readable terminal > razor-sharp board,
+        // which is the §2.6 priority the whole fit formula is built on.)
+        for (const [w, h] of [[1366, 768], [1920, 1000], [2560, 1400], [3840, 2100]]) {
             const { scale, uiScale, width, height } = computeFit(w, h);
             expect(Number.isInteger(scale), `${w}x${h} -> ${scale}`).toBe(true);
             expect(Number.isInteger(uiScale)).toBe(true);
@@ -62,15 +66,17 @@ describe('The shipping resolution', () => {
     // its 2x board — a regression with no symptom in any other test.
     it('the board never loses a whole step to make room for bigger chrome', () => {
         const chrome = CHROME_TOP + CHROME_BOTTOM;
-        for (const [w, h] of [[2560, 1310], [3840, 2030], [1920, 950], [2560, 1440]]) {
+        for (const [w, h] of [[2560, 1330], [3840, 2030], [1920, 950], [2560, 1440]]) {
             const { scale, uiScale, height } = computeFit(w, h);
             const best = Math.floor(Math.min(w / LOGICAL_W, (h - chrome) / LOGICAL_H));
             expect(scale, `${w}x${h}`).toBe(best);
             // ...and the chrome took every step that still fit, but no more.
             expect(height + chrome * (uiScale + 1) > h || uiScale === scale, `${w}x${h}`).toBe(true);
         }
-        expect(computeFit(2560, 1310).scale).toBe(2);   // the case that regressed
-        expect(computeFit(2560, 1310).uiScale).toBe(1);
+        // The shape of the original regression, at the current chrome budget: lockstep
+        // scaling would read 1330/760 = 1.75x -> a 1x board; two-pass keeps the 2x.
+        expect(computeFit(2560, 1330).scale).toBe(2);
+        expect(computeFit(2560, 1330).uiScale).toBe(1);
     });
 
     it('below 1x the board softens but the chrome holds its §2.6 floor', () => {
@@ -110,7 +116,7 @@ describe('The shipping resolution', () => {
         // whole life overflowing a 100px ribbon with a 114px box.
         expect(CABINET_W).toBe(LOGICAL_W);
         expect(CABINET_H).toBe(LOGICAL_H + CHROME_TOP + CHROME_BOTTOM);
-        expect(CABINET_H).toBe(720);
+        expect(CABINET_H).toBe(760); // 60 + 560 + 140 — the round-4 terminal growth
     });
 
     it('every state draws clean at the shipping size', () => {

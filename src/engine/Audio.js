@@ -158,19 +158,26 @@ export class AudioEngine {
 
     // Diegetic: the sound of corrupted Data bleeding into your body as you slither
     // past a Glitch. An ominous dubstep "wub" — a resonant low-pass filter wobbled
-    // by an LFO over a detuned sub-bass. Closer proximity = higher, more frantic wubs.
+    // by an LFO over a detuned sub-bass. TEMPO-LOCKED to the theme (owner): one voice
+    // per beat of Cadenza's 88 BPM, each wobbling exactly twice — an eighth-note
+    // "wub-wub" — so corruption throbs in the soundtrack's own metre (whether or not
+    // a layer is audible yet; the tempo is the world's, not the speakers'). Proximity
+    // no longer speeds the wobble: it drives pitch, brightness, resonance, and
+    // loudness, so closer still reads as MORE dread, just never as a different song.
     // `intensity` in (0, 1]; 1 == the Glitch is one tile from your body.
     playWub(intensity = 1) {
         if (!this.initialized) return;
 
         const now = this.ctx.currentTime;
-        // Throttle: while a long body drags past a Glitch this can retrigger every
-        // 30ms (gear 3). Cap the rate so voices layer into a groove, not a smear.
-        if (now - this._lastWubAt < 0.06) return;
+        // Throttle to the beat: while a long body drags past a Glitch this can
+        // retrigger every 30ms (gear 3) — admit one voice per beat so the drag reads
+        // as a pulse in tempo, not a smear. (0.95: a hair early beats a dropped beat.)
+        const spb = 60 / BPM;
+        if (now - this._lastWubAt < spb * 0.95) return;
         this._lastWubAt = now;
 
         const amt = Math.max(0.05, Math.min(1, intensity));
-        const dur = 0.20 + amt * 0.16; // 0.20 - 0.36s
+        const dur = spb; // one full beat — the envelope hands off to the next voice
 
         // Detuned sub-bass: the "voice" of the corruption
         const osc1 = this.ctx.createOscillator();
@@ -194,12 +201,12 @@ export class AudioEngine {
         const depth = 240 + amt * 380;  // 240 - 620 Hz  (< centre, so trough > 0)
         filter.frequency.setValueAtTime(centre, now);
 
-        // LFO wobbles the filter cutoff open/closed -> the "wob-wob-wob".
-        // Floor the rate high enough that even a short (distant) wub completes
-        // ~2 cycles and reads as a wobble rather than a single blip.
+        // LFO wobbles the filter cutoff open/closed -> the "wub-wub". Rate is the
+        // theme's eighth note (2 cycles per beat at 88 BPM ≈ 2.9 Hz — was a frantic
+        // 9-18 Hz), and the beat-long voice completes exactly two wobbles.
         const lfo = this.ctx.createOscillator();
         lfo.type = 'sine';
-        lfo.frequency.setValueAtTime(9 + amt * 9, now); // 9 - 18 Hz
+        lfo.frequency.setValueAtTime(2 * BPM / 60, now);
         const lfoDepth = this.ctx.createGain();
         lfoDepth.gain.setValueAtTime(depth, now);
         lfo.connect(lfoDepth);

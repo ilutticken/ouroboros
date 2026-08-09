@@ -13,6 +13,7 @@
 //   - the wub throttle, the layered soundtrack, and that stopping cleans up its timers
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { AudioEngine } from '../src/engine/Audio.js';
+import { BPM } from '../src/content/music.js';
 import { installFakeAudio } from './helpers.js';
 
 // Every one-shot voice the game can trigger. Used to prove the bus invariant holds for
@@ -156,8 +157,8 @@ describe('AudioEngine (real synthesis, fake AudioContext)', () => {
         });
     });
 
-    describe('the wub throttle', () => {
-        it('collapses retriggers inside 60ms into one voice', () => {
+    describe('the wub throttle (tempo-locked — owner: same BPM as the theme, slower)', () => {
+        it('admits one voice per beat of the theme, collapsing faster retriggers', () => {
             audio.init();
             fake.reset();
 
@@ -168,9 +169,26 @@ describe('AudioEngine (real synthesis, fake AudioContext)', () => {
             audio.playWub(1);                        // same instant — dragging a long body
             expect(fake.of('oscillator').length).toBe(first);
 
-            fake.ctx.currentTime = 0.07;             // past the throttle window
+            fake.ctx.currentTime = 0.07;             // would have cleared the OLD 60ms window
+            audio.playWub(1);
+            expect(fake.of('oscillator').length).toBe(first); // still inside the beat
+
+            fake.ctx.currentTime = 60 / BPM;         // one full beat later
             audio.playWub(1);
             expect(fake.of('oscillator').length).toBeGreaterThan(first);
+        });
+
+        it("the wobble rate is the theme's eighth note, whatever the proximity", () => {
+            // Proximity drives pitch/brightness/loudness — never the wobble rate, so
+            // corruption always throbs in the soundtrack's own metre.
+            audio.init();
+            for (const intensity of [0.05, 0.5, 1]) {
+                fake.reset();
+                audio._lastWubAt = -1;
+                audio.playWub(intensity);
+                const rates = fake.of('oscillator').map(o => o.frequency.value);
+                expect(rates, `intensity ${intensity}`).toContain(2 * BPM / 60);
+            }
         });
 
         it('keeps the wub filter cutoff above zero across the whole LFO cycle', () => {

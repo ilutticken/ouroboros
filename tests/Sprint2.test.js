@@ -1557,3 +1557,103 @@ describe('Playtest feedback (round 3)', () => {
         expect(game.worldManager.rooms['1,0']).toBeUndefined();
     });
 });
+
+// ---------------------------------------------------------------------------------
+// PLAYTEST ROUND 4 — the owner's feedback items, locked in.
+describe('Playtest feedback (round 4)', () => {
+    beforeEach(mountDom);
+
+    it("Gate's first scene never replays: {3,0} spawns him only until the Pause Menu is granted", () => {
+        // Death wipes the room cache, and his first-encounter memory lived on the cached
+        // NPC (npc.met) — so dying after Localhost regenerated a fresh Gate who re-ran
+        // the whole Thread Suspension. The pauseMenu grant is the scene's durable receipt.
+        const before = newGame();
+        before.worldManager.currentRoomX = 3; before.worldManager.currentRoomY = 0;
+        expect(before.worldManager.getOrCreateRoom(before.state.unlocked)
+            .npcs.some(n => n.id === 'gate')).toBe(true);
+
+        const after = newGame();
+        after.state.unlocked.pauseMenu = true;
+        after.worldManager.currentRoomX = 3; after.worldManager.currentRoomY = 0;
+        expect(after.worldManager.getOrCreateRoom(after.state.unlocked)
+            .npcs.some(n => n.id === 'gate')).toBe(false);
+    });
+
+    it("2-Bit's stall survives death: a regenerated Localhost includes the shop once he's dropped off", () => {
+        const game = newGame();
+        game.state.unlocked.biteDroppedOff = true;
+        game.worldManager.currentRoomX = 5; game.worldManager.currentRoomY = 0;
+        const room = game.worldManager.getOrCreateRoom(game.state.unlocked);
+        expect(room.npcs.some(n => n.id === 'shop')).toBe(true);
+
+        // ...and only once he HAS dropped off (before that he still rides your tail).
+        const fresh = newGame();
+        fresh.worldManager.currentRoomX = 5; fresh.worldManager.currentRoomY = 0;
+        expect(fresh.worldManager.getOrCreateRoom(fresh.state.unlocked)
+            .npcs.some(n => n.id === 'shop')).toBe(false);
+    });
+
+    it('an intake building is ONE object: one read per contact, re-armed by leaving', () => {
+        const game = newGame();
+        game.state.gameState = 'PLAYING';
+        const cells = [new NPC(100, 100, 20, 'commons', ['THE COMMONS: benches.']),
+                       new NPC(120, 100, 20, 'commons', ['THE COMMONS: benches.'])];
+        game.npcs = cells; game.glitches = []; game.obstacles = []; game.apple = { x: 380, y: 380 };
+        let opens = 0;
+        game.dialogManager.start = (lines, cb) => { opens++; if (cb) cb(); };
+
+        game.npcCommons(cells[0]);          // first contact: the read
+        expect(opens).toBe(1);
+        game.npcCommons(cells[1]);          // second cell of the same building: silent
+        expect(opens).toBe(1);
+
+        // The latched building also swallows the handshake chirp per extra cell.
+        game.snake.body = [{ x: 120, y: 100 }];
+        game.handleNpcCollisions();
+        expect(game.audio.playBump).not.toHaveBeenCalled();
+        expect(opens).toBe(1);
+
+        // Walk away — the move-tick re-arms the latch once the head has left the
+        // structure — and the next contact reads again.
+        game.snake.body = [{ x: 300, y: 300 }];
+        step(game, { x: 20, y: 0 });
+        game.npcCommons(cells[0]);
+        expect(opens).toBe(2);
+    });
+
+    it('the latch guards words, not verbs: a delivery goes through while latched', () => {
+        const game = newGame();
+        game.growSnake(3);
+        game.npcs = []; game.obstacles = []; game.glitches = []; game.apple = { x: 380, y: 380 };
+        game._intakeRead.add('commons');    // already read the flavor this contact
+        game.carriedRefugee = '4,2';
+        game.npcCommons(new NPC(100, 100, 20, 'commons', []));
+        finishDialog(game);
+        expect(game.state.unlocked.refugeesFreed).toBe(1);
+        expect(game.carriedRefugee).toBeNull();
+    });
+
+    it("a bought Shadow Copy tier commits immediately — Cache's saveFunction not required", () => {
+        // The reported loss: two tiers bought, page refreshed, everything gone. Two holes:
+        // autoCommit() refused to write without Cache's saveFunction (her tiers sell fine
+        // without it — a paid no-op), and every tier's trigger is an EVENT, so a buyer who
+        // refreshed before the next trigger had a backup that never once ran.
+        const game = newGame();
+        game.saveManager.clearAll();
+        expect(game.state.unlocked.saveFunction).toBeFalsy(); // never met Cache
+        game.state.score = 60; game.growSnake(60);
+        game.shopManager.activeVendor = 'hydratia';
+        game.shopManager.purchase(game.shopManager.vendors.hydratia.items[0]);
+        expect(game.state.unlocked.autosaveSafe).toBe(true);
+        expect(game.saveManager.hasAuto(game.activeSlot)).toBe(true); // the first copy exists NOW
+        game.saveManager.clearAll();
+    });
+
+    it('autoCommit writes the shadow buffer with no saveFunction at all', () => {
+        const game = newGame();
+        game.saveManager.clearAll();
+        game.autoCommit();
+        expect(game.saveManager.hasAuto(game.activeSlot)).toBe(true);
+        game.saveManager.clearAll();
+    });
+});

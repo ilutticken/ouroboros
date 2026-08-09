@@ -111,6 +111,7 @@ export class ShopManager {
         this.onClose = null;
         this.onSpend = null;   // Data = segments: set by Game to shrink the body when you spend
         this.onQuantcyWithdraw = null; // set by Game: converts the vault to motes in his room
+        this.onHydratiaTier = null;    // set by Game: a bought Shadow Copy tier commits immediately
         this.activeVendor = 'bite';
         this.rows = [];        // live {item, el, btn} for the open vendor
 
@@ -131,6 +132,11 @@ export class ShopManager {
         this.state.score -= it.price;
         if (this.onSpend) this.onSpend(it.price); // Data = segments: spending Data shrinks your body
         it.buy();
+        // Buying a Shadow Copy tier writes the FIRST copy on the spot. Every tier's
+        // trigger is an event (reach a safe zone / die / cross a sector) — a buyer who
+        // refreshed the page before the next trigger had paid for a backup that had
+        // never once run (playtest round 4). The purchase is the first commit.
+        if (this.activeVendor === 'hydratia' && this.onHydratiaTier) this.onHydratiaTier();
         this.audio.playBeep();
         // Vendors with LIVE row text (Quantcy's holdings) re-render so the numbers are
         // honest immediately, not on the next open. (A withdraw closes the overlay first;

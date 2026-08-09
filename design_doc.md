@@ -55,7 +55,7 @@ A fusion of retro pixel art and modern neon cyber-aesthetics.
 - **The Tail (Health/Power):** Your physical length in the game world dictates how much damage you can take and your ability to encircle large enemies.
 - **Modules (Equipment):** Modifiers attached to your snake (e.g., "Overclocked Head" for damage, "Reinforced Segments" for armor).
 - **Audio Signals (Diagnostic Layer):** All audio is procedural Web Audio and strictly diegetic (see §2.5). Beyond the boot beeps and termination drones, the world reacts to *where your body is* every grid step:
-  - **Corruption Wubs (`Audio.playWub`, `Game.playAmbientAudio`):** An ominous, resonant dubstep wub (LFO-wobbled low-pass over detuned sub-bass) fires when **any** body segment passes within **3 tiles** of a Glitch. Intensity — pitch, wub rate, filter resonance, loudness — scales with proximity (1 tile away = maximum dread), so a long snake dragging past corruption throbs the whole way. This *telegraphs* corruption (AGENTS rule 1) as much as it dreads it — reinforcing the Architect's in-world "Deploying memory corruptors" warning (`Game.js`) — so you *hear* the hazard closing in before you can be hit by it. All voices route through a master limiter (`Audio.init`) so overlapping wubs never clip.
+  - **Corruption Wubs (`Audio.playWub`, `Game.playAmbientAudio`):** An ominous, resonant dubstep wub (LFO-wobbled low-pass over detuned sub-bass) fires when **any** body segment passes within **3 tiles** of a Glitch. **TEMPO-LOCKED (owner, 2026-08-09): one voice per beat of Cadenza's 88 BPM, each wobbling exactly twice — an eighth-note "wub-wub" — so corruption throbs in the soundtrack's own metre whether or not a layer is audible yet.** Proximity drives pitch, filter resonance, and loudness — never the wobble rate (1 tile away = maximum dread), so a long snake dragging past corruption throbs the whole way. This *telegraphs* corruption (AGENTS rule 1) as much as it dreads it — reinforcing the Architect's in-world "Deploying memory corruptors" warning (`Game.js`) — so you *hear* the hazard closing in before you can be hit by it. All voices route through a master limiter (`Audio.init`) so overlapping wubs never clip.
   - **Wall Friction (`Audio.playGlide`):** Band-passed white noise (a true broadband scrape, not a tone) plays while *any* body segment is pressed against a boundary — the whole body scrapes, not just the head (parity with the wub). Brightness rises with gear/velocity — the faster you scrape the barrier, the thinner the friction. Only exists once borders do. **And only where there is actually WALL (owner, 2026-08-04): a doorway is a hole, and a hole has no friction — segments inside an open door's span, in the ring cells, or off-canvas mid-crossing never scrape, so threading a door is silent.** An *intact* weak point still scrapes (perforated is not open).
 - **The Sonic Vocabulary (reconciled for §2.5):** Each event has ONE dedicated in-world sound; the "termination drone" (`playDeath`) is reserved strictly for an actual process being terminated (obstacle death). The full map:
   | Event | In-world cause | Sound |
@@ -667,6 +667,30 @@ Hydratia's peek-and-dash → *the shy persistence daemon*; the Module Slot's ret
   and beacon cues wait until the band settles. One-time: loads and respawns skip straight
   to settled walls. Reduce-motion fades in place instead of travelling.
 
+### Playtest round 4 (IMPLEMENTED, owner-directed 2026-08-09) — persistence & politeness
+Five items. Two folded into their home sections above (the tempo-locked wub → §4
+Corruption Wubs; the terminal box growing 100 → 140 → ARCHITECTURE §6, the §2.6 floor
+forbids smaller type so the box grew to four lines). The three that live here:
+- **Scene persistence is DURABLE-FLAG-gated, not cached-NPC-gated.** Death wipes the room
+  cache, and two story anchors lived only in it: Gate's first-encounter memory (`npc.met`)
+  — so dying after Localhost replayed his whole Thread Suspension at {3,0} — and 2-Bit's
+  stall, which existed only as the NPC live-pushed at the drop-off. Both are now canonical
+  in `RoomGenerator`: Gate spawns at {3,0} only until `unlocked.pauseMenu` (his scene's
+  durable receipt), and Localhost regenerates the `shop` NPC whenever `biteDroppedOff`.
+  **The rule this teaches: anything story-durable must be derivable from `unlocked`, never
+  from what happens to be cached in a room.**
+- **The intake buildings are ONE object each** (`_intakeRead`): a 3×3 building's nine
+  cells share one read per contact episode — re-armed only once the head actually leaves
+  the structure — and the extra cells swallow the handshake chirp too. A delivery always
+  goes through regardless: the latch guards words, not verbs.
+- **Hydratia's Shadow Copy actually writes now.** Two holes: `autoCommit()` refused to
+  write without Cache's `saveFunction` (her tiers sell fine without ever meeting Cache —
+  every purchase was a paid no-op), and every tier's trigger is an *event* (reach a safe
+  zone / die / cross a sector), so a buyer who refreshed before the next trigger had a
+  backup that had never once run. Now her buffer is her own machinery (no `saveFunction`
+  gate), and **buying a tier writes the first copy on the spot** (`onHydratiaTier` →
+  `autoCommit`). The boot menu's `[R]` Warm Restore already handled auto-only slots.
+
 ### PENDING — Localhost upgrades with Data spent
 Still open (owner-flagged): sinking Data in Localhost should visibly **rebuild the village** (more citizens/structures/services), a Phase-4 idle hook and a diegetic reason the Safe Zone matters.
 
@@ -677,5 +701,5 @@ Still open (owner-flagged): sinking Data in Localhost should visibly **rebuild t
 4. ✅ **Cache = localStorage save/load** (+ the 3-file boot select).
 5. ✅ Content: Cadenza's Sound Test minigame; ✅ the finite Wilds + coil; ✅ Motion Carried; ✅ HUSH + the Booth; ✅ Nibble's stall (Glitch Shunt v1); ✅ Heur's Purge; ✅ the Ascent + Port 0 finale (Act I is playable end-to-end).
 6. ✅ The Midpoint Pass (`ascentArmed`, the unblocked first meetings, the terminal release latch); ✅ the compounding economy (Quantcy + the Data Mines + the refugee relocation); ✅ Hydratia (the catch, the tiered Shadow Copy, the death receipt); ✅ Scanner value (two upgrade pockets, the ROM-Vault prize, the "beyond" read); ✅ the presentation pass (ribbon HUD, gear-linked glow, the Pause inventory, the sprite grammar).
-7. ✅ **Gate's two fights rebuilt** (the rotating aperture, the flee, the Port 0 squeeze) + **Motion Carried retimed to his impact**; ✅ **project health**: the codebase split into prototype mixins, all three I/O boundaries under test, a linter, and CI; ✅ **the world moves on its own clock** (ambient drift decoupled from player speed, with encroachment damage); ✅ **Heur's Decontamination rebuilt** (own ping clock, step patterns, aim-by-segment, 3 seals, the arming rule, lethal head + solid database); ✅ **the Text Hold**; ✅ **the fixed logical canvas + the cabinet** (ARCHITECTURE §6); ✅ **playtest round 3** (terminal growth, doorway-silent glide, the wall extrusion, install-on-pickup, Hydratia's peek-and-dash). ~477 tests.
+7. ✅ **Gate's two fights rebuilt** (the rotating aperture, the flee, the Port 0 squeeze) + **Motion Carried retimed to his impact**; ✅ **project health**: the codebase split into prototype mixins, all three I/O boundaries under test, a linter, and CI; ✅ **the world moves on its own clock** (ambient drift decoupled from player speed, with encroachment damage); ✅ **Heur's Decontamination rebuilt** (own ping clock, step patterns, aim-by-segment, 3 seals, the arming rule, lethal head + solid database); ✅ **the Text Hold**; ✅ **the fixed logical canvas + the cabinet** (ARCHITECTURE §6); ✅ **playtest round 3** (terminal growth, doorway-silent glide, the wall extrusion, install-on-pickup, Hydratia's peek-and-dash); ✅ **playtest round 4** (the 140px terminal, durable Gate/shop persistence, one-object intake buildings, the tempo-locked wub, the Shadow Copy that actually writes). ~485 tests.
 8. NEXT: **dialogue punch-up of every DRAFT block** (everything below `dialogue.js` ~L257 — the owner's pass; keep it *short and subtle*, the mystery unrolls over hours); the Trading-Sequence chain seeded in the ROM vault {1,-5}; Nibble's Corruption currency; Localhost-grows-with-Data; **Encryption Keys** (a carryable key that rides the tail and opens gated doors — the next Zelda verb); Act II (Beat 9+) against the 16-bit era.

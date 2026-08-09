@@ -50,13 +50,15 @@ export const LOGICAL_H = ROWS * GRID;  // 560
 // its top edge. The chrome was furnished for a room the game no longer lived in.
 //
 // So the unit that scales is not the canvas — it is the whole machine: top ribbon, board,
-// bottom ribbon, one 1000 x 720 object. main.js sizes #cabinet to the scaled board width
+// bottom ribbon, one 1000 x 760 object. main.js sizes #cabinet to the scaled board width
 // and publishes --ui-scale, so the HUD sits in the BOARD's corners and every overlay is a
 // percentage of the BOARD. There is one thing on screen, and it has one size.
 export const CHROME_TOP = 60;     // Data + the gear gauge
-export const CHROME_BOTTOM = 100; // the Architect's terminal + boss status
+// 100 → 140 (owner: the terminal was hard to read). The §2.6 floor forbids shrinking
+// the 16px type, so the BOX grows: four lines of prose instead of two-and-a-bit.
+export const CHROME_BOTTOM = 140; // the Architect's terminal + boss status
 export const CABINET_W = LOGICAL_W;                                // 1000
-export const CABINET_H = LOGICAL_H + CHROME_TOP + CHROME_BOTTOM;   // 720
+export const CABINET_H = LOGICAL_H + CHROME_TOP + CHROME_BOTTOM;   // 760
 
 // The one fit formula, exported so main.js and the tests cannot drift apart (the first
 // version of this test re-implemented the maths, which pins a copy rather than the code).
